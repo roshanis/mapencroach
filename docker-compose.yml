@@ -1,0 +1,56 @@
+# Dev runtime for mapencroach. Start: docker compose up -d
+# Production runs on state DC / MeitY-empanelled cloud — this file is for local dev only.
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_DB: mapencroach
+      POSTGRES_USER: mapencroach
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-devonly-change-me}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mapencroach"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: start-dev
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-devonly-change-me}
+    ports:
+      - "8081:8080"
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: mapencroach
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-devonly-change-me}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+
+  titiler:
+    image: ghcr.io/developmentseed/titiler:latest
+    environment:
+      AWS_ACCESS_KEY_ID: mapencroach
+      AWS_SECRET_ACCESS_KEY: ${MINIO_PASSWORD:-devonly-change-me}
+      AWS_S3_ENDPOINT: minio:9000
+      AWS_HTTPS: "FALSE"
+      AWS_VIRTUAL_HOSTING: "FALSE"
+    ports:
+      - "8082:8000"
+    depends_on:
+      - minio
+
+volumes:
+  pgdata:
+  miniodata:
