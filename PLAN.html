@@ -1,0 +1,1419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>mapencroach — Implementation Plan v2.0 (Builder's Edition)</title>
+<style>
+  /* ─── Reset & Base ─────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+    --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+
+    --color-bg:        #f7f8fa;
+    --color-surface:   #ffffff;
+    --color-border:    #d8dde6;
+    --color-text:      #1a1d24;
+    --color-muted:     #5a6275;
+    --color-accent:    #1c4f8c;      /* deep government blue */
+    --color-accent-dk: #143a68;
+    --color-accent-lt: #e8eff9;
+
+    --color-green-bg:  #eaf6ec;
+    --color-green-bd:  #a9d5af;
+    --color-green-txt: #1a5c1a;
+
+    --radius: 5px;
+    --max-w:  920px;
+    --sidebar-w: 250px;
+  }
+
+  html { scroll-behavior: smooth; font-size: 16px; }
+
+  body {
+    font-family: var(--font-sans);
+    background: var(--color-bg);
+    color: var(--color-text);
+    line-height: 1.7;
+  }
+
+  /* ─── Layout ────────────────────────────────────────────────────── */
+  .layout {
+    display: flex;
+    align-items: flex-start;
+    max-width: calc(var(--max-w) + var(--sidebar-w) + 3rem);
+    margin: 0 auto;
+    padding: 0 1rem;
+  }
+
+  /* ─── Sidebar TOC ───────────────────────────────────────────────── */
+  #toc-sidebar {
+    width: var(--sidebar-w);
+    flex-shrink: 0;
+    position: sticky;
+    top: 1.5rem;
+    max-height: calc(100vh - 3rem);
+    overflow-y: auto;
+    padding: 1.5rem 1rem 1.5rem 0;
+    align-self: flex-start;
+  }
+
+  #toc-sidebar h2 {
+    font-size: 0.65rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+    margin-bottom: 0.75rem;
+    font-weight: 700;
+    border: none;
+  }
+
+  #toc-sidebar ol { list-style: none; padding: 0; counter-reset: none; }
+
+  #toc-sidebar li { margin: 0; }
+
+  #toc-sidebar a {
+    display: block;
+    padding: 0.3rem 0.6rem;
+    font-size: 0.82rem;
+    color: var(--color-muted);
+    text-decoration: none;
+    border-left: 2px solid transparent;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+    border-radius: 0 var(--radius) var(--radius) 0;
+    line-height: 1.4;
+  }
+
+  #toc-sidebar a:hover,
+  #toc-sidebar a.active {
+    color: var(--color-accent);
+    border-left-color: var(--color-accent);
+    background: var(--color-accent-lt);
+    font-weight: 600;
+  }
+
+  /* ─── Main Content ──────────────────────────────────────────────── */
+  main {
+    flex: 1;
+    min-width: 0;
+    max-width: var(--max-w);
+    padding: 2.5rem 0 4rem;
+  }
+
+  /* ─── Document Header ───────────────────────────────────────────── */
+  .doc-header {
+    background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-dk) 100%);
+    color: #fff;
+    border-radius: var(--radius);
+    padding: 2.5rem 2.75rem;
+    margin-bottom: 2.5rem;
+  }
+
+  .doc-header .kicker {
+    font-size: 0.72rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    opacity: 0.8;
+    margin-bottom: 0.6rem;
+    font-weight: 600;
+  }
+
+  .doc-header h1 {
+    font-size: 1.65rem;
+    font-weight: 700;
+    line-height: 1.3;
+    margin-bottom: 1.25rem;
+    border: none;
+    color: #fff;
+  }
+
+  .mission-block {
+    background: rgba(255,255,255,0.1);
+    border: 1px solid rgba(255,255,255,0.22);
+    border-left: 4px solid #fff;
+    border-radius: var(--radius);
+    padding: 1.1rem 1.4rem;
+    margin-bottom: 1rem;
+  }
+
+  .mission-block .mission-label {
+    font-size: 0.7rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-weight: 700;
+    opacity: 0.85;
+    margin-bottom: 0.4rem;
+  }
+
+  .mission-block p {
+    font-size: 1.02rem;
+    line-height: 1.55;
+    margin-bottom: 0;
+    font-weight: 500;
+  }
+
+  .doc-header .tagline {
+    font-size: 0.92rem;
+    opacity: 0.9;
+    margin-top: 1rem;
+    line-height: 1.6;
+    font-style: italic;
+  }
+
+  .doc-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.2rem;
+    margin-top: 1.25rem;
+    font-size: 0.8rem;
+    opacity: 0.82;
+    border-top: 1px solid rgba(255,255,255,0.25);
+    padding-top: 1rem;
+  }
+
+  .doc-meta span::before {
+    content: attr(data-label) ": ";
+    font-weight: 600;
+    opacity: 0.9;
+  }
+
+  /* ─── Inline TOC (top of content) ──────────────────────────────── */
+  #toc-inline {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: 1.5rem 1.75rem;
+    margin-bottom: 2.5rem;
+  }
+
+  #toc-inline h2 {
+    font-size: 0.78rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+    margin-bottom: 1rem;
+    border: none;
+    padding: 0;
+  }
+
+  #toc-inline ol {
+    columns: 2;
+    column-gap: 2rem;
+    padding-left: 1.2rem;
+    list-style: decimal;
+  }
+
+  #toc-inline li {
+    font-size: 0.88rem;
+    break-inside: avoid;
+    margin-bottom: 0.4rem;
+  }
+
+  #toc-inline a {
+    color: var(--color-accent);
+    text-decoration: none;
+  }
+
+  #toc-inline a:hover { text-decoration: underline; }
+
+  /* ─── Sections ──────────────────────────────────────────────────── */
+  section {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: 1.85rem 2.1rem;
+    margin-bottom: 1.75rem;
+  }
+
+  /* ─── Typography ────────────────────────────────────────────────── */
+  h1, h2, h3, h4 {
+    color: var(--color-text);
+    line-height: 1.3;
+    font-weight: 700;
+  }
+
+  h2 {
+    font-size: 1.2rem;
+    border-bottom: 2px solid var(--color-accent);
+    padding-bottom: 0.55rem;
+    margin-bottom: 1.25rem;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  h2 .sec-num {
+    display: inline-block;
+    background: var(--color-accent);
+    color: #fff;
+    font-size: 0.78rem;
+    padding: 0.15rem 0.55rem;
+    border-radius: 3px;
+    vertical-align: middle;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+
+  h2 .sec-suffix {
+    font-weight: 400;
+    font-size: 0.82rem;
+    color: var(--color-muted);
+  }
+
+  h3 {
+    font-size: 1.02rem;
+    margin: 1.5rem 0 0.75rem;
+    color: var(--color-accent);
+  }
+
+  h3:first-child { margin-top: 0; }
+
+  h4 {
+    font-size: 0.95rem;
+    margin: 1.1rem 0 0.5rem;
+    color: var(--color-text);
+  }
+
+  p { margin-bottom: 0.9rem; }
+
+  p:last-child { margin-bottom: 0; }
+
+  .lead-note {
+    font-size: 0.95rem;
+    color: var(--color-muted);
+    font-style: italic;
+    margin-bottom: 1.5rem;
+  }
+
+  ul, ol {
+    padding-left: 1.4rem;
+    margin-bottom: 0.9rem;
+  }
+
+  li { margin-bottom: 0.4rem; }
+  li:last-child { margin-bottom: 0; }
+
+  strong { font-weight: 650; }
+  em { font-style: italic; }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.84em;
+    background: #f0f2f5;
+    padding: 0.15em 0.4em;
+    border-radius: 3px;
+    color: #1c4f8c;
+  }
+
+  hr.section-divider {
+    display: none; /* real HR replaced by section spacing */
+  }
+
+  /* ─── Pre / ASCII diagrams ──────────────────────────────────────── */
+  pre {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    line-height: 1.55;
+    background: #0f1720;
+    color: #d7e3f4;
+    border: 1px solid #1c4f8c;
+    border-radius: var(--radius);
+    padding: 1.25rem 1.5rem;
+    overflow-x: auto;
+    margin: 1rem 0 1.4rem;
+    white-space: pre;
+  }
+
+  pre .pre-caption { display: block; }
+
+  .pre-wrap {
+    margin: 1rem 0 1.4rem;
+  }
+
+  .pre-label {
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: var(--color-muted);
+    margin-bottom: 0.5rem;
+  }
+
+  .pre-wrap pre { margin: 0; }
+
+  /* ─── Tables ────────────────────────────────────────────────────── */
+  .table-wrap {
+    overflow-x: auto;
+    margin: 1rem 0 1.4rem;
+    border-radius: var(--radius);
+    border: 1px solid var(--color-border);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+  }
+
+  thead th {
+    background: var(--color-accent);
+    color: #fff;
+    font-weight: 600;
+    text-align: left;
+    padding: 0.65rem 1rem;
+    font-size: 0.8rem;
+    letter-spacing: 0.02em;
+  }
+
+  tbody td {
+    padding: 0.62rem 1rem;
+    border-bottom: 1px solid var(--color-border);
+    vertical-align: top;
+  }
+
+  tbody tr:last-child td { border-bottom: none; }
+
+  tbody tr:nth-child(even) { background: #f9fafc; }
+
+  /* Solutions column reading positively */
+  table.solutions-table td.solution-col {
+    background: var(--color-green-bg);
+    border-left: 3px solid var(--color-green-bd);
+    color: var(--color-green-txt);
+  }
+
+  table.solutions-table tr:nth-child(even) td.solution-col {
+    background: #e2f2e3;
+  }
+
+  /* ─── Persona cards ─────────────────────────────────────────────── */
+  .persona-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1.1rem;
+    margin-top: 1.25rem;
+  }
+
+  .persona-card {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    break-inside: avoid;
+    background: #fff;
+  }
+
+  .persona-card__header {
+    background: var(--color-accent-lt);
+    border-bottom: 1px solid var(--color-border);
+    padding: 0.85rem 1.1rem;
+  }
+
+  .persona-card__tag {
+    display: inline-block;
+    background: var(--color-accent);
+    color: #fff;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 0.12rem 0.5rem;
+    border-radius: 3px;
+    margin-bottom: 0.45rem;
+  }
+
+  .persona-card__name {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--color-accent-dk);
+  }
+
+  .persona-card__role {
+    font-size: 0.85rem;
+    color: var(--color-muted);
+    font-style: italic;
+    margin-top: 0.1rem;
+  }
+
+  .persona-card__body {
+    padding: 1rem 1.1rem 1.15rem;
+    flex: 1;
+  }
+
+  .persona-card__body dl { margin: 0; }
+
+  .persona-card__body dt {
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: var(--color-accent);
+    margin-top: 0.75rem;
+  }
+
+  .persona-card__body dt:first-child { margin-top: 0; }
+
+  .persona-card__body dd {
+    font-size: 0.87rem;
+    margin: 0.25rem 0 0;
+    line-height: 1.55;
+  }
+
+  .persona-card__success {
+    margin-top: 0.85rem;
+    padding-top: 0.7rem;
+    border-top: 1px dashed var(--color-border);
+    font-size: 0.85rem;
+  }
+
+  .persona-card__success strong {
+    color: var(--color-accent);
+  }
+
+  /* ─── Phase callouts ────────────────────────────────────────────── */
+  .phase-block {
+    border-left: 4px solid var(--color-accent);
+    padding-left: 1.1rem;
+    margin: 1.4rem 0;
+  }
+
+  .phase-block h3 { margin-top: 0; }
+
+  .exit-criteria {
+    background: var(--color-accent-lt);
+    border: 1px solid #c0d4ee;
+    border-radius: var(--radius);
+    padding: 0.7rem 1.1rem;
+    font-size: 0.88rem;
+    margin-top: 0.85rem;
+  }
+
+  .exit-criteria strong.exit-label {
+    display: block;
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-accent);
+    margin-bottom: 0.35rem;
+  }
+
+  /* ─── Callout / sidebar note ────────────────────────────────────── */
+  .callout {
+    background: #fff8e6;
+    border: 1px solid #e5c96a;
+    border-left: 4px solid #d4a017;
+    border-radius: var(--radius);
+    padding: 0.9rem 1.1rem;
+    margin: 1rem 0;
+    font-size: 0.9rem;
+  }
+
+  .callout strong { color: #7a5a00; }
+
+  /* ─── Sprint blocks (section 6) ─────────────────────────────────── */
+  .sprint-block {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: 1rem 1.25rem;
+    margin-bottom: 1rem;
+    background: #fbfcfe;
+  }
+
+  .sprint-block h4 {
+    margin-top: 0;
+    color: var(--color-accent-dk);
+    font-size: 0.95rem;
+  }
+
+  .sprint-block:last-child { margin-bottom: 0; }
+
+  .team-line {
+    margin-top: 1.25rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--color-border);
+    font-size: 0.9rem;
+    color: var(--color-muted);
+  }
+
+  /* ─── Footer ─────────────────────────────────────────────────────── */
+  footer.doc-footer {
+    text-align: center;
+    font-size: 0.8rem;
+    color: var(--color-muted);
+    padding: 1rem 0 2rem;
+  }
+
+  /* ─── Responsive ────────────────────────────────────────────────── */
+  @media (max-width: 768px) {
+    #toc-sidebar { display: none; }
+    main { padding: 1.25rem 0 3rem; }
+    .doc-header { padding: 1.5rem 1.25rem; }
+    .doc-header h1 { font-size: 1.3rem; }
+    section { padding: 1.25rem 1rem; }
+    #toc-inline ol { columns: 1; }
+    .persona-grid { grid-template-columns: 1fr; }
+  }
+
+  /* ─── Print ─────────────────────────────────────────────────────── */
+  @media print {
+    body { background: #fff; font-size: 11pt; }
+    .layout { display: block; max-width: 100%; padding: 0; }
+    #toc-sidebar { display: none; }
+    main { padding: 0; max-width: 100%; }
+    #toc-inline { display: none; }
+
+    .doc-header {
+      background: #1c4f8c !important;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+      padding: 1rem 1.25rem;
+    }
+
+    .mission-block {
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    section {
+      border: 1px solid #ccc;
+      page-break-inside: avoid;
+      margin-bottom: 1rem;
+      padding: 1rem;
+    }
+
+    table, .persona-card, .sprint-block, .phase-block { page-break-inside: avoid; }
+
+    h2, h3, h4 { page-break-after: avoid; }
+
+    a { color: inherit; text-decoration: none; }
+
+    thead th,
+    table.solutions-table td.solution-col,
+    .persona-card__header,
+    .persona-card__tag {
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    pre {
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  }
+</style>
+</head>
+<body>
+
+<div class="layout">
+
+  <!-- Sticky sidebar TOC (hidden on mobile / print) -->
+  <nav id="toc-sidebar" aria-label="Section navigation">
+    <h2>Contents</h2>
+    <ol>
+      <li><a href="#s1">1. User Personas</a></li>
+      <li><a href="#s2">2. Product Architecture</a></li>
+      <li><a href="#s3">3. User Management &amp; Access Control</a></li>
+      <li><a href="#s4">4. Security Architecture</a></li>
+      <li><a href="#s5">5. Testing &amp; Quality Strategy</a></li>
+      <li><a href="#s6">6. Delivery Plan — 12 Months</a></li>
+      <li><a href="#s7">7. Roadmap (Phase View)</a></li>
+      <li><a href="#s8">8. Blindspots → Solutions</a></li>
+      <li><a href="#s9">9. Adoption &amp; Change-Management</a></li>
+      <li><a href="#s10">10. Success Metrics</a></li>
+      <li><a href="#s11">11. Tech Stack</a></li>
+      <li><a href="#s12">12. Imagery &amp; Data Access</a></li>
+      <li><a href="#s13">13. What Success Looks Like</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+    <!-- Document header -->
+    <header class="doc-header">
+      <p class="kicker">Government Land Intelligence Platform · v2.0 · 2026-07-08</p>
+      <h1>mapencroach — Implementation Plan v2.0 (Builder's Edition)</h1>
+
+      <div class="mission-block">
+        <p class="mission-label">Mission</p>
+        <p>Give the state a working system that protects public land — every hectare of government land visibly monitored, every new encroachment caught early, every case carried to closure with evidence that stands up in court.</p>
+      </div>
+
+      <p class="tagline">This is a plan to succeed, not just to avoid failure. Every known risk appears here exactly once — next to the feature or process that defuses it.</p>
+
+      <div class="doc-meta">
+        <span data-label="Author">Claude</span>
+        <span data-label="Date">2026-07-08</span>
+        <span data-label="Version">v2.0 (supersedes v1.0)</span>
+      </div>
+    </header>
+
+    <!-- Inline TOC -->
+    <nav id="toc-inline" aria-label="Table of contents">
+      <h2>Table of Contents</h2>
+      <ol>
+        <li><a href="#s1">Who We're Building For — User Personas</a></li>
+        <li><a href="#s2">Product Architecture &amp; Implementation Details</a></li>
+        <li><a href="#s3">User Management &amp; Access Control</a></li>
+        <li><a href="#s4">Security Architecture</a></li>
+        <li><a href="#s5">Testing &amp; Quality Strategy</a></li>
+        <li><a href="#s6">Delivery Plan — First 12 Months, Sprint by Sprint</a></li>
+        <li><a href="#s7">Roadmap (Phase View)</a></li>
+        <li><a href="#s8">Blindspots → Engineered Solutions</a></li>
+        <li><a href="#s9">Adoption &amp; Change-Management Playbook</a></li>
+        <li><a href="#s10">Success Metrics &amp; Operating Rhythm</a></li>
+        <li><a href="#s11">Tech Stack (settled)</a></li>
+        <li><a href="#s12">Imagery &amp; Data Access (settled)</a></li>
+        <li><a href="#s13">What Success Looks Like</a></li>
+      </ol>
+    </nav>
+
+    <!-- ── Section 1 ─────────────────────────────────────────────── -->
+    <section id="s1">
+      <h2><span class="sec-num">1</span> Who We're Building For — User Personas</h2>
+      <p>The product succeeds when each of these people is better at their job with it than without it.</p>
+
+      <div class="persona-grid">
+
+        <div class="persona-card">
+          <div class="persona-card__header">
+            <span class="persona-card__tag">P1</span>
+            <div class="persona-card__name">District Collector</div>
+            <div class="persona-card__role">"the sponsor's eyes"</div>
+          </div>
+          <div class="persona-card__body">
+            <dl>
+              <dt>Reality today</dt>
+              <dd>Learns about encroachment from newspapers, complaints, or court orders. No district-wide picture. Reviews are anecdote-driven.</dd>
+              <dt>What we give her</dt>
+              <dd>One dashboard — active cases, case age, area under threat, where cases are stuck, which taluk is performing.</dd>
+              <dt>Key screens</dt>
+              <dd>Executive dashboard, pipeline-leakage view, monthly review pack (auto-generated PDF).</dd>
+            </dl>
+            <p class="persona-card__success"><strong>Success:</strong> she opens it unprompted before every revenue review meeting.</p>
+          </div>
+        </div>
+
+        <div class="persona-card">
+          <div class="persona-card__header">
+            <span class="persona-card__tag">P2</span>
+            <div class="persona-card__name">Tahsildar / Revenue Officer</div>
+            <div class="persona-card__role">"the case owner"</div>
+          </div>
+          <div class="persona-card__body">
+            <dl>
+              <dt>Reality today</dt>
+              <dd>Encroachment work is reactive paperwork on top of 40 other duties. Files move slowly; evidence is scattered.</dd>
+              <dt>What we give him</dt>
+              <dd>A triaged alert queue (highest severity first), one-click inspection assignment, auto-assembled evidence packets, notice templates, a case file that never loses documents.</dd>
+              <dt>Key screens</dt>
+              <dd>Alert triage queue, case detail, notice generator.</dd>
+            </dl>
+            <p class="persona-card__success"><strong>Success:</strong> processing a case takes hours of his time instead of weeks; he trusts the queue because ≥60% of Red alerts are real.</p>
+          </div>
+        </div>
+
+        <div class="persona-card">
+          <div class="persona-card__header">
+            <span class="persona-card__tag">P3</span>
+            <div class="persona-card__name">Village Accountant / Field Inspector</div>
+            <div class="persona-card__role">"boots on the ground"</div>
+          </div>
+          <div class="persona-card__body">
+            <dl>
+              <dt>Reality today</dt>
+              <dd>Handwritten panchnama, photos on personal phone via WhatsApp, no GPS record, evidence challenged later.</dd>
+              <dt>What we give him</dt>
+              <dd>A mobile app that works offline, shows him exactly which parcel to visit, records a GPS track of the visit, hashes photos at capture, and syncs when he's back in coverage. Regional-language UI, runs on a ₹10k Android.</dd>
+              <dt>Key screens</dt>
+              <dd>Today's inspections, parcel locator map, guided inspection form, photo capture.</dd>
+            </dl>
+            <p class="persona-card__success"><strong>Success:</strong> a complete, tamper-evident inspection report reaches the case file the same day.</p>
+          </div>
+        </div>
+
+        <div class="persona-card">
+          <div class="persona-card__header">
+            <span class="persona-card__tag">P4</span>
+            <div class="persona-card__name">Survey Officer</div>
+            <div class="persona-card__role">"the boundary authority"</div>
+          </div>
+          <div class="persona-card__body">
+            <dl>
+              <dt>Reality today</dt>
+              <dd>Demarcation requests arrive as paper files with vague descriptions.</dd>
+              <dt>What we give him</dt>
+              <dd>A demarcation request queue with parcel context, imagery, and the exact dispute area; a place to upload DGPS results that then upgrade the parcel's boundary-confidence grade for everyone.</dd>
+            </dl>
+            <p class="persona-card__success"><strong>Success:</strong> his DGPS work compounds — every survey permanently improves the map.</p>
+          </div>
+        </div>
+
+        <div class="persona-card">
+          <div class="persona-card__header">
+            <span class="persona-card__tag">P5</span>
+            <div class="persona-card__name">Department Legal Officer</div>
+            <div class="persona-card__role">"the evidence gatekeeper"</div>
+          </div>
+          <div class="persona-card__body">
+            <dl>
+              <dt>Reality today</dt>
+              <dd>Cases collapse in court on procedure — missing notice proof, uncertifiable digital photos.</dd>
+              <dt>What we give her</dt>
+              <dd>Evidence packets with hash manifests and BSA §63 certificate workflow, a hearing tracker, due-process checklist enforced by the system itself (a case cannot advance past a skipped step).</dd>
+            </dl>
+            <p class="persona-card__success"><strong>Success:</strong> zero cases lost on procedural/evidentiary grounds.</p>
+          </div>
+        </div>
+
+        <div class="persona-card">
+          <div class="persona-card__header">
+            <span class="persona-card__tag">P6</span>
+            <div class="persona-card__name">GIS / Data Administrator</div>
+            <div class="persona-card__role">state HQ · "the map keeper"</div>
+          </div>
+          <div class="persona-card__body">
+            <dl>
+              <dt>What we give him</dt>
+              <dd>Imagery management console (AOIs, capture dates, cloud cover, tasking requests), cadastral QA tools (topology checks, boundary grading), detection-run monitor, false-positive analytics.</dd>
+            </dl>
+            <p class="persona-card__success"><strong>Success:</strong> every monthly detection run completes on schedule; parcel data quality trends upward.</p>
+          </div>
+        </div>
+
+        <div class="persona-card">
+          <div class="persona-card__header">
+            <span class="persona-card__tag">P7</span>
+            <div class="persona-card__name">System Administrator</div>
+            <div class="persona-card__role">NIC / state IT · "the operator"</div>
+          </div>
+          <div class="persona-card__body">
+            <dl>
+              <dt>What we give him</dt>
+              <dd>User provisioning tied to the government hierarchy, transfer/handover workflows, audit search, backup/restore runbooks, uptime dashboards.</dd>
+            </dl>
+            <p class="persona-card__success"><strong>Success:</strong> officer transfers don't orphan cases; audits take minutes, not weeks.</p>
+          </div>
+        </div>
+
+        <div class="persona-card">
+          <div class="persona-card__header">
+            <span class="persona-card__tag">P8</span>
+            <div class="persona-card__name">Secretary / HoD</div>
+            <div class="persona-card__role">"the mandate holder"</div>
+          </div>
+          <div class="persona-card__body">
+            <dl>
+              <dt>What we give her</dt>
+              <dd>Quarterly statewide KPIs — hectares protected, cases closed, recovery value, district league table — the numbers that justify next year's budget and expansion GO.</dd>
+            </dl>
+            <p class="persona-card__success"><strong>Success:</strong> she presents mapencroach data in the Chief Secretary's review.</p>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ── Section 2 ─────────────────────────────────────────────── -->
+    <section id="s2">
+      <h2><span class="sec-num">2</span> Product Architecture &amp; Implementation Details</h2>
+
+      <h3>2.1 System overview</h3>
+      <div class="pre-wrap">
+<pre>Imagery sources ──► Ingestion workers ──► COG + STAC catalog ──► TiTiler tiles ─┐
+(Bhoonidhi, Sentinel,     (Prefect)              (MinIO/S3)                    │
+ drone, mobile photos)         │                                               ▼
+                               ▼                                        Web app (Next.js)
+                     Detection pipeline ──► Alerts ──► Case engine ◄──► Mobile app (RN)
+                     (change screening,      (PostGIS)  (state machine,        ▲
+                      footprint diff)                    evidence store)       │
+                               ▲                              │                │
+                     Parcel registry ◄────────────────────────┴──► Audit chain + WORM evidence
+                     (cadastre, boundary grades)</pre>
+      </div>
+
+      <p>One FastAPI monolith + Prefect workers. No microservices at pilot scale — minimum complexity, maximum shippability.</p>
+
+      <h3>2.2 Core data model (PostGIS)</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Table</th><th>Key fields</th><th>Notes</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>parcel</code></td>
+              <td>geometry, survey_no, ULPIN, owning_dept, land_category, <strong>boundary_grade (A/B/C)</strong>, legal_status, jurisdiction_id</td>
+              <td>Versioned via <code>parcel_version</code> — boundaries change as surveys land</td>
+            </tr>
+            <tr>
+              <td><code>imagery_scene</code></td>
+              <td>footprint, capture_ts, sensor, resolution, cloud_pct, source, <strong>sha256</strong>, stac_item_id</td>
+              <td>Hash computed at ingest, before anything else touches the file</td>
+            </tr>
+            <tr>
+              <td><code>detection_run</code></td>
+              <td>model_version, aoi, started/finished, params</td>
+              <td>Reproducibility: every alert traces to a run</td>
+            </tr>
+            <tr>
+              <td><code>alert</code></td>
+              <td>parcel_id, detection_run_id, change_gekm, area_m2, tier (green/amber/red/legacy), severity_score, persistence_count</td>
+              <td>Persistence ≥2 captures before an alert becomes visible</td>
+            </tr>
+            <tr>
+              <td><code>case</code></td>
+              <td>alert_id, parcel_id, owner_user_id, <strong>state</strong>, opened_ts, sla_due</td>
+              <td>One case per confirmed alert</td>
+            </tr>
+            <tr>
+              <td><code>case_event</code></td>
+              <td>case_id, from_state, to_state, actor, ts, note</td>
+              <td><strong>Append-only</strong> — the state machine's audit trail</td>
+            </tr>
+            <tr>
+              <td><code>inspection</code></td>
+              <td>case_id, inspector_id, gps_track, started/ended, form_json</td>
+              <td></td>
+            </tr>
+            <tr>
+              <td><code>media</code></td>
+              <td>inspection_id/case_id, <strong>sha256_at_capture</strong>, gps, ts, device_id</td>
+              <td>Photos hashed on-device before upload</td>
+            </tr>
+            <tr>
+              <td><code>evidence_packet</code></td>
+              <td>case_id, manifest (all hashes), certificate_status, issued_by</td>
+              <td>Rendered PDF stored in WORM bucket</td>
+            </tr>
+            <tr>
+              <td><code>user</code>, <code>role</code>, <code>jurisdiction</code></td>
+              <td></td>
+              <td>See §3</td>
+            </tr>
+            <tr>
+              <td><code>audit_log</code></td>
+              <td>actor, action, object, ts, <strong>prev_hash, row_hash</strong></td>
+              <td>Hash-chained, append-only</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>2.3 Case state machine <span class="sec-suffix">(due process encoded, not documented)</span></h3>
+      <div class="pre-wrap">
+<pre>NEW → TRIAGED → INSPECTION_ASSIGNED → INSPECTED → SHOW_CAUSE_ISSUED
+    → RESPONSE_WINDOW → HEARING_SCHEDULED → HEARING_HELD → ORDER_ISSUED
+    → ACTION_TAKEN → CLOSED
+Side exits (from any state): DISMISSED_FALSE_POSITIVE · LEGACY_REFERRED ·
+    SURVEY_REQUESTED (blocks until survey uploaded) · STAYED_BY_COURT (freezes SLA)</pre>
+      </div>
+
+      <p>Transitions are the <em>only</em> way a case moves; each requires the artifacts of its step (e.g., <code>SHOW_CAUSE_ISSUED</code> requires a generated notice + dispatch proof; <code>ORDER_ISSUED</code> requires a reasoned-order document). This is how the SC's Nov-2024 demolition guidelines become impossible to skip rather than easy to forget.</p>
+
+      <h3>2.4 Detection pipeline <span class="sec-suffix">(monthly, per AOI)</span></h3>
+      <ol>
+        <li>Pull new Sentinel-2 scenes (cloud &lt; 30%) → COG → STAC.</li>
+        <li>Band-ratio change vs. rolling baseline (NDVI/NDBI/BSI) per parcel; simple classifier scores change type.</li>
+        <li>Persistence check: candidate must recur in the next capture → else parked.</li>
+        <li>Persistent candidates on govt parcels → <strong>Amber alert</strong> + high-res confirmation request (Cartosat tasking or archive).</li>
+        <li>High-res footprint diff vs. baseline footprints → <strong>Red</strong> (new built-up) or dismissed with reason code.</li>
+        <li>Severity score = f(area, land_category weight, boundary_grade, repeat_flag) → triage queue.</li>
+        <li>Every officer disposition (confirm / false-positive + reason) is captured as labeled training data.</li>
+      </ol>
+
+      <p>Monsoon mode (Jun–Sep): Sentinel-1 SAR coherence change as the screening signal; optical confirmation deferred, SLA clocks adjusted.</p>
+
+      <h3>2.5 API surface (v1)</h3>
+      <p><code>/auth/*</code> (Keycloak-backed) · <code>/parcels</code> (+geo queries, timeline) · <code>/alerts</code> (queue, triage, disposition) · <code>/cases</code> (+ <code>/transitions</code>, <code>/events</code>) · <code>/inspections</code> (+ mobile sync batch endpoint) · <code>/evidence</code> (packet build, certificate workflow) · <code>/tiles/{z}/{x}/{y}</code> (TiTiler proxy with auth) · <code>/admin/*</code> (users, jurisdictions, imagery, detection runs) · <code>/reports/*</code> (dashboard aggregates)</p>
+
+      <p>All endpoints jurisdiction-scoped (see §3.2); all mutations audit-logged.</p>
+    </section>
+
+    <!-- ── Section 3 ─────────────────────────────────────────────── -->
+    <section id="s3">
+      <h2><span class="sec-num">3</span> User Management &amp; Access Control</h2>
+
+      <h3>3.1 Roles <span class="sec-suffix">(mapped to the government hierarchy)</span></h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Role</th><th>Persona</th><th>Can do</th><th>Cannot do</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Viewer</td><td>Secretary, Collector</td><td>dashboards, case read</td><td>any mutation</td>
+            </tr>
+            <tr>
+              <td>Case Officer</td><td>Tahsildar</td><td>triage alerts, run cases, issue notices</td><td>alter evidence, close without due-process states</td>
+            </tr>
+            <tr>
+              <td>Inspector</td><td>VA/field staff</td><td>assigned inspections, media upload</td><td>see other jurisdictions, edit after submission</td>
+            </tr>
+            <tr>
+              <td>Survey Officer</td><td>Survey dept</td><td>demarcation queue, DGPS upload, boundary-grade updates</td><td>case actions</td>
+            </tr>
+            <tr>
+              <td>Legal Officer</td><td>Legal cell</td><td>certify evidence, hearing tracker, legal holds</td><td>field/detection functions</td>
+            </tr>
+            <tr>
+              <td>Data Admin</td><td>GIS cell</td><td>imagery, parcels, detection runs, FP analytics</td><td>case decisions</td>
+            </tr>
+            <tr>
+              <td>System Admin</td><td>NIC/IT</td><td>user lifecycle, audit search, config</td><td><strong>case decisions, evidence writes</strong> (separation of duties)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>3.2 Jurisdiction scoping</h3>
+      <p>Every user is bound to a node in the jurisdiction tree (state → district → taluk → village). Enforced as row-level filters in every query — an inspector literally cannot fetch parcels outside his charge. Collectors see their district; HQ roles see the state.</p>
+
+      <h3>3.3 The transfer problem <span class="sec-suffix">(solved, not ignored)</span></h3>
+      <p>Government officers transfer every 1–3 years. Built-in from Phase 1:</p>
+      <ul>
+        <li><strong>Handover workflow:</strong> transfer order → outgoing officer's open cases listed → bulk reassign to successor → handover memo auto-generated and logged.</li>
+        <li><strong>No orphan cases:</strong> a case cannot lack an owner; SLA alarms escalate ownerless cases to the collector queue.</li>
+        <li><strong>Leave delegation:</strong> time-boxed delegation with full audit trail; delegate actions are marked as such.</li>
+      </ul>
+
+      <h3>3.4 Identity &amp; onboarding</h3>
+      <ul>
+        <li>Phase 1: Keycloak — officer ID + mobile OTP; MFA (TOTP) mandatory for Legal, Data Admin, System Admin roles.</li>
+        <li>Bulk provisioning from department HRMS lists (CSV import with maker-checker approval).</li>
+        <li>Integrate state SSO / NIC Parichay when the state mandates it (Keycloak federates cleanly).</li>
+        <li>Quarterly access review report auto-generated for the sponsor department; dormant accounts (90 days) auto-suspended.</li>
+      </ul>
+    </section>
+
+    <!-- ── Section 4 ─────────────────────────────────────────────── -->
+    <section id="s4">
+      <h2><span class="sec-num">4</span> Security Architecture</h2>
+
+      <h3>4.1 Threat model — who attacks this and why</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Adversary</th><th>Goal</th><th>Primary defenses</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Well-resourced encroacher</td>
+              <td>delete/alter evidence, learn what's unmonitored, stall cases</td>
+              <td>WORM evidence store, hash-chained audit, need-to-know on coverage maps, SLA escalation</td>
+            </tr>
+            <tr>
+              <td>Insider (colluding official)</td>
+              <td>quietly dismiss alerts, leak parcel intel, fix cases</td>
+              <td>append-only case events, random secondary review of dismissals/closures, access logging on evidence reads, separation of duties</td>
+            </tr>
+            <tr>
+              <td>Generic attacker</td>
+              <td>deface, ransom, exfiltrate owner data</td>
+              <td>standard hardening below</td>
+            </tr>
+            <tr>
+              <td>Litigant</td>
+              <td>discredit evidence in court</td>
+              <td>provenance metadata, capture-time hashing, §63 certificate workflow</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>4.2 Controls</h3>
+      <ul>
+        <li><strong>Evidence integrity:</strong> SHA-256 at ingest/capture → RFC 3161 timestamp → manifest in packet → packet PDF in WORM (object-lock) bucket. Mobile photos hashed <em>on-device</em> before upload with GPS+time embedded.</li>
+        <li><strong>Audit:</strong> hash-chained append-only log for every mutation <em>and every evidence read</em>; chain verified nightly; exportable for CAG/departmental audit.</li>
+        <li><strong>AppSec:</strong> OWASP Top 10 discipline — parameterized queries only, output encoding, CSRF tokens, strict CORS, rate limiting, file-upload validation (type/size/AV scan), no secrets in code (Vault/SOPS), dependency scanning + SBOM in CI (govt procurement increasingly asks for SBOMs).</li>
+        <li><strong>Transport/storage:</strong> TLS 1.2+ everywhere, AES-256 at rest, per-environment keys, India-only regions (Geospatial Guidelines 2021 for sub-1m data).</li>
+        <li><strong>Mobile:</strong> device binding, certificate pinning, encrypted local store, remote wipe of app data on transfer/exit.</li>
+        <li><strong>Ops:</strong> dev/staging/prod isolation (staging runs synthetic-district data, never real owner data), backups with quarterly restore drills, RPO ≤ 24h / RTO ≤ 8h for the pilot, incident-response runbook with CERT-In reporting timelines (6h rule).</li>
+        <li><strong>Compliance gates:</strong> CERT-In empanelled VAPT before pilot go-live and annually; STQC before statewide; DPDP data-map + retention schedule reviewed by legal officer; defence-adjacent/restricted parcels excluded at the data layer.</li>
+      </ul>
+
+      <h3>4.3 Data classification</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Class</th><th>Examples</th><th>Handling</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Public</td><td>aggregate district stats</td><td>publishable dashboards</td></tr>
+            <tr><td>Internal</td><td>parcel layers, alert queues</td><td>authenticated, jurisdiction-scoped</td></tr>
+            <tr><td>Restricted</td><td>owner/occupant personal data, coverage/tasking plans</td><td>role-gated, access-logged, DPDP minimization</td></tr>
+            <tr><td>Evidence</td><td>packets, media, certificates</td><td>WORM, read-audited, legal-hold capable</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── Section 5 ─────────────────────────────────────────────── -->
+    <section id="s5">
+      <h2><span class="sec-num">5</span> Testing &amp; Quality Strategy</h2>
+
+      <p>TDD throughout; ≥80% coverage on changed code is the merge bar. But geospatial+government systems need more than unit tests:</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Layer</th><th>What we test</th><th>How</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Geospatial logic</td>
+              <td>spatial joins, area calc, boundary-grade weighting, CRS handling</td>
+              <td>fixture parcels + synthetic change rasters; property-based tests for geometry edge cases (slivers, multipolygons, dateline-safe ops)</td>
+            </tr>
+            <tr>
+              <td>Detection quality</td>
+              <td>precision/recall per model release</td>
+              <td><strong>golden dataset</strong>: curated known-change/no-change image pairs from the pilot AOI, grown from officer dispositions; no model ships that regresses precision</td>
+            </tr>
+            <tr>
+              <td>Case engine</td>
+              <td>every transition, every illegal transition, SLA/escalation timing</td>
+              <td>exhaustive state-machine tests; time-travel clock in tests</td>
+            </tr>
+            <tr>
+              <td>Evidence</td>
+              <td>hash manifest correctness, packet reproducibility, chain verification</td>
+              <td>byte-level regression tests; tamper-detection test (mutate a row → chain check must fail)</td>
+            </tr>
+            <tr>
+              <td>API</td>
+              <td>authz on every endpoint × every role × wrong-jurisdiction</td>
+              <td>contract tests generated from the role matrix in §3.1</td>
+            </tr>
+            <tr>
+              <td>Mobile sync</td>
+              <td>offline queue, conflict handling, partial sync, low-storage devices</td>
+              <td>device-farm runs on 3 low-end Android models; airplane-mode test scripts</td>
+            </tr>
+            <tr>
+              <td>Pipeline</td>
+              <td>end-to-end monthly run on a mini-AOI</td>
+              <td>staging runs the full DAG nightly on synthetic data</td>
+            </tr>
+            <tr>
+              <td>Performance</td>
+              <td>100k parcels on map, tile latency &lt; 300ms p95, triage queue &lt; 2s</td>
+              <td>k6 load tests in CI</td>
+            </tr>
+            <tr>
+              <td>Security</td>
+              <td>OWASP, dependency CVEs</td>
+              <td>ZAP baseline + dependency scan in CI; external VAPT per §4.2</td>
+            </tr>
+            <tr>
+              <td><strong>Field reality</strong></td>
+              <td>does it work in a taluk office and a village?</td>
+              <td><strong>shadow mode</strong>: Phase 2 detection runs live for 2 months generating alerts nobody acts on — we measure precision and tune <em>before</em> officer trust is at stake. UAT scripts run with real officers each phase</td>
+            </tr>
+            <tr>
+              <td>Data quality</td>
+              <td>cadastral topology (gaps, overlaps, invalid geometry)</td>
+              <td>automated QA report on every parcel import; blocking errors quarantine the batch</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── Section 6 ─────────────────────────────────────────────── -->
+    <section id="s6">
+      <h2><span class="sec-num">6</span> Delivery Plan — First 12 Months, Sprint by Sprint</h2>
+      <p class="lead-note">Two-week sprints, demo every sprint, officer-facing demo every second sprint.</p>
+
+      <div class="sprint-block">
+        <h4>Months 1–3 (S1–S6) · Foundation <span class="sec-suffix">(parallel with Phase 0 institutional work)</span></h4>
+        <ul>
+          <li><strong>S1–S2:</strong> repo + CI/CD (tests, lint, dependency scan), PostGIS schema v1, Keycloak setup, cadastral ingestion + topology QA tool, jurisdiction tree.</li>
+          <li><strong>S3–S4:</strong> parcel map (MapLibre + PMTiles), parcel profile page, Sentinel-2 ingestion → COG/STAC → TiTiler, hash-on-ingest, audit chain v1.</li>
+          <li><strong>S5–S6:</strong> case engine (full state machine + tests), alert CRUD (manual creation), RBAC + jurisdiction scoping across API, boundary-grading workflow for the GIS admin.</li>
+        </ul>
+      </div>
+
+      <div class="sprint-block">
+        <h4>Months 4–6 (S7–S12) · Workflow MVP live</h4>
+        <ul>
+          <li><strong>S7–S8:</strong> evidence packets (manifest, PDF, certificate workflow), imagery timeline + before/after slider, notice generator with legal-approved templates.</li>
+          <li><strong>S9–S10:</strong> officer UAT round 1 → fixes; baseline footprints imported (Open Buildings + QA); transfer/handover workflow; <strong>go-live: pilot officers run 10–20 real cases manually</strong>.</li>
+          <li><strong>S11–S12:</strong> detection pipeline v1 in <strong>shadow mode</strong>; triage console; precision-measurement harness; false-positive tagging.</li>
+        </ul>
+      </div>
+
+      <div class="sprint-block">
+        <h4>Months 7–9 (S13–S18) · Detection GA + mobile</h4>
+        <ul>
+          <li><strong>S13–S14:</strong> shadow-mode calibration (persistence tuning, severity weights) → detection GA when precision ≥60% on shadow data; Cartosat/high-res confirmation loop.</li>
+          <li><strong>S15–S18:</strong> inspector mobile app (offline maps, guided form, hashed photo capture, sync), device-farm testing, field trial in one taluk, regional-language UI.</li>
+        </ul>
+      </div>
+
+      <div class="sprint-block">
+        <h4>Months 10–12 (S19–S24) · Enforcement &amp; visibility</h4>
+        <ul>
+          <li><strong>S19–S20:</strong> hearing tracker, reasoned-order records, survey-request integration, legal-hold.</li>
+          <li><strong>S21–S22:</strong> collector dashboard + pipeline-leakage view + monthly review pack; secretary KPI rollups.</li>
+          <li><strong>S23–S24:</strong> CERT-In VAPT + fixes; DR drill; SAR monsoon mode; pilot review report → scale-up GO proposal.</li>
+        </ul>
+      </div>
+
+      <p class="team-line"><strong>Team:</strong> 1 PM/domain lead · 1 geospatial engineer · 2 full-stack · 1 ML (from S11) · 1 field ops/training · part-time legal counsel.</p>
+    </section>
+
+    <!-- ── Section 7 ─────────────────────────────────────────────── -->
+    <section id="s7">
+      <h2><span class="sec-num">7</span> Roadmap (Phase View)</h2>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Phase</th><th>Months</th><th>Outcome</th><th>Exit criteria</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>0 · Foundation</td>
+              <td>1–3</td>
+              <td>GO signed, Bhoonidhi/Cartosat access validated, parcels boundary-graded, baseline date declared &amp; imaged</td>
+              <td>≥90% pilot parcels graded; baseline hashed; SOP signed</td>
+            </tr>
+            <tr>
+              <td>1 · Workflow MVP</td>
+              <td>3–6</td>
+              <td>Officers run real cases end-to-end, no ML</td>
+              <td>N cases to notice stage; legal counsel approves packets</td>
+            </tr>
+            <tr>
+              <td>2 · Detection</td>
+              <td>6–10</td>
+              <td>Monthly screening + high-res confirmation, live after shadow calibration</td>
+              <td>precision ≥60% field-confirmed</td>
+            </tr>
+            <tr>
+              <td>3 · Field &amp; enforcement</td>
+              <td>9–14</td>
+              <td>Mobile app, notices, hearings, leakage dashboard</td>
+              <td>median alert→closure tracked; zero due-process skips</td>
+            </tr>
+            <tr>
+              <td>4 · Scale</td>
+              <td>14–24</td>
+              <td>More districts/departments, retraining loop, statewide dashboards</td>
+              <td>CERT-In + STQC cleared; expansion GO</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p><strong>Pilot wedge (recommended):</strong> water-body/tank-bed encroachment in one district — court/NGT mandates often already require monitoring, so budget and motivated officers exist on day one. Alternative: 1,000–5,000 high-value govt parcels in the district with the <em>best land records</em> (DILRMP score), not the worst encroachment.</p>
+    </section>
+
+    <!-- ── Section 8 ─────────────────────────────────────────────── -->
+    <section id="s8">
+      <h2><span class="sec-num">8</span> Blindspots → Engineered Solutions</h2>
+      <p class="lead-note">Every hard truth about this domain, and the specific thing in this plan that handles it:</p>
+
+      <div class="table-wrap">
+        <table class="solutions-table">
+          <thead>
+            <tr><th>Blindspot</th><th>Built-in answer</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Cadastral maps off by 10–100m</td>
+              <td class="solution-col">Boundary grades (A/B/C) baked into severity + legal posture; every DGPS survey upgrades the grade permanently (§2.2, P4)</td>
+            </tr>
+            <tr>
+              <td>Satellite boundaries have no legal standing</td>
+              <td class="solution-col"><code>SURVEY_REQUESTED</code> state triggers official demarcation; product never asserts a boundary (§2.3)</td>
+            </tr>
+            <tr>
+              <td>Legacy occupation is a political/legal minefield</td>
+              <td class="solution-col">Baseline-date design + <code>LEGACY_REFERRED</code> routing; AI only ever flags <em>post-baseline change</em> (§2.3, §2.4)</td>
+            </tr>
+            <tr>
+              <td>Permits aren't digitized</td>
+              <td class="solution-col">Amber-by-default classifier; permit matching is an enhancement, never a dependency (§2.4)</td>
+            </tr>
+            <tr>
+              <td>10m imagery can't see small structures</td>
+              <td class="solution-col">Tiered cadence: free screening everywhere + Cartosat (free to govt) confirmation on flags; honest detection-floor SLAs (§2.4)</td>
+            </tr>
+            <tr>
+              <td>Officer alert fatigue kills adoption</td>
+              <td class="solution-col">Persistence rule, shadow-mode calibration before go-live, precision KPI as a release gate (§5)</td>
+            </tr>
+            <tr>
+              <td>Evidence challenged in court</td>
+              <td class="solution-col">Capture-time hashing, WORM store, §63 certificate workflow, due-process state machine (§2.3, §4.2)</td>
+            </tr>
+            <tr>
+              <td>Officer transfers orphan cases</td>
+              <td class="solution-col">Handover workflow + no-orphan rule + escalation (§3.3)</td>
+            </tr>
+            <tr>
+              <td>Insider collusion</td>
+              <td class="solution-col">Append-only events, random secondary review of dismissals, read-audited evidence (§4.1)</td>
+            </tr>
+            <tr>
+              <td>Enforcement stalls politically</td>
+              <td class="solution-col">Pipeline-leakage dashboard puts the stall in front of the collector and secretary (P1, P8)</td>
+            </tr>
+            <tr>
+              <td>Monsoon blinds optics</td>
+              <td class="solution-col">SAR screening mode + adjusted SLAs Jun–Sep (§2.4)</td>
+            </tr>
+            <tr>
+              <td>Cartosat tasking may be slow</td>
+              <td class="solution-col">Validated in Phase 0 with pre-approved commercial contingency (§7 Phase 0)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── Section 9 ─────────────────────────────────────────────── -->
+    <section id="s9">
+      <h2><span class="sec-num">9</span> Adoption &amp; Change-Management Playbook</h2>
+      <p class="lead-note">Software doesn't protect land — officers using it do. Budgeted and scheduled, not hoped for:</p>
+
+      <ol>
+        <li><strong>District champion:</strong> one respected Deputy Collector/Tahsildar co-designs screens from Sprint 3; their taluk goes first.</li>
+        <li><strong>Train-the-trainer:</strong> we train 5 master trainers; they train the rest in their own language. Training environment = staging with synthetic data.</li>
+        <li><strong>First-win publicity:</strong> the first real case closed through the system gets a departmental circular and a slot in the collector's review — success stories drive uptake faster than orders.</li>
+        <li><strong>Helpdesk where officers live:</strong> a WhatsApp support line + 48h fix SLA on field-app bugs during pilot.</li>
+        <li><strong>Officer feedback council:</strong> monthly 1-hour session; every release notes what changed because of officer input.</li>
+        <li><strong>Never a blocker:</strong> every workflow has a manual fallback so a system outage never gives anyone a reason to abandon it.</li>
+        <li><strong>Make the officer look good:</strong> monthly auto-generated achievement summary per officer (cases closed, area protected) — usable in their own performance reviews.</li>
+      </ol>
+    </section>
+
+    <!-- ── Section 10 ────────────────────────────────────────────── -->
+    <section id="s10">
+      <h2><span class="sec-num">10</span> Success Metrics &amp; Operating Rhythm</h2>
+
+      <p class="lead-note"><strong>North star: hectares of government land protected or recovered.</strong></p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Metric</th><th>Target (pilot)</th><th>Cadence</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Red-alert precision (field-confirmed)</td><td>≥60%</td><td>per detection run</td></tr>
+            <tr><td>Median alert → case closure</td><td>&lt; 90 days</td><td>weekly</td></tr>
+            <tr><td>Cases with complete, certified evidence</td><td>100%</td><td>per case</td></tr>
+            <tr><td>Officer weekly active usage</td><td>≥80% of provisioned officers</td><td>weekly</td></tr>
+            <tr><td>Pipeline leakage (cases stalled &gt;30 days per stage)</td><td>visible + trending down</td><td>weekly to collector</td></tr>
+            <tr><td>Detection coverage</td><td>100% of pilot parcels screened monthly</td><td>per run</td></tr>
+            <tr><td>Time from alert to inspection</td><td>&lt; 14 days</td><td>weekly</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Operating rhythm: sprint demos (biweekly) → collector review (monthly, auto-generated pack) → secretary KPI review (quarterly) → model + precision review (per detection run).</p>
+    </section>
+
+    <!-- ── Section 11 ────────────────────────────────────────────── -->
+    <section id="s11">
+      <h2><span class="sec-num">11</span> Tech Stack <span class="sec-suffix">(settled)</span></h2>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Layer</th><th>Choice</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Web</td><td>Next.js + TypeScript, MapLibre GL, deck.gl, Tailwind</td></tr>
+            <tr><td>Mobile</td><td>React Native, offline-first (PMTiles, SQLite sync queue)</td></tr>
+            <tr><td>API</td><td>Python FastAPI (monolith + workers)</td></tr>
+            <tr><td>Jobs</td><td>Prefect</td></tr>
+            <tr><td>DB</td><td>PostgreSQL + PostGIS (+ pgSTAC)</td></tr>
+            <tr><td>Imagery</td><td>MinIO/S3 · COG · STAC · TiTiler · GDAL/Rasterio/GeoPandas</td></tr>
+            <tr><td>ML</td><td>PyTorch + TorchGeo, Label Studio; band-ratio first, deep models when labels justify</td></tr>
+            <tr><td>Auth</td><td>Keycloak (→ state SSO/Parichay federation), TOTP MFA</td></tr>
+            <tr><td>Integrity</td><td>SHA-256 + RFC 3161 + hash-chained audit + object-lock WORM</td></tr>
+            <tr><td>Observability</td><td>Prometheus/Grafana/Loki, Sentry</td></tr>
+            <tr><td>Deploy</td><td>Docker Compose → K8s at scale; state DC or MeitY-empanelled Indian cloud, India-only</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>All open-source: no license line-items in the RFP, no foreign SaaS holding sub-1m geospatial data.</p>
+    </section>
+
+    <!-- ── Section 12 ────────────────────────────────────────────── -->
+    <section id="s12">
+      <h2><span class="sec-num">12</span> Imagery &amp; Data Access <span class="sec-suffix">(settled)</span></h2>
+
+      <ul>
+        <li><strong>Cartosat-2/3 via Bhoonidhi</strong> — ~0.3–0.65m, free to government under Space Policy 2023 → baseline + confirmation. Tasking latency validated in Phase 0.</li>
+        <li><strong>Sentinel-2</strong> (free, 10m, ~5-day) → monthly screening. <strong>Sentinel-1 SAR</strong> (1A+1C) → monsoon screening.</li>
+        <li><strong>Google Open Buildings / MS Footprints</strong> → footprint baseline bootstrap.</li>
+        <li><strong>Commercial (Planet/Maxar via Indian resellers)</strong> → contingency only, flagged parcels only.</li>
+        <li><strong>State cadastre + DILRMP + SVAMITVA drone data</strong> → parcel truth. <strong>SoI CORS/DGPS</strong> → ground control. <strong>Drones (Digital Sky-compliant)</strong> → priority-case evidence.</li>
+      </ul>
+
+      <div class="callout">
+        <strong>Pilot-year budget (order of magnitude):</strong> team ₹1.5–2.5 Cr · infra ₹10–25 L · imagery ~₹0 (Cartosat) with ₹15–40 L commercial contingency · devices/drones ₹5–10 L · security audits ₹5–15 L.
+      </div>
+    </section>
+
+    <!-- ── Section 13 ────────────────────────────────────────────── -->
+    <section id="s13">
+      <h2><span class="sec-num">13</span> What Success Looks Like</h2>
+
+      <ol>
+        <li>A collector opens the dashboard before every revenue review — because it's the best picture of her district she has.</li>
+        <li>An encroachment that began in March is a certified case file by May and a closed case by monsoon.</li>
+        <li>A field inspector's same-day, tamper-evident report replaces a week of paperwork.</li>
+        <li>The department's lawyer stops losing cases on procedure.</li>
+        <li>The secretary presents "hectares protected" numbers in the Chief Secretary's review — and asks for three more districts.</li>
+        <li>Officers ask for <em>more</em> parcels under monitoring. That's the moment this becomes permanent infrastructure for the state.</li>
+      </ol>
+    </section>
+
+    <footer class="doc-footer">
+      mapencroach — Implementation Plan v2.0 (Builder's Edition) · v2.0 · 2026-07-08
+    </footer>
+
+  </main>
+</div>
+
+<script>
+  // Sticky sidebar active-section highlighting
+  (function () {
+    var links = document.querySelectorAll('#toc-sidebar a');
+    var sections = Array.prototype.map.call(links, function (a) {
+      return document.querySelector(a.getAttribute('href'));
+    });
+
+    function onScroll() {
+      var scrollY = window.scrollY + 140;
+      var active = sections[0];
+      for (var i = 0; i < sections.length; i++) {
+        if (sections[i] && sections[i].offsetTop <= scrollY) {
+          active = sections[i];
+        }
+      }
+      for (var j = 0; j < links.length; j++) { links[j].classList.remove('active'); }
+      var id = active ? '#' + active.id : '';
+      var activeLink = document.querySelector('#toc-sidebar a[href="' + id + '"]');
+      if (activeLink) activeLink.classList.add('active');
+    }
+
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll);
+    onScroll();
+  })();
+</script>
+
+</body>
+</html>
