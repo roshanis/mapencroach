@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import MapView from "@/components/MapView";
 import { AlertSidebar } from "@/components/AlertSidebar";
+import { MapLegend } from "@/components/MapLegend";
 import { TopBar } from "@/components/TopBar";
 import { getAlerts, getParcels } from "@/lib/api";
 import type { Alert, Parcel } from "@/lib/types";
@@ -64,6 +65,9 @@ export default function CommandMapPage() {
           <div className="pointer-events-none absolute right-3 top-3 rounded bg-white/90 px-3 py-2 text-xs text-gray-600 shadow">
             Click an alert to pan the map, or click a marker to open its
             parcel.
+          </div>
+          <div className="absolute bottom-3 left-3">
+            <MapLegend categories={parcels.map((p) => p.land_category)} />
           </div>
         </main>
       </div>

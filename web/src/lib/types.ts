@@ -7,9 +7,9 @@ export type AlertStatus = "open" | "under_review" | "escalated" | "closed";
 export type BoundaryGrade = "A" | "B" | "C";
 
 export const BOUNDARY_GRADE_EXPLANATIONS: Record<BoundaryGrade, string> = {
-  A: "DGPS-verified",
-  B: "Georeferenced",
-  C: "Unverified",
+  A: "DGPS-verified — enforcement can rely on this boundary",
+  B: "Georeferenced — suitable for notices; survey before demolition",
+  C: "Unverified — a notice cannot rely on this boundary; survey first",
 };
 
 export type LandCategory =
@@ -18,7 +18,34 @@ export type LandCategory =
   | "revenue"
   | "municipal"
   | "agricultural"
-  | "grazing";
+  | "grazing"
+  | "irrigation"
+  | "housing"
+  | "industrial";
+
+export const LAND_CATEGORY_COLORS: Record<LandCategory, string> = {
+  waterbody: "#1d7fbf",
+  forest: "#1e8f4e",
+  irrigation: "#12918a",
+  municipal: "#c98a12",
+  housing: "#b0578d",
+  industrial: "#64748b",
+  revenue: "#8a5a2b",
+  agricultural: "#7da33c",
+  grazing: "#a3903c",
+};
+
+export const LAND_CATEGORY_LABELS: Record<LandCategory, string> = {
+  waterbody: "Waterbody",
+  forest: "Forest",
+  irrigation: "Irrigation",
+  municipal: "Municipal",
+  housing: "Housing",
+  industrial: "Industrial",
+  revenue: "Revenue",
+  agricultural: "Agricultural",
+  grazing: "Grazing",
+};
 
 export interface Parcel {
   id: string;
@@ -86,6 +113,7 @@ export interface Case {
   parcel_id: string;
   state: CaseState;
   events: CaseEvent[];
+  allowed_transitions?: string[];
 }
 
 export interface BBox {

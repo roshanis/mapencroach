@@ -1,13 +1,20 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import type { Parcel, Alert, BoundaryGrade, AlertTier } from "@/lib/types";
+import type * as MapLibreGL from "maplibre-gl";
+import { LAND_CATEGORY_COLORS } from "@/lib/types";
+import type { Parcel, Alert, AlertTier } from "@/lib/types";
 
-const GRADE_COLORS: Record<BoundaryGrade, string> = {
-  A: "#1e8f4e",
-  B: "#1c4f8c",
-  C: "#8a8a8a",
-};
+function buildLandCategoryMatchExpression(
+  fallback: string
+): MapLibreGL.DataDrivenPropertyValueSpecification<string> {
+  return [
+    "match",
+    ["get", "land_category"],
+    ...Object.entries(LAND_CATEGORY_COLORS).flat(),
+    fallback,
+  ] as unknown as MapLibreGL.DataDrivenPropertyValueSpecification<string>;
+}
 
 const TIER_COLORS: Record<AlertTier, string> = {
   green: "#1e8f4e",
@@ -84,7 +91,11 @@ export default function MapLibreMap({
             features: parcels.map((p) => ({
               type: "Feature",
               geometry: p.geometry,
-              properties: { id: p.id, boundary_grade: p.boundary_grade },
+              properties: {
+                id: p.id,
+                boundary_grade: p.boundary_grade,
+                land_category: p.land_category,
+              },
             })),
           },
         });
@@ -94,17 +105,7 @@ export default function MapLibreMap({
           type: "fill",
           source: "parcels",
           paint: {
-            "fill-color": [
-              "match",
-              ["get", "boundary_grade"],
-              "A",
-              GRADE_COLORS.A,
-              "B",
-              GRADE_COLORS.B,
-              "C",
-              GRADE_COLORS.C,
-              "#999999",
-            ],
+            "fill-color": buildLandCategoryMatchExpression("#999999"),
             "fill-opacity": 0.25,
           },
         });
@@ -114,17 +115,7 @@ export default function MapLibreMap({
           type: "line",
           source: "parcels",
           paint: {
-            "line-color": [
-              "match",
-              ["get", "boundary_grade"],
-              "A",
-              GRADE_COLORS.A,
-              "B",
-              GRADE_COLORS.B,
-              "C",
-              GRADE_COLORS.C,
-              "#999999",
-            ],
+            "line-color": buildLandCategoryMatchExpression("#999999"),
             "line-width": 2,
           },
         });

@@ -97,3 +97,18 @@ Nits: Sentinel-1B is dead (constellation = 1A+1C); Phase 0 of 2–4 weeks unreal
 ### Lint: ruff check clean on both new files and full backend/ (fixed B007 unused loop var, two unused test imports)
 ### Deviations from spec: none functional. Two test-fixture corrections made during red/green (not spec deviations): (1) two abutting boxes wrapped in one MultiPolygon are invalid per OGC self-intersection rules, so the "MultiPolygon passthrough" fixture uses disjoint parts instead; (2) the "no CRS" rejection fixture uses GPKG instead of GeoJSON since GeoJSON always reads back as EPSG:4326.
 ### Recommendations / Next steps: Alembic migrations, first FastAPI endpoints (/parcels with jurisdiction scoping), wire ingestion.load_parcels into an upload endpoint. Uncommitted on claude-worktree — awaiting user instruction to commit.
+
+## [AGENT: Claude] [2026-07-09T15:35Z]
+### Action: Demo-readiness cycle — verified the 5-minute demo narrative end to end, fixed 4 UI gaps + 1 live-API bug, wrote DEMO.md
+### Files changed:
+- DEMO.md (new — 5-minute script, pre-demo checklist, 409 "technical encore", honest-framing table, Q&A prep)
+- web/src/lib/types.ts (LandCategory +irrigation/housing/industrial; LAND_CATEGORY_COLORS/LABELS; plain-language BOUNDARY_GRADE_EXPLANATIONS; Case.allowed_transitions)
+- web/src/lib/api.ts (normalize dict-shaped event artifacts → "key: value" string[]; tolerate events-less /cases list shape)
+- web/src/lib/api.test.ts, web/src/lib/fixtures.ts
+- web/src/components/AllowedNextSteps.tsx + test (new), MapLegend.tsx + test (new)
+- web/src/components/MapLibreMap.tsx (parcel fill/outline now colored by land_category, was boundary_grade)
+- web/src/app/page.tsx (legend overlay), web/src/app/cases/[id]/page.tsx (Allowed Next Steps section)
+- web/src/components/BoundaryGradeBadge.test.tsx, ParcelAttributesCard.{tsx,test.tsx}
+### Diff summary: Sonnet subagent implemented 4 spec'd fixes TDD (31 tests); orchestrator review caught a live-API crash the agent's tests missed — GET /cases list omits events, normalizeCase threw TypeError and 500'd the parcel profile; fixed red-first (32 tests). Live verification: all 18 content probes pass across /, /alerts, /parcels/parcel-1, /parcels/parcel-3, /cases/case-1; both due-process 409 refusals confirmed non-mutating. Note: running `npm run build` while `next dev` is live corrupts .next — restart dev server after builds.
+### Verification: web 32 passed / tsc clean / production build clean; backend untouched (200 passed as of last run).
+### Recommendations / Next steps: rehearse with DEMO.md; consider consolidating ParcelAttributesCard's local LAND_CATEGORY_LABELS with the shared map in types.ts; commit pending user instruction.

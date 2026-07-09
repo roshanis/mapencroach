@@ -95,4 +95,97 @@ describe("api client with NEXT_PUBLIC_API_URL set", () => {
     expect(parcels[0].id).toBe("PCL-REMOTE-1");
     expect(parcels[0].boundary_grade).toBe("A");
   });
+
+  it("normalizes dict-shaped event artifacts and surfaces allowed_transitions for getCase", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+
+    const remoteCase = {
+      id: "CASE-REMOTE-1",
+      alert_id: "ALT-REMOTE-1",
+      parcel_id: "PCL-REMOTE-1",
+      state: "SHOW_CAUSE_ISSUED",
+      allowed_transitions: [
+        "RESPONSE_WINDOW",
+        "DISMISSED_FALSE_POSITIVE",
+        "LEGACY_REFERRED",
+        "STAYED_BY_COURT",
+        "SURVEY_REQUESTED",
+      ],
+      events: [
+        {
+          from_state: "INSPECTED",
+          to_state: "SHOW_CAUSE_ISSUED",
+          actor: "Deputy Collector R. Sharma",
+          occurred_at: "2026-06-29T14:00:00Z",
+          artifacts: {
+            notice_document: "notice-001.pdf",
+            dispatch_proof: "dispatch-001.pdf",
+          },
+        },
+        {
+          from_state: "NEW",
+          to_state: "TRIAGED",
+          actor: "Deputy Collector R. Sharma",
+          occurred_at: "2026-06-19T09:00:00Z",
+          artifacts: ["triage_note_9001.pdf"],
+        },
+      ],
+    };
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => remoteCase,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await getCase("CASE-REMOTE-1");
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://api.example.test/cases/CASE-REMOTE-1"
+    );
+    expect(result?.allowed_transitions).toEqual([
+      "RESPONSE_WINDOW",
+      "DISMISSED_FALSE_POSITIVE",
+      "LEGACY_REFERRED",
+      "STAYED_BY_COURT",
+      "SURVEY_REQUESTED",
+    ]);
+    expect(result?.events[0].artifacts).toEqual([
+      "notice_document: notice-001.pdf",
+      "dispatch_proof: dispatch-001.pdf",
+    ]);
+    // Array artifacts pass through unchanged.
+    expect(result?.events[1].artifacts).toEqual(["triage_note_9001.pdf"]);
+  });
+
+  it("tolerates the /cases list shape, which omits events", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+
+    // The backend list endpoint returns case summaries without events;
+    // only GET /cases/{id} includes them.
+    const listResponse = [
+      {
+        id: "CASE-REMOTE-1",
+        alert_id: "ALT-REMOTE-1",
+        parcel_id: "PCL-REMOTE-1",
+        state: "SHOW_CAUSE_ISSUED",
+      },
+    ];
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => listResponse,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const cases = await getCases();
+
+    expect(cases).toHaveLength(1);
+    expect(cases[0].id).toBe("CASE-REMOTE-1");
+    expect(cases[0].events).toEqual([]);
+  });
 });

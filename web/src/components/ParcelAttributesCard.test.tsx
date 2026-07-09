@@ -16,7 +16,9 @@ describe("ParcelAttributesCard", () => {
 
     const badge = screen.getByTestId("boundary-grade-badge");
     expect(badge).toHaveAttribute("data-grade", "A");
-    expect(badge).toHaveTextContent("DGPS-verified");
+    expect(badge).toHaveTextContent(
+      "DGPS-verified — enforcement can rely on this boundary"
+    );
   });
 
   it("renders the correct explanation for a grade C (unverified) parcel", () => {
@@ -24,6 +26,8 @@ describe("ParcelAttributesCard", () => {
     expect(parcel).toBeDefined();
     render(<ParcelAttributesCard parcel={parcel!} />);
     const badge = screen.getByTestId("boundary-grade-badge");
-    expect(badge).toHaveTextContent("Unverified");
+    expect(badge).toHaveTextContent(
+      "Unverified — a notice cannot rely on this boundary; survey first"
+    );
   });
 });

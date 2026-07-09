@@ -195,6 +195,13 @@ export const FIXTURE_CASES: Case[] = [
     alert_id: "ALT-5001",
     parcel_id: "PCL-1001",
     state: "SHOW_CAUSE_ISSUED",
+    allowed_transitions: [
+      "RESPONSE_WINDOW",
+      "DISMISSED_FALSE_POSITIVE",
+      "LEGACY_REFERRED",
+      "SURVEY_REQUESTED",
+      "STAYED_BY_COURT",
+    ],
     events: [
       {
         from_state: null,

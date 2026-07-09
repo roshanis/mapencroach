@@ -10,6 +10,7 @@ import type {
   AlertFilters,
   BBox,
   Case,
+  CaseEvent,
   LandCategory,
   BoundaryGrade,
   Parcel,
@@ -65,6 +66,37 @@ function featureToParcel(feature: ParcelFeature): Parcel {
     jurisdiction_id: properties.jurisdiction_id,
     geometry,
     centroid: centroidOf(geometry),
+  };
+}
+
+/**
+ * Backend event artifacts may arrive as a dict (e.g.
+ * `{"notice_document": "notice-001.pdf"}`) or as a string[]. UI components
+ * expect string[]; normalize dicts to `"key: value"` entries and pass
+ * arrays through unchanged.
+ */
+function normalizeArtifacts(artifacts: unknown): string[] {
+  if (Array.isArray(artifacts)) {
+    return artifacts as string[];
+  }
+  if (artifacts && typeof artifacts === "object") {
+    return Object.entries(artifacts as Record<string, string>).map(
+      ([key, value]) => `${key}: ${value}`
+    );
+  }
+  return [];
+}
+
+function normalizeCase(raw: Case): Case {
+  // The /cases list endpoint omits events; only GET /cases/{id} includes them.
+  return {
+    ...raw,
+    events: (raw.events ?? []).map(
+      (event: CaseEvent): CaseEvent => ({
+        ...event,
+        artifacts: normalizeArtifacts(event.artifacts),
+      })
+    ),
   };
 }
 
@@ -142,7 +174,8 @@ export async function getAlerts(filters?: AlertFilters): Promise<Alert[]> {
 export async function getCases(): Promise<Case[]> {
   const base = getApiBase();
   if (!base) return FIXTURE_CASES;
-  return fetchJson<Case[]>(`${base}/cases`);
+  const cases = await fetchJson<Case[]>(`${base}/cases`);
+  return cases.map(normalizeCase);
 }
 
 export async function getCase(id: string): Promise<Case | undefined> {
@@ -151,7 +184,8 @@ export async function getCase(id: string): Promise<Case | undefined> {
     return FIXTURE_CASES.find((c) => c.id === id);
   }
   try {
-    return await fetchJson<Case>(`${base}/cases/${id}`);
+    const raw = await fetchJson<Case>(`${base}/cases/${id}`);
+    return normalizeCase(raw);
   } catch {
     return undefined;
   }

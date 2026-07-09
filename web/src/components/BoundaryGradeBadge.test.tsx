@@ -5,9 +5,20 @@ import type { BoundaryGrade } from "@/lib/types";
 
 describe("BoundaryGradeBadge", () => {
   const cases: { grade: BoundaryGrade; explanation: string }[] = [
-    { grade: "A", explanation: "DGPS-verified" },
-    { grade: "B", explanation: "Georeferenced" },
-    { grade: "C", explanation: "Unverified" },
+    {
+      grade: "A",
+      explanation: "DGPS-verified — enforcement can rely on this boundary",
+    },
+    {
+      grade: "B",
+      explanation:
+        "Georeferenced — suitable for notices; survey before demolition",
+    },
+    {
+      grade: "C",
+      explanation:
+        "Unverified — a notice cannot rely on this boundary; survey first",
+    },
   ];
 
   it.each(cases)(

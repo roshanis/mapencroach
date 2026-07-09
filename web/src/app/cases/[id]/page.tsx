@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getCase } from "@/lib/api";
+import { AllowedNextSteps } from "@/components/AllowedNextSteps";
 import { StateRail } from "@/components/StateRail";
 import { TopBar } from "@/components/TopBar";
 
@@ -48,6 +49,13 @@ export default async function CaseDetailPage({
             Due-Process Progress
           </h2>
           <StateRail currentState={caseRecord.state} />
+        </section>
+
+        <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-4 text-base font-semibold text-gray-900">
+            Allowed Next Steps
+          </h2>
+          <AllowedNextSteps transitions={caseRecord.allowed_transitions ?? []} />
         </section>
 
         <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">

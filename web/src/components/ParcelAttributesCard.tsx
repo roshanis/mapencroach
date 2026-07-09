@@ -12,6 +12,9 @@ const LAND_CATEGORY_LABELS: Record<Parcel["land_category"], string> = {
   municipal: "Municipal",
   agricultural: "Agricultural",
   grazing: "Grazing (Gauchar)",
+  irrigation: "Irrigation",
+  housing: "Housing",
+  industrial: "Industrial",
 };
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
