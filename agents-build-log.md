@@ -37,3 +37,20 @@ Nits: Sentinel-1B is dead (constellation = 1A+1C); Phase 0 of 2–4 weeks unreal
 ### Files changed: PLAN.md (full rewrite, v1 superseded — user declined backup), PLAN.html (regenerating)
 ### Diff summary: Added 8 user personas; core data model + case state machine + detection pipeline + API surface; user management (roles matrix, jurisdiction row-level scoping, officer-transfer handover workflow); security architecture (threat model incl. insider/encroacher adversaries, data classification, evidence integrity chain); testing strategy (golden detection dataset, shadow mode, state-machine exhaustive tests, device farm); 12-month sprint-by-sprint delivery plan; blindspots reframed as engineered solutions; adoption/change-management playbook; success metrics + operating rhythm
 ### Recommendations / Next steps: Same Phase 0 actions as prior entry; when build starts, S1–S2 scope is repo+CI, PostGIS schema v1, Keycloak, cadastral ingestion + topology QA.
+
+## [AGENT: Claude TDD Guardian] [2026-07-08 23:05]
+### Action: TDD Cycle — Sprint 1 foundation (branch: claude-worktree)
+### Files changed:
+- backend/pyproject.toml, .github/workflows/ci.yml, .gitignore (scaffold: pytest, ruff, coverage gate 80%, pip-audit)
+- backend/src/mapencroach/domain/jurisdiction.py + tests/test_jurisdiction.py
+- backend/src/mapencroach/audit/chain.py + tests/test_audit_chain.py
+- backend/src/mapencroach/cadastral/topology.py + tests/test_topology.py
+- backend/src/mapencroach/db/models.py + tests/test_db_models.py
+### Tests written: 46 total, red-first confirmed (ModuleNotFoundError before implementation)
+- JurisdictionTree: is_within/scope_ids happy paths, self, siblings, unknown-id KeyError, cycle/multi-root/missing-root/duplicate/empty rejection
+- Audit chain: deterministic canonical hashing, genesis link, tamper/reorder/delete detection with first_bad_index
+- Topology QA: invalid (bowtie, empty), overlaps (touching≠overlap, sliver threshold, 3-way pairs), gaps (full coverage, strip, threshold), blocking semantics (invalid/overlap block, gaps warn)
+- Schema v1 metadata: MULTIPOLYGON SRID 4326, boundary_grade A/B/C, land categories, jurisdiction FKs, mandatory hash columns
+### Suite status: ALL PASSING (46 tests)
+### Coverage on changed files: 100%
+### Recommendations / Next steps: cadastral file ingestion (GeoPackage/Shapefile -> topology QA -> quarantine), Alembic migrations, first FastAPI endpoints (/parcels with jurisdiction scoping), Keycloak docker-compose. Uncommitted on claude-worktree — awaiting user instruction to commit.
