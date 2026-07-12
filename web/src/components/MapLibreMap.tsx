@@ -37,8 +37,8 @@ export interface MapLibreMapProps {
 export default function MapLibreMap({
   parcels,
   alerts,
-  center = [77.4, 23.26],
-  zoom = 12,
+  center = [78.03, 29.92],
+  zoom = 11,
   onReady,
   onAlertClick,
 }: MapLibreMapProps) {

@@ -6,7 +6,7 @@ notify, and enforce through a legally defensible workflow. Full plan: [PLAN.md](
 
 ## Quick start (demo, no database needed)
 
-**1. Backend API** (seeded with demo parcels around Bhopal):
+**1. Backend API** (seeded with demo parcels across the Haridwar–Roorkee corridor):
 
 ```bash
 cd backend

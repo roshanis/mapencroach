@@ -19,9 +19,6 @@ from mapencroach.domain.alerts import AlertTier, severity_score
 from mapencroach.domain.case_engine import Case, CaseState, transition
 from mapencroach.domain.jurisdiction import JurisdictionTree
 
-# Bhopal-area anchor for synthetic demo parcels.
-_BHOPAL_LON = 77.40
-_BHOPAL_LAT = 23.25
 _PARCEL_SIZE_DEG = 0.001  # ~110m square at this latitude
 
 
@@ -107,7 +104,8 @@ class Store:
 
     @classmethod
     def seed_demo(cls) -> "Store":
-        """Build a demo store: state -> 2 districts -> taluks, 8 parcels, 4 alerts, 2 cases."""
+        """Build a demo store for the Haridwar–Roorkee Development Authority (HRDA)
+        corridor: state -> 2 districts -> taluks, 8 parcels, 4 alerts, 2 cases."""
         rows: list[tuple[str, str | None]] = [
             ("state", None),
             ("dist-a", "state"),
@@ -120,27 +118,48 @@ class Store:
         store = cls(jurisdiction_rows=rows)
 
         parcel_specs = [
-            ("parcel-1", "SN-101", "taluk-a1", "waterbody", "A"),
-            ("parcel-2", "SN-102", "taluk-a1", "revenue", "B"),
-            ("parcel-3", "SN-103", "taluk-a2", "forest", "C"),
-            ("parcel-4", "SN-104", "taluk-a2", "municipal", "A"),
-            ("parcel-5", "SN-105", "taluk-b1", "housing", "B"),
-            ("parcel-6", "SN-106", "taluk-b1", "irrigation", "A"),
-            ("parcel-7", "SN-107", "taluk-b2", "industrial", "C"),
-            ("parcel-8", "SN-108", "taluk-b2", "revenue", "B"),
+            # Upper Ganga Canal bank, Haridwar
+            ("parcel-1", "SN-101", "taluk-a1", "waterbody", "A", 78.145, 29.938),
+            # Jwalapur
+            ("parcel-2", "SN-102", "taluk-a1", "revenue", "B", 78.115, 29.915),
+            # Rajaji National Park fringe
+            ("parcel-3", "SN-103", "taluk-a2", "forest", "C", 78.190, 29.975),
+            # Haridwar city core
+            ("parcel-4", "SN-104", "taluk-a2", "municipal", "A", 78.160, 29.947),
+            # Roorkee residential
+            ("parcel-5", "SN-105", "taluk-b1", "housing", "B", 77.892, 29.860),
+            # Upper Ganga Canal, Roorkee
+            ("parcel-6", "SN-106", "taluk-b1", "irrigation", "A", 77.897, 29.872),
+            # SIDCUL Haridwar
+            ("parcel-7", "SN-107", "taluk-b2", "industrial", "C", 78.082, 29.963),
+            # Bahadarabad
+            ("parcel-8", "SN-108", "taluk-b2", "revenue", "B", 78.040, 29.918),
         ]
-        for i, (parcel_id, survey_no, jurisdiction_id, land_category, boundary_grade) in enumerate(
-            parcel_specs
-        ):
-            offset = i * _PARCEL_SIZE_DEG * 3
-            geometry = _square_polygon(
-                _BHOPAL_LON + offset, _BHOPAL_LAT + offset, _PARCEL_SIZE_DEG / 2
-            )
+        _OWNING_DEPARTMENTS = {
+            "parcel-1": "Irrigation Department, Uttarakhand",
+            "parcel-2": "Revenue Department",
+            "parcel-3": "Forest Department, Uttarakhand",
+            "parcel-4": "Nagar Nigam Haridwar",
+            "parcel-5": "Haridwar-Roorkee Development Authority",
+            "parcel-6": "Irrigation Department, Uttarakhand",
+            "parcel-7": "SIDCUL",
+            "parcel-8": "Revenue Department",
+        }
+        for i, (
+            parcel_id,
+            survey_no,
+            jurisdiction_id,
+            land_category,
+            boundary_grade,
+            center_lon,
+            center_lat,
+        ) in enumerate(parcel_specs):
+            geometry = _square_polygon(center_lon, center_lat, _PARCEL_SIZE_DEG / 2)
             store.parcels[parcel_id] = {
                 "id": parcel_id,
                 "survey_no": survey_no,
-                "ulpin": f"UL{i:010d}IN",
-                "owning_department": "Revenue Department",
+                "ulpin": f"UK{i:010d}HR",
+                "owning_department": _OWNING_DEPARTMENTS[parcel_id],
                 "land_category": land_category,
                 "boundary_grade": boundary_grade,
                 "jurisdiction_id": jurisdiction_id,

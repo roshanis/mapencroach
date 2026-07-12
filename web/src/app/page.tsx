@@ -46,7 +46,7 @@ export default function CommandMapPage() {
 
   return (
     <div className="flex h-screen flex-col">
-      <TopBar jurisdiction="Bhopal Division (placeholder)" />
+      <TopBar jurisdiction="Haridwar–Roorkee Development Authority" />
       <div className="flex flex-1 overflow-hidden">
         <AlertSidebar
           alerts={alerts}

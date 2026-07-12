@@ -31,7 +31,7 @@ The site already works at this point, on built-in fixture data.
 
    | Key | Value |
    |-----|-------|
-   | `MAPENCROACH_DEMO` | `1` (seeds Bhopal demo data on boot) |
+   | `MAPENCROACH_DEMO` | `1` (seeds Haridwar–Roorkee demo data on boot) |
    | `MAPENCROACH_JWT_SECRET` | the value from step 1 |
    | `MAPENCROACH_CORS_ORIGINS` | `https://<your-app>.vercel.app,http://localhost:3000` |
 

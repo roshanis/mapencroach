@@ -68,7 +68,7 @@ describe("api client with NEXT_PUBLIC_API_URL set", () => {
           properties: {
             id: "PCL-REMOTE-1",
             survey_no: "1/1",
-            ulpin: "MP00REMOTE001",
+            ulpin: "UK00REMOTE001",
             owning_department: "Revenue Department",
             land_category: "revenue",
             boundary_grade: "A",

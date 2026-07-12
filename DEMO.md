@@ -1,6 +1,6 @@
 # mapencroach — 5-Minute Demo Script
 
-Working software on **seeded demo data** (8 parcels around Bhopal, 4 alerts, 2 cases).
+Working software on **seeded demo data** (8 parcels across the Haridwar–Roorkee Development Authority area, 4 alerts, 2 cases).
 Say that up front — it builds trust, and the workflow you're showing is fully real.
 
 ---
@@ -33,10 +33,11 @@ Close other tabs, hide bookmarks bar, zoom browser to 110%.
 
 ### Stop 1 — Command map (`/`)
 
-> "This is the government estate of one division — waterbodies, forest, irrigation,
-> municipal land — each parcel colored by category (legend, bottom-left). The colored
-> dots are alerts: places where satellite imagery says something changed on government
-> land. Red means act now."
+> "This is the government estate of the Haridwar–Roorkee Development Authority —
+> canal land along the Upper Ganga Canal, Rajaji forest fringe, SIDCUL industrial
+> plots, municipal land — each parcel colored by category (legend, bottom-left). The
+> colored dots are alerts: places where satellite imagery says something changed on
+> government land. Red means act now."
 
 Point at the legend, then at the red marker. Click an alert in the left sidebar to
 show the map fly to it.
@@ -54,7 +55,7 @@ Click the red row — it opens the parcel.
 
 ### Stop 3 — Parcel profile (`/parcels/parcel-1`, then `/parcels/parcel-3`)
 
-On parcel-1:
+On parcel-1 (canal land):
 
 > "Waterbody, Grade A boundary — DGPS-verified, enforcement can rely on it. That's
 > why this alert is red: high-value land, trustworthy boundary, big change."
