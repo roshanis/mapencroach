@@ -10,6 +10,7 @@ from mapencroach.domain.case_engine import (
     InvalidTransition,
     MissingArtifact,
     allowed_transitions,
+    required_artifacts_for,
     transition,
 )
 
@@ -919,3 +920,41 @@ class TestCaseStateOrdering:
         ]
         for name in side_states:
             assert hasattr(CaseState, name)
+
+
+class TestRequiredArtifactsFor:
+    """required_artifacts_for tells a caller what evidence a transition
+    needs *right now* — including the pause-return special cases where the
+    artifact depends on where the case is coming from, not going to."""
+
+    def test_forward_step_uses_target_state_artifacts(self):
+        case = Case(case_id="c", state=CaseState.NEW)
+        assert required_artifacts_for(case, CaseState.TRIAGED) == ("triage_note",)
+
+    def test_step_with_no_artifacts_is_empty(self):
+        case = Case(case_id="c", state=CaseState.SHOW_CAUSE_ISSUED)
+        assert required_artifacts_for(case, CaseState.RESPONSE_WINDOW) == ()
+
+    def test_return_from_stay_requires_vacation_ref(self):
+        case = Case(
+            case_id="c",
+            state=CaseState.STAYED_BY_COURT,
+            paused_state=CaseState.RESPONSE_WINDOW,
+        )
+        assert required_artifacts_for(case, CaseState.RESPONSE_WINDOW) == ("stay_vacation_ref",)
+
+    def test_return_from_survey_requires_survey_result(self):
+        case = Case(
+            case_id="c",
+            state=CaseState.SURVEY_REQUESTED,
+            paused_state=CaseState.INSPECTED,
+        )
+        assert required_artifacts_for(case, CaseState.INSPECTED) == ("survey_result",)
+
+    def test_stay_from_survey_uses_stay_artifacts(self):
+        case = Case(
+            case_id="c",
+            state=CaseState.SURVEY_REQUESTED,
+            paused_state=CaseState.INSPECTED,
+        )
+        assert required_artifacts_for(case, CaseState.STAYED_BY_COURT) == ("stay_order_ref",)

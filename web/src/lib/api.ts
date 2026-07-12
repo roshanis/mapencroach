@@ -190,3 +190,50 @@ export async function getCase(id: string): Promise<Case | undefined> {
     return undefined;
   }
 }
+
+export interface TransitionResult {
+  ok: boolean;
+  status: number;
+  detail?: string;
+}
+
+export async function transitionCase(
+  caseId: string,
+  toState: string,
+  artifacts: Record<string, string>,
+  note?: string
+): Promise<TransitionResult> {
+  const base = getApiBase();
+  if (!base) {
+    return {
+      ok: false,
+      status: 0,
+      detail: "No backend configured — fixture mode is read-only.",
+    };
+  }
+
+  const res = await fetch(`${base}/cases/${caseId}/transitions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(),
+    },
+    body: JSON.stringify({ to_state: toState, artifacts, note }),
+  });
+
+  if (res.ok) {
+    return { ok: true, status: res.status };
+  }
+
+  let detail: string = res.statusText;
+  try {
+    const body = (await res.json()) as { detail?: string };
+    if (typeof body?.detail === "string") {
+      detail = body.detail;
+    }
+  } catch {
+    // fall back to statusText
+  }
+
+  return { ok: false, status: res.status, detail };
+}

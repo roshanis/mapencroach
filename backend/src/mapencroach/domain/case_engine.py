@@ -161,6 +161,21 @@ def allowed_transitions(case: Case) -> set[CaseState]:
     return allowed
 
 
+def required_artifacts_for(case: Case, to_state: CaseState) -> tuple[str, ...]:
+    """Artifacts required to move `case` to `to_state` from where it is now.
+
+    Mirrors the artifact rules in `transition`: returning from a pause
+    needs the pause's exit artifact (stay vacation / survey result), not
+    the target state's usual entry artifacts. Assumes the move itself is
+    legal; pair with `allowed_transitions` when enumerating options.
+    """
+    if case.state == CaseState.STAYED_BY_COURT and to_state == case.paused_state:
+        return (_STAY_VACATION_ARTIFACT,)
+    if case.state == CaseState.SURVEY_REQUESTED and to_state == case.paused_state:
+        return (_SURVEY_RETURN_ARTIFACT,)
+    return _required_artifacts_for(to_state)
+
+
 def _required_artifacts_for(to_state: CaseState) -> tuple[str, ...]:
     if to_state == CaseState.SURVEY_REQUESTED:
         return REQUIRED_ARTIFACTS[CaseState.SURVEY_REQUESTED]

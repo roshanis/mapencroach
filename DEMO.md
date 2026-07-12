@@ -35,12 +35,14 @@ Close other tabs, hide bookmarks bar, zoom browser to 110%.
 
 > "This is the government estate of the Haridwar–Roorkee Development Authority —
 > canal land along the Upper Ganga Canal, Rajaji forest fringe, SIDCUL industrial
-> plots, municipal land — each parcel colored by category (legend, bottom-left). The
-> colored dots are alerts: places where satellite imagery says something changed on
-> government land. Red means act now."
+> plots, municipal land — each parcel colored by category (legend, bottom-left),
+> drawn over satellite imagery. The colored dots are alerts: places where imagery
+> says something changed on government land. Red means act now."
 
-Point at the legend, then at the red marker. Click an alert in the left sidebar to
-show the map fly to it.
+The KPI strip (top) gives the executive summary at a glance: parcels monitored,
+open alerts, red alerts, cases in due process. Point at the legend, then the red
+marker. Click an alert in the left sidebar to show the map fly to it. The
+satellite/streets toggle is top-left if anyone asks for context.
 
 ### Stop 2 — Alert queue (`/alerts`)
 
@@ -79,11 +81,25 @@ Go back to the alert queue, click the **amber** row (forest parcel, Grade C):
 > 'demolish' — the Supreme Court's November 2024 guidelines are encoded as the state
 > machine."
 
+**Now hand them the mouse.** In the transition panel, pick
+"ORDER ISSUED — will be refused" and click **Attempt transition**:
+
+> "Watch — I'm trying to jump straight to a demolition order."
+
+The red banner shows the engine's own words: *cannot transition from
+SHOW_CAUSE_ISSUED to ORDER_ISSUED*. Try "DISMISSED FALSE POSITIVE" after blanking
+the evidence field — refused again, naming the missing dismissal reason.
+
+Do refusals freely — they change nothing. Only advance the case legally (e.g.
+RESPONSE WINDOW) as your finale if at all: it mutates the demo until the
+free-tier API instance next restarts, which conveniently resets everything.
+
 ---
 
 ## Technical encore (60 seconds, only for a technical audience)
 
-Try to break due process live — the API refuses and names the missing evidence:
+The refusals from Stop 4 are also demonstrable at the raw API level — same
+engine, no UI in between:
 
 ```bash
 # Skip straight to a demolition order → refused

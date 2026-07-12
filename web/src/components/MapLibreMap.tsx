@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type * as MapLibreGL from "maplibre-gl";
 import { LAND_CATEGORY_COLORS } from "@/lib/types";
 import type { Parcel, Alert, AlertTier } from "@/lib/types";
+import { BasemapToggle, type BasemapMode } from "./BasemapToggle";
 
 function buildLandCategoryMatchExpression(
   fallback: string
@@ -44,6 +45,21 @@ export default function MapLibreMap({
 }: MapLibreMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<import("maplibre-gl").Map | null>(null);
+  const [mode, setMode] = useState<BasemapMode>("satellite");
+
+  function handleBasemapChange(newMode: BasemapMode) {
+    setMode(newMode);
+    mapRef.current?.setLayoutProperty(
+      "esri-base",
+      "visibility",
+      newMode === "satellite" ? "visible" : "none"
+    );
+    mapRef.current?.setLayoutProperty(
+      "osm-base",
+      "visibility",
+      newMode === "satellite" ? "none" : "visible"
+    );
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -66,12 +82,28 @@ export default function MapLibreMap({
               attribution:
                 '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
             },
+            "esri-imagery": {
+              type: "raster",
+              tiles: [
+                "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+              ],
+              tileSize: 256,
+              attribution:
+                "Esri, Maxar, Earthstar Geographics, and the GIS User Community",
+            },
           },
           layers: [
             {
               id: "osm-base",
               type: "raster",
               source: "osm",
+              layout: { visibility: "none" },
+            },
+            {
+              id: "esri-base",
+              type: "raster",
+              source: "esri-imagery",
+              layout: { visibility: "visible" },
             },
           ],
         },
@@ -116,7 +148,7 @@ export default function MapLibreMap({
           source: "parcels",
           paint: {
             "line-color": buildLandCategoryMatchExpression("#999999"),
-            "line-width": 2,
+            "line-width": 2.5,
           },
         });
 
@@ -163,10 +195,15 @@ export default function MapLibreMap({
   }, []);
 
   return (
-    <div
-      ref={containerRef}
-      data-testid="maplibre-container"
-      className="h-full w-full"
-    />
+    <div className="relative h-full w-full">
+      <div
+        ref={containerRef}
+        data-testid="maplibre-container"
+        className="h-full w-full"
+      />
+      <div className="absolute left-3 top-3 z-10">
+        <BasemapToggle mode={mode} onChange={handleBasemapChange} />
+      </div>
+    </div>
   );
 }

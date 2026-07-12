@@ -650,3 +650,35 @@ class TestCorsConfiguration:
         app_client = TestClient(create_app(store))
         resp = self._preflight(app_client, "http://localhost:3000")
         assert "access-control-allow-origin" not in resp.headers
+
+
+class TestRequiredArtifactsInCaseDetail:
+    """GET /cases/{id} maps every allowed transition to the evidence it
+    needs, so a UI can render the right form fields without duplicating
+    domain knowledge."""
+
+    def test_case_detail_includes_required_artifacts(
+        self, client: TestClient, state_token: str
+    ):
+        resp = client.get("/cases/case-1", headers=auth_headers(state_token))
+        assert resp.status_code == 200
+        body = resp.json()
+        assert set(body["required_artifacts"].keys()) == set(body["allowed_transitions"])
+        assert body["required_artifacts"]["RESPONSE_WINDOW"] == []
+        assert body["required_artifacts"]["DISMISSED_FALSE_POSITIVE"] == ["dismissal_reason"]
+
+    def test_transition_response_includes_required_artifacts(
+        self, client: TestClient, store: Store
+    ):
+        officer_token = token_for(
+            "case-officer-req", Role.CASE_OFFICER, store.root_jurisdiction_id
+        )
+        resp = client.post(
+            "/cases/case-1/transitions",
+            headers=auth_headers(officer_token),
+            json={"to_state": "RESPONSE_WINDOW"},
+        )
+        assert resp.status_code == 201
+        body = resp.json()
+        assert set(body["required_artifacts"].keys()) == set(body["allowed_transitions"])
+        assert body["required_artifacts"]["HEARING_SCHEDULED"] == ["hearing_date"]

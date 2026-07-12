@@ -4,6 +4,9 @@ import { getCase } from "@/lib/api";
 import { AllowedNextSteps } from "@/components/AllowedNextSteps";
 import { StateRail } from "@/components/StateRail";
 import { TopBar } from "@/components/TopBar";
+import { TransitionPanel } from "@/components/TransitionPanel";
+
+export const dynamic = "force-dynamic";
 
 function formatTimestamp(iso: string): string {
   return new Date(iso).toLocaleString("en-IN", {
@@ -56,6 +59,11 @@ export default async function CaseDetailPage({
             Allowed Next Steps
           </h2>
           <AllowedNextSteps transitions={caseRecord.allowed_transitions ?? []} />
+          <TransitionPanel
+            caseId={caseRecord.id}
+            allowedTransitions={caseRecord.allowed_transitions ?? []}
+            requiredArtifacts={caseRecord.required_artifacts ?? {}}
+          />
         </section>
 
         <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">

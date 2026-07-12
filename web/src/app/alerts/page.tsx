@@ -3,6 +3,8 @@ import { getAlerts } from "@/lib/api";
 import { AlertsTable } from "@/components/AlertsTable";
 import { TopBar } from "@/components/TopBar";
 
+export const dynamic = "force-dynamic";
+
 export default async function AlertsQueuePage() {
   const alerts = await getAlerts();
 

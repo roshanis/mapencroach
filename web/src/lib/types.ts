@@ -114,6 +114,7 @@ export interface Case {
   state: CaseState;
   events: CaseEvent[];
   allowed_transitions?: string[];
+  required_artifacts?: Record<string, string[]>;
 }
 
 export interface BBox {

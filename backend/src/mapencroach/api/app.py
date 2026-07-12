@@ -20,9 +20,12 @@ from mapencroach.api.auth import Role, User, current_user, require_roles
 from mapencroach.api.store import Store
 from mapencroach.domain.alerts import severity_score
 from mapencroach.domain.case_engine import (
+    Case,
+    CaseState,
     InvalidTransition,
     MissingArtifact,
     allowed_transitions,
+    required_artifacts_for,
     transition,
 )
 
@@ -65,6 +68,15 @@ def _parcel_to_feature(parcel: dict[str, Any]) -> dict[str, Any]:
 
 def _user_scope(store: Store, user: User) -> set[str]:
     return store.tree.scope_ids(user.jurisdiction_id)
+
+
+def _transition_options(case: Case) -> tuple[list[str], dict[str, list[str]]]:
+    """Allowed next states plus the evidence each one requires."""
+    allowed: list[CaseState] = sorted(allowed_transitions(case), key=lambda s: s.value)
+    return (
+        [s.value for s in allowed],
+        {s.value: list(required_artifacts_for(case, s)) for s in allowed},
+    )
 
 
 def create_app(store: Store | None = None) -> FastAPI:
@@ -244,13 +256,15 @@ def create_app(store: Store | None = None) -> FastAPI:
             }
             for e in record.case.events
         ]
+        allowed, required = _transition_options(record.case)
         return {
             "id": record.case.case_id,
             "alert_id": record.alert_id,
             "parcel_id": record.parcel_id,
             "state": record.case.state.value,
             "events": events,
-            "allowed_transitions": sorted(s.value for s in allowed_transitions(record.case)),
+            "allowed_transitions": allowed,
+            "required_artifacts": required,
         }
 
     @app.post("/cases/{case_id}/transitions", status_code=status.HTTP_201_CREATED)
@@ -294,6 +308,7 @@ def create_app(store: Store | None = None) -> FastAPI:
             object_id=case_id,
         )
 
+        allowed, required = _transition_options(record.case)
         return {
             "id": record.case.case_id,
             "from_state": event.from_state.value,
@@ -302,7 +317,8 @@ def create_app(store: Store | None = None) -> FastAPI:
             "occurred_at": event.occurred_at.isoformat(),
             "artifacts": dict(event.artifacts),
             "note": event.note,
-            "allowed_transitions": sorted(s.value for s in allowed_transitions(record.case)),
+            "allowed_transitions": allowed,
+            "required_artifacts": required,
         }
 
     return app

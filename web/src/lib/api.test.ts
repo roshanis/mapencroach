@@ -1,14 +1,27 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getAlerts, getCase, getCases, getParcel, getParcels } from "./api";
+import {
+  getAlerts,
+  getCase,
+  getCases,
+  getParcel,
+  getParcels,
+  transitionCase,
+} from "./api";
 import { FIXTURE_ALERTS, FIXTURE_CASES, FIXTURE_PARCELS } from "./fixtures";
 
 const ORIGINAL_ENV = process.env.NEXT_PUBLIC_API_URL;
+const ORIGINAL_TOKEN = process.env.NEXT_PUBLIC_API_TOKEN;
 
 afterEach(() => {
   if (ORIGINAL_ENV === undefined) {
     delete process.env.NEXT_PUBLIC_API_URL;
   } else {
     process.env.NEXT_PUBLIC_API_URL = ORIGINAL_ENV;
+  }
+  if (ORIGINAL_TOKEN === undefined) {
+    delete process.env.NEXT_PUBLIC_API_TOKEN;
+  } else {
+    process.env.NEXT_PUBLIC_API_TOKEN = ORIGINAL_TOKEN;
   }
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -187,5 +200,106 @@ describe("api client with NEXT_PUBLIC_API_URL set", () => {
     expect(cases).toHaveLength(1);
     expect(cases[0].id).toBe("CASE-REMOTE-1");
     expect(cases[0].events).toEqual([]);
+  });
+
+  it("posts a transition and returns ok:true with the auth header when a token is set", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    process.env.NEXT_PUBLIC_API_TOKEN = "test-token-123";
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      statusText: "Created",
+      json: async () => ({
+        id: "CASE-9001",
+        state: "RESPONSE_WINDOW",
+        allowed_transitions: ["HEARING_SCHEDULED"],
+        required_artifacts: { HEARING_SCHEDULED: [] },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await transitionCase(
+      "CASE-9001",
+      "RESPONSE_WINDOW",
+      {},
+      "moving forward"
+    );
+
+    expect(result).toEqual({ ok: true, status: 201 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://api.example.test/cases/CASE-9001/transitions");
+    expect(init.method).toBe("POST");
+    expect(init.headers).toMatchObject({
+      "Content-Type": "application/json",
+      Authorization: "Bearer test-token-123",
+    });
+    expect(JSON.parse(init.body)).toEqual({
+      to_state: "RESPONSE_WINDOW",
+      artifacts: {},
+      note: "moving forward",
+    });
+  });
+
+  it("returns ok:false with the passed-through detail on a 409 refusal from the case engine", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    delete process.env.NEXT_PUBLIC_API_TOKEN;
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      statusText: "Conflict",
+      json: async () => ({
+        detail: "cannot transition from SHOW_CAUSE_ISSUED to ORDER_ISSUED",
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await transitionCase("CASE-9001", "ORDER_ISSUED", {});
+
+    expect(result).toEqual({
+      ok: false,
+      status: 409,
+      detail: "cannot transition from SHOW_CAUSE_ISSUED to ORDER_ISSUED",
+    });
+  });
+
+  it("falls back to statusText when the error body has no detail", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 422,
+      statusText: "Unprocessable Entity",
+      json: async () => {
+        throw new Error("not json");
+      },
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await transitionCase("CASE-9001", "BOGUS_STATE", {});
+
+    expect(result).toEqual({
+      ok: false,
+      status: 422,
+      detail: "Unprocessable Entity",
+    });
+  });
+
+  it("returns a read-only message without calling fetch when no backend is configured", async () => {
+    delete process.env.NEXT_PUBLIC_API_URL;
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await transitionCase("CASE-9001", "RESPONSE_WINDOW", {});
+
+    expect(result).toEqual({
+      ok: false,
+      status: 0,
+      detail: "No backend configured — fixture mode is read-only.",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

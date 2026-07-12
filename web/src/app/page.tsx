@@ -4,15 +4,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import MapView from "@/components/MapView";
 import { AlertSidebar } from "@/components/AlertSidebar";
+import { KpiStrip } from "@/components/KpiStrip";
 import { MapLegend } from "@/components/MapLegend";
 import { TopBar } from "@/components/TopBar";
-import { getAlerts, getParcels } from "@/lib/api";
-import type { Alert, Parcel } from "@/lib/types";
+import { getAlerts, getCases, getParcels } from "@/lib/api";
+import type { Alert, Case, Parcel } from "@/lib/types";
 
 export default function CommandMapPage() {
   const router = useRouter();
   const [parcels, setParcels] = useState<Parcel[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [cases, setCases] = useState<Case[]>([]);
   const [selectedAlertId, setSelectedAlertId] = useState<string | undefined>();
   const mapApiRef = useRef<{ panTo: (lngLat: [number, number]) => void } | null>(
     null
@@ -21,6 +23,7 @@ export default function CommandMapPage() {
   useEffect(() => {
     getParcels().then(setParcels);
     getAlerts().then(setAlerts);
+    getCases().then(setCases);
   }, []);
 
   const panToAlert = useCallback(
@@ -65,6 +68,9 @@ export default function CommandMapPage() {
           <div className="pointer-events-none absolute right-3 top-3 rounded bg-white/90 px-3 py-2 text-xs text-gray-600 shadow">
             Click an alert to pan the map, or click a marker to open its
             parcel.
+          </div>
+          <div className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2">
+            <KpiStrip parcels={parcels} alerts={alerts} cases={cases} />
           </div>
           <div className="absolute bottom-3 left-3">
             <MapLegend categories={parcels.map((p) => p.land_category)} />
