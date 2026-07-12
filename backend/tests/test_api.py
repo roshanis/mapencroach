@@ -604,3 +604,49 @@ class TestRequireRoles:
             json={"grade": "B", "survey_reference": "SR-MULTI-ROLE"},
         )
         assert resp.status_code == 200
+
+
+class TestCorsConfiguration:
+    """Allowed origins come from MAPENCROACH_CORS_ORIGINS (comma-separated),
+    defaulting to the local dev console, so a hosted frontend (e.g. Vercel)
+    can be whitelisted without a code change."""
+
+    def _preflight(self, app_client: TestClient, origin: str):
+        return app_client.options(
+            "/parcels",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "authorization",
+            },
+        )
+
+    def test_default_allows_localhost_3000(self, store: Store):
+        app_client = TestClient(create_app(store))
+        resp = self._preflight(app_client, "http://localhost:3000")
+        assert resp.status_code == 200
+        assert resp.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+    def test_env_var_overrides_allowed_origins(self, store: Store, monkeypatch):
+        monkeypatch.setenv(
+            "MAPENCROACH_CORS_ORIGINS",
+            "https://mapencroach.vercel.app, http://localhost:3000",
+        )
+        app_client = TestClient(create_app(store))
+
+        resp = self._preflight(app_client, "https://mapencroach.vercel.app")
+        assert resp.status_code == 200
+        assert (
+            resp.headers["access-control-allow-origin"] == "https://mapencroach.vercel.app"
+        )
+        # Whitespace around commas is tolerated.
+        resp = self._preflight(app_client, "http://localhost:3000")
+        assert resp.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+    def test_env_var_replaces_default_rather_than_extending_it(
+        self, store: Store, monkeypatch
+    ):
+        monkeypatch.setenv("MAPENCROACH_CORS_ORIGINS", "https://console.example.gov")
+        app_client = TestClient(create_app(store))
+        resp = self._preflight(app_client, "http://localhost:3000")
+        assert "access-control-allow-origin" not in resp.headers

@@ -112,3 +112,15 @@ Nits: Sentinel-1B is dead (constellation = 1A+1C); Phase 0 of 2–4 weeks unreal
 ### Diff summary: Sonnet subagent implemented 4 spec'd fixes TDD (31 tests); orchestrator review caught a live-API crash the agent's tests missed — GET /cases list omits events, normalizeCase threw TypeError and 500'd the parcel profile; fixed red-first (32 tests). Live verification: all 18 content probes pass across /, /alerts, /parcels/parcel-1, /parcels/parcel-3, /cases/case-1; both due-process 409 refusals confirmed non-mutating. Note: running `npm run build` while `next dev` is live corrupts .next — restart dev server after builds.
 ### Verification: web 32 passed / tsc clean / production build clean; backend untouched (200 passed as of last run).
 ### Recommendations / Next steps: rehearse with DEMO.md; consider consolidating ParcelAttributesCard's local LAND_CATEGORY_LABELS with the shared map in types.ts; commit pending user instruction.
+
+## [AGENT: Claude] [2026-07-12T00:20Z]
+### Action: Made the backend deployable (Option 2: Vercel + Render) — configurable CORS, uvicorn as prod dep, Dockerfile, DEPLOY.md
+### Files changed:
+- backend/src/mapencroach/api/app.py (allowed CORS origins from MAPENCROACH_CORS_ORIGINS, comma-separated, default localhost:3000)
+- backend/tests/test_api.py (+3 CORS preflight tests, red-first)
+- backend/pyproject.toml (uvicorn dev extra → main dependency)
+- backend/Dockerfile, backend/.dockerignore (new — python:3.12-slim, $PORT-aware factory boot)
+- DEPLOY.md (new — ordered Vercel→Render guide: real JWT secret, env vars, 90-day token mint, free-tier caveats, troubleshooting)
+- README.md (pointer to DEPLOY.md)
+### Diff summary: TDD cycle on CORS (2 tests red → green, 203 passed / 99.71% cov / ruff clean). Docker daemon down, so the Dockerfile's risk surface was verified equivalently: non-editable pip install into a fresh venv, factory boot under PORT+MAPENCROACH_CORS_ORIGINS, smoke-tested 401 + configured-origin preflight echo + unlisted-origin refusal, server stopped.
+### Recommendations / Next steps: user performs the Render/Vercel account steps in DEPLOY.md (agent cannot create accounts/accept ToS); rotate demo token every 90 days; real pilot needs Keycloak login before any real data.

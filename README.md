@@ -47,6 +47,10 @@ cd web && npm test && npm run build                              # 24 tests
 docker compose up -d
 ```
 
+## Deploy a shareable demo
+
+See [DEPLOY.md](DEPLOY.md) — console on Vercel, API on Render (demo data only).
+
 ## Layout
 
 | Path | What |
