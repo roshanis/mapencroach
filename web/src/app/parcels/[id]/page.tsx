@@ -10,6 +10,7 @@ import { TagEditor } from "@/components/TagEditor";
 import { TierChip } from "@/components/TierChip";
 import { TopBar } from "@/components/TopBar";
 import ParcelMiniMap from "@/components/ParcelMiniMap";
+import { jurisdictionLabel } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -34,7 +35,12 @@ export default async function ParcelProfilePage({
 
   return (
     <div className="flex min-h-screen flex-col">
-      <TopBar jurisdiction={parcel.jurisdiction_id} />
+      <TopBar
+        jurisdiction={jurisdictionLabel(
+          parcel.jurisdiction_id,
+          parcel.jurisdiction_name
+        )}
+      />
       <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 p-6">
         <div>
           <Link href="/" className="text-sm text-gov hover:underline">

@@ -3,14 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { transitionCase, type TransitionResult } from "@/lib/api";
-import { CASE_STATE_CHAIN } from "@/lib/types";
-
-const NON_CHAIN_STATES = [
-  "DISMISSED_FALSE_POSITIVE",
-  "LEGACY_REFERRED",
-  "SURVEY_REQUESTED",
-  "STAYED_BY_COURT",
-];
+import { CASE_STATE_CHAIN, NON_CHAIN_STATES } from "@/lib/types";
 
 const ALL_STATES: string[] = [...CASE_STATE_CHAIN, ...NON_CHAIN_STATES];
 

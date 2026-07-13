@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { sortBySeverityDesc, ageFromNow } from "./format";
+import {
+  sortBySeverityDesc,
+  ageFromNow,
+  jurisdictionLabel,
+  roleLabel,
+} from "./format";
 
 describe("sortBySeverityDesc", () => {
   it("orders items by severity_score descending", () => {
@@ -40,5 +45,45 @@ describe("ageFromNow", () => {
     const now = new Date("2026-07-08T12:00:00Z");
     const then = "2026-07-05T12:00:00Z";
     expect(ageFromNow(then, now)).toBe("3d ago");
+  });
+});
+
+describe("jurisdictionLabel", () => {
+  it("returns the provided name verbatim when given, regardless of id", () => {
+    expect(jurisdictionLabel("taluk-a1", "Haridwar City")).toBe(
+      "Haridwar City"
+    );
+    expect(jurisdictionLabel("unknown-id", "Some Custom Name")).toBe(
+      "Some Custom Name"
+    );
+  });
+
+  it("falls back to the known jurisdiction map when no name is given", () => {
+    expect(jurisdictionLabel("state")).toBe(
+      "Haridwar–Roorkee Development Authority"
+    );
+    expect(jurisdictionLabel("dist-a")).toBe("Haridwar Division");
+    expect(jurisdictionLabel("taluk-a1")).toBe("Haridwar City");
+    expect(jurisdictionLabel("taluk-b2")).toBe("Bahadarabad");
+  });
+
+  it("title-cases unknown ids by capitalizing each hyphen-separated word", () => {
+    expect(jurisdictionLabel("UK-URBAN-01")).toBe("Uk Urban 01");
+    expect(jurisdictionLabel("some-new-jurisdiction")).toBe(
+      "Some New Jurisdiction"
+    );
+  });
+
+  it("treats an empty-string name as absent, falling through to the id logic", () => {
+    expect(jurisdictionLabel("taluk-a1", "")).toBe("Haridwar City");
+  });
+});
+
+describe("roleLabel", () => {
+  it("converts a snake_case role into Title Case with spaces", () => {
+    expect(roleLabel("case_officer")).toBe("Case Officer");
+    expect(roleLabel("viewer")).toBe("Viewer");
+    expect(roleLabel("survey_officer")).toBe("Survey Officer");
+    expect(roleLabel("data_admin")).toBe("Data Admin");
   });
 });

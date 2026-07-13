@@ -25,7 +25,7 @@ from mapencroach.api.auth import (
     require_roles,
     signing_secret,
 )
-from mapencroach.api.store import Store
+from mapencroach.api.store import JURISDICTION_NAMES, Store
 from mapencroach.domain.alerts import severity_score
 from mapencroach.domain.case_engine import (
     Case,
@@ -70,6 +70,15 @@ _DEMO_PERSONAS: list[dict[str, str]] = [
         "Roorkee side. Cannot transition cases.",
     },
     {
+        "id": "co-roorkee-city",
+        "name": "Case Officer, Roorkee City",
+        "role": "case_officer",
+        "jurisdiction_id": "taluk-b1",
+        "description": "Taluk-level officer: the narrowest scope in the demo. "
+        "Sees only Roorkee City parcels - not even the rest of Roorkee "
+        "division exists for this login.",
+    },
+    {
         "id": "admin-hq",
         "name": "Data Administrator, HRDA HQ",
         "role": "data_admin",
@@ -78,6 +87,44 @@ _DEMO_PERSONAS: list[dict[str, str]] = [
         "cannot move a case through the legal chain.",
     },
 ]
+
+
+# What each demo role can and cannot do — rendered on the personas page.
+_ROLE_CAPABILITIES: dict[str, list[str]] = {
+    "viewer": [
+        "See every parcel, alert and case in scope",
+        "Cannot act on cases",
+        "Cannot edit tags or boundary grades",
+    ],
+    "case_officer": [
+        "Move cases through due process",
+        "Create alerts and tag parcels",
+        "Cannot see other jurisdictions' parcels (even that they exist)",
+        "Cannot upgrade boundary grades",
+    ],
+    "survey_officer": [
+        "Upgrade boundary grades after ground survey",
+        "Cannot transition cases",
+    ],
+    "data_admin": [
+        "Manage parcel records and tags in scope",
+        "Cannot move cases through the legal chain",
+    ],
+}
+
+
+def _enrich_persona(persona: dict[str, str], store: Store) -> dict[str, Any]:
+    """Add live, store-derived context to a persona for the console UI."""
+    scope = store.tree.scope_ids(persona["jurisdiction_id"])
+    visible = sum(1 for p in store.parcels.values() if p["jurisdiction_id"] in scope)
+    return {
+        **persona,
+        "jurisdiction_name": JURISDICTION_NAMES.get(
+            persona["jurisdiction_id"], persona["jurisdiction_id"]
+        ),
+        "visible_parcels": visible,
+        "capabilities": _ROLE_CAPABILITIES.get(persona["role"], []),
+    }
 
 
 class BoundaryGradePatch(BaseModel):
@@ -118,6 +165,9 @@ def _parcel_to_feature(parcel: dict[str, Any]) -> dict[str, Any]:
             "land_category": parcel["land_category"],
             "boundary_grade": parcel["boundary_grade"],
             "jurisdiction_id": parcel["jurisdiction_id"],
+            "jurisdiction_name": JURISDICTION_NAMES.get(
+                parcel["jurisdiction_id"], parcel["jurisdiction_id"]
+            ),
             "tags": list(parcel.get("tags", [])),
         },
     }
@@ -289,11 +339,11 @@ def create_app(store: Store | None = None) -> FastAPI:
     if demo_mode:
 
         @app.get("/demo/personas")
-        def list_personas() -> list[dict[str, str]]:
-            return _DEMO_PERSONAS
+        def list_personas(store: StoreDep) -> list[dict[str, Any]]:
+            return [_enrich_persona(p, store) for p in _DEMO_PERSONAS]
 
         @app.post("/demo/login")
-        def demo_login(body: PersonaLogin) -> dict[str, Any]:
+        def demo_login(body: PersonaLogin, store: StoreDep) -> dict[str, Any]:
             persona = next(
                 (p for p in _DEMO_PERSONAS if p["id"] == body.persona_id), None
             )
@@ -308,7 +358,11 @@ def create_app(store: Store | None = None) -> FastAPI:
                 secret=signing_secret(),
                 expires_at=datetime.now(UTC) + timedelta(hours=8),
             )
-            return {"token": token, "persona": persona, "expires_in_hours": 8}
+            return {
+                "token": token,
+                "persona": _enrich_persona(persona, store),
+                "expires_in_hours": 8,
+            }
 
     # ------------------------------------------------------------------
     # Alerts
@@ -375,12 +429,14 @@ def create_app(store: Store | None = None) -> FastAPI:
         for record in store.cases.values():
             if record.jurisdiction_id not in scope:
                 continue
+            events = record.case.events
             results.append(
                 {
                     "id": record.case.case_id,
                     "alert_id": record.alert_id,
                     "parcel_id": record.parcel_id,
                     "state": record.case.state.value,
+                    "state_since": events[-1].occurred_at.isoformat() if events else None,
                 }
             )
         return results

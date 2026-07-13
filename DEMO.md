@@ -1,6 +1,6 @@
 # mapencroach — 5-Minute Demo Script
 
-Working software on **seeded demo data** (8 parcels across the Haridwar–Roorkee Development Authority area, 4 alerts, 2 cases).
+Working software on **seeded demo data** (30 parcels across six taluks of the Haridwar–Roorkee Development Authority, 10 alerts, 5 cases).
 Say that up front — it builds trust, and the workflow you're showing is fully real.
 
 ---
@@ -22,8 +22,9 @@ NEXT_PUBLIC_API_URL=http://localhost:8000 NEXT_PUBLIC_API_TOKEN=<token> npm run 
 ```
 
 Sanity check: open http://localhost:3000 — the map should show parcels and colored
-alert markers. If the map is empty, the token is missing or expired: re-mint it and
-restart `npm run dev`.
+alert markers, with the nav bar (Map / Alerts / Cases / Personas) up top and the
+"What am I looking at?" intro panel top right. If the map is empty, the token is
+missing or expired: re-mint it and restart `npm run dev`.
 
 Close other tabs, hide bookmarks bar, zoom browser to 110%.
 
@@ -73,9 +74,12 @@ Go back to the alert queue, click the **amber** row (forest parcel, Grade C):
 > something' and 'we can act on it' — that protects the department from
 > wrongful-demolition litigation."
 
-### Stop 4 — Case detail (open parcel-1 → click **case-1**)
+### Stop 4 — Cases (open **Cases** in the nav, then case-1)
 
-**The strongest stop for a government audience.**
+**The strongest stop for a government audience.** The queue shows every case
+grouped by where it stands — in due process, paused (a court stay and a
+pending survey), and concluded — each with its step on the 11-stage chain.
+Open **case-1**:
 
 > "Every alert that survives triage becomes a case, and the case follows due process —
 > the software physically cannot skip a step. This case is at Show Cause Issued. Look
@@ -98,21 +102,29 @@ Do refusals freely — they change nothing. Only advance the case legally (e.g.
 RESPONSE WINDOW) as your finale if at all: it mutates the demo until the
 free-tier API instance next restarts, which conveniently resets everything.
 
-### Stop 5 — Become someone else (persona switcher)
+### Stop 5 — Who sees what (personas)
 
-Top bar → persona dropdown. Pick **Enforcement Officer, Haridwar**:
+Open **Personas** in the nav:
+
+> "Every login is scoped to a jurisdiction and a role — and this page shows it
+> before you even switch. The Vice Chairman sees all 30 parcels; the Haridwar
+> enforcement officer sees 15; the Roorkee City taluk officer sees just their 5."
+
+Click **View as** on **Enforcement Officer, Haridwar**:
 
 > "Same system, different officer. Watch the map."
 
-The page reloads scoped to their jurisdiction — 4 Haridwar-side parcels; the
-Roorkee parcels aren't hidden, they *don't exist* for this officer (direct URLs
-404 too). Then switch to **Vice Chairman, HRDA** and try to add a tag:
+The console reloads scoped to their jurisdiction — 15 Haridwar-side parcels and
+an amber "Viewing as" banner on every page; the Roorkee parcels aren't hidden,
+they *don't exist* for this officer (direct URLs 404 too). Then view as
+**Vice Chairman, HRDA** and try to add a tag:
 
 > "The Vice Chairman sees everything — and can change nothing."
 
-The tag is refused with the role message on screen. Four demo personas cover the
+The tag is refused with the role message on screen. Five demo personas cover the
 spread: statewide viewer, district case officer, district survey officer,
-statewide data admin. Reset with the × to return to the default officer.
+taluk-level case officer, statewide data admin. "Exit persona" in the banner
+returns to the default officer.
 
 ---
 
@@ -135,7 +147,7 @@ curl -s -X POST http://localhost:8000/cases/case-1/transitions \
 # → 409 "missing required artifact(s): dismissal_reason"
 ```
 
-Worth mentioning: 200 backend tests at ~100% coverage; every mutation lands in a
+Worth mentioning: 230+ backend tests at ~100% coverage; every mutation lands in a
 tamper-evident hash-chained audit log (any edit to history is detectable — built for
 evidence-integrity requirements under BSA 2023 §63); role-based access with
 jurisdiction scoping — an officer literally cannot see, or even confirm the existence

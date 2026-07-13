@@ -1,5 +1,6 @@
 import { BoundaryGradeBadge } from "./BoundaryGradeBadge";
 import type { Parcel } from "@/lib/types";
+import { jurisdictionLabel } from "@/lib/format";
 
 export interface ParcelAttributesCardProps {
   parcel: Parcel;
@@ -46,7 +47,10 @@ export function ParcelAttributesCard({ parcel }: ParcelAttributesCardProps) {
           label="Land Category"
           value={LAND_CATEGORY_LABELS[parcel.land_category]}
         />
-        <Field label="Jurisdiction" value={parcel.jurisdiction_id} />
+        <Field
+          label="Jurisdiction"
+          value={jurisdictionLabel(parcel.jurisdiction_id, parcel.jurisdiction_name)}
+        />
       </dl>
       <div className="mt-4 border-t border-gray-100 pt-4">
         <dt className="mb-1 text-xs uppercase tracking-wide text-gray-500">

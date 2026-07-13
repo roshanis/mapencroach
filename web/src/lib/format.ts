@@ -18,3 +18,39 @@ export function sortBySeverityDesc<T extends { severity_score: number }>(
 ): T[] {
   return [...items].sort((a, b) => b.severity_score - a.severity_score);
 }
+
+export const JURISDICTION_FALLBACK_LABELS: Record<string, string> = {
+  state: "Haridwar–Roorkee Development Authority",
+  "dist-a": "Haridwar Division",
+  "dist-b": "Roorkee Division",
+  "taluk-a1": "Haridwar City",
+  "taluk-a2": "Kankhal",
+  "taluk-a3": "Laksar",
+  "taluk-b1": "Roorkee City",
+  "taluk-b2": "Bahadarabad",
+  "taluk-b3": "Narsan",
+};
+
+/**
+ * Humanizes a jurisdiction id for display. Prefers an explicit `name` if
+ * provided (non-empty); otherwise looks up a known fallback label; otherwise
+ * title-cases the id (hyphens become spaces, each word capitalized).
+ */
+export function jurisdictionLabel(id: string, name?: string): string {
+  if (name && name.trim().length > 0) return name;
+  if (id in JURISDICTION_FALLBACK_LABELS) return JURISDICTION_FALLBACK_LABELS[id];
+  return id
+    .split("-")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
+}
+
+/** Humanizes a snake_case persona role (e.g. "case_officer" -> "Case Officer"). */
+export function roleLabel(role: string): string {
+  return role
+    .split("_")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
+}

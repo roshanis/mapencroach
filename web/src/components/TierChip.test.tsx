@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { TierChip } from "./TierChip";
+import { TIER_DESCRIPTIONS } from "@/lib/explanations";
 import type { AlertTier } from "@/lib/types";
 
 describe("TierChip", () => {
@@ -32,4 +33,15 @@ describe("TierChip", () => {
     expect(redClasses).toContain("tier-red");
     expect(greenClasses).toContain("tier-green");
   });
+
+  it.each(cases)(
+    "sets the title attribute to TIER_DESCRIPTIONS for tier=$tier",
+    ({ tier }) => {
+      render(<TierChip tier={tier} />);
+      expect(screen.getByTestId("tier-chip")).toHaveAttribute(
+        "title",
+        TIER_DESCRIPTIONS[tier]
+      );
+    }
+  );
 });

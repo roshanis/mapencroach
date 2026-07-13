@@ -2,29 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { getPersonas, loginPersona, PERSONA_COOKIE, TOKEN_COOKIE, type Persona } from "@/lib/api";
-
-const COOKIE_MAX_AGE = 28800; // 8 hours, matches demo persona token lifetime.
-
-function readCookie(name: string): string | undefined {
-  if (typeof document === "undefined") return undefined;
-  const prefix = `${name}=`;
-  const match = document.cookie
-    .split(";")
-    .map((part) => part.trim())
-    .find((part) => part.startsWith(prefix));
-  if (!match) return undefined;
-  return decodeURIComponent(match.slice(prefix.length));
-}
-
-function setCookie(name: string, value: string) {
-  document.cookie = `${name}=${encodeURIComponent(
-    value
-  )}; path=/; max-age=${COOKIE_MAX_AGE}; SameSite=Lax`;
-}
-
-function clearCookie(name: string) {
-  document.cookie = `${name}=; path=/; max-age=0; SameSite=Lax`;
-}
+import {
+  PERSONA_META_COOKIE,
+  clearCookie,
+  readCookie,
+  setCookie,
+} from "@/lib/cookies";
 
 export function PersonaSwitcher() {
   const [personas, setPersonas] = useState<Persona[]>([]);
@@ -58,12 +41,22 @@ export function PersonaSwitcher() {
     }
     setCookie(TOKEN_COOKIE, result.token);
     setCookie(PERSONA_COOKIE, result.persona.name);
+    setCookie(
+      PERSONA_META_COOKIE,
+      JSON.stringify({
+        name: result.persona.name,
+        role: result.persona.role,
+        jurisdiction_id: result.persona.jurisdiction_id,
+        jurisdiction_name: result.persona.jurisdiction_name,
+      })
+    );
     window.location.reload();
   }
 
   function handleReset() {
     clearCookie(TOKEN_COOKIE);
     clearCookie(PERSONA_COOKIE);
+    clearCookie(PERSONA_META_COOKIE);
     window.location.reload();
   }
 

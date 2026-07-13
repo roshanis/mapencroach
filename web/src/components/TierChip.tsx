@@ -1,3 +1,4 @@
+import { TIER_DESCRIPTIONS } from "@/lib/explanations";
 import type { AlertTier } from "@/lib/types";
 
 const TIER_LABELS: Record<AlertTier, string> = {
@@ -23,6 +24,7 @@ export function TierChip({ tier }: TierChipProps) {
     <span
       data-testid="tier-chip"
       data-tier={tier}
+      title={TIER_DESCRIPTIONS[tier]}
       className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${TIER_CLASSES[tier]}`}
     >
       {TIER_LABELS[tier]}

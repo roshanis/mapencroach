@@ -812,8 +812,12 @@ class TestDemoPersonas:
         parcels = app_client.get("/parcels", headers=auth_headers(token))
         assert parcels.status_code == 200
         features = parcels.json()["features"]
-        # dist-a scope: only the 4 Haridwar-side parcels are visible.
-        assert len(features) == 4
+        # dist-a scope: exactly the Haridwar-side parcels are visible.
+        expected = sum(
+            1 for p in store.parcels.values() if p["jurisdiction_id"] in store.dist_a_scope
+        )
+        assert len(features) == expected
+        assert 0 < expected < len(store.parcels)
 
     def test_viewer_persona_reads_but_cannot_mutate(self, store: Store, monkeypatch):
         app_client = self._demo_client(store, monkeypatch)
@@ -822,7 +826,7 @@ class TestDemoPersonas:
         ).json()["token"]
         assert (
             len(app_client.get("/parcels", headers=auth_headers(token)).json()["features"])
-            == 8
+            == len(store.parcels)
         )
         resp = app_client.post(
             "/parcels/parcel-1/tags",
@@ -835,3 +839,118 @@ class TestDemoPersonas:
         app_client = self._demo_client(store, monkeypatch)
         resp = app_client.post("/demo/login", json={"persona_id": "ghost"})
         assert resp.status_code == 404
+
+
+class TestExpandedSeed:
+    """The demo seed is rich enough to make scoping and the case rail
+    interesting: 6 named taluks, 30 parcels, alerts across every tier and
+    status, cases including paused states — with the original protagonist
+    parcels/cases byte-identical so the demo script stays true."""
+
+    def test_thirty_parcels_five_per_taluk(self, store: Store):
+        assert len(store.parcels) == 30
+        by_taluk: dict[str, int] = {}
+        for p in store.parcels.values():
+            by_taluk[p["jurisdiction_id"]] = by_taluk.get(p["jurisdiction_id"], 0) + 1
+        assert set(by_taluk) == {
+            "taluk-a1", "taluk-a2", "taluk-a3", "taluk-b1", "taluk-b2", "taluk-b3"
+        }
+        assert all(count == 5 for count in by_taluk.values()), by_taluk
+
+    def test_all_parcels_inside_corridor_bbox(self, store: Store):
+        for p in store.parcels.values():
+            ring = p["geometry"]["coordinates"][0]
+            lon = sum(pt[0] for pt in ring[:-1]) / 4
+            lat = sum(pt[1] for pt in ring[:-1]) / 4
+            assert 77.80 <= lon <= 78.30 and 29.80 <= lat <= 30.02, (p["id"], lon, lat)
+
+    def test_protagonist_parcels_unchanged(self, store: Store):
+        p1 = store.parcels["parcel-1"]
+        assert p1["land_category"] == "waterbody"
+        assert p1["boundary_grade"] == "A"
+        assert p1["tags"] == ["court-monitored"]
+        assert p1["jurisdiction_id"] == "taluk-a1"
+        assert p1["owning_department"] == "Irrigation Department, Uttarakhand"
+        p7 = store.parcels["parcel-7"]
+        assert p7["tags"] == ["legacy-review"]
+
+    def test_alert_variety(self, store: Store):
+        assert len(store.alerts) >= 10
+        tiers = {a["tier"] for a in store.alerts.values()}
+        assert tiers == {"RED", "AMBER", "GREEN", "LEGACY"}
+        statuses = {a["status"] for a in store.alerts.values()}
+        assert {"OPEN", "UNDER_REVIEW", "ESCALATED"} <= statuses
+        # Original red alert untouched.
+        assert store.alerts["alert-1"]["parcel_id"] == "parcel-1"
+        assert store.alerts["alert-1"]["severity_score"] == 60.0
+
+    def test_case_variety_including_paused_states(self, store: Store):
+        assert len(store.cases) == 5
+        states = {r.case.state.value for r in store.cases.values()}
+        assert {"SHOW_CAUSE_ISSUED", "CLOSED", "STAYED_BY_COURT",
+                "SURVEY_REQUESTED", "RESPONSE_WINDOW"} <= states
+        assert store.cases["case-1"].case.state.value == "SHOW_CAUSE_ISSUED"
+        assert store.cases["case-2"].case.state.value == "CLOSED"
+        # Paused cases remember where to resume.
+        paused = [r for r in store.cases.values()
+                  if r.case.state.value in ("STAYED_BY_COURT", "SURVEY_REQUESTED")]
+        assert len(paused) == 2
+        assert all(r.case.paused_state is not None for r in paused)
+
+
+class TestJurisdictionNames:
+    def test_parcel_properties_include_jurisdiction_name(
+        self, client: TestClient, state_token: str
+    ):
+        resp = client.get("/parcels/parcel-1", headers=auth_headers(state_token))
+        assert resp.json()["properties"]["jurisdiction_name"] == "Haridwar City"
+
+    def test_all_seed_jurisdictions_have_names(self, store: Store):
+        from mapencroach.api.store import JURISDICTION_NAMES
+
+        for jid, _parent in store.jurisdiction_rows:
+            assert jid in JURISDICTION_NAMES, jid
+        assert JURISDICTION_NAMES["state"].startswith("Haridwar")
+
+
+class TestPersonaEnrichment:
+    def _demo_client(self, store: Store, monkeypatch) -> TestClient:
+        monkeypatch.setenv("MAPENCROACH_DEMO", "1")
+        return TestClient(create_app(store))
+
+    def test_personas_carry_live_visibility_and_capabilities(
+        self, store: Store, monkeypatch
+    ):
+        app_client = self._demo_client(store, monkeypatch)
+        personas = app_client.get("/demo/personas").json()
+        assert len(personas) >= 5
+        for p in personas:
+            scope = store.tree.scope_ids(p["jurisdiction_id"])
+            expected = sum(
+                1 for parcel in store.parcels.values() if parcel["jurisdiction_id"] in scope
+            )
+            assert p["visible_parcels"] == expected, p["id"]
+            assert p["jurisdiction_name"]
+            assert isinstance(p["capabilities"], list) and p["capabilities"]
+
+    def test_taluk_persona_sees_exactly_its_taluk(self, store: Store, monkeypatch):
+        app_client = self._demo_client(store, monkeypatch)
+        token = app_client.post(
+            "/demo/login", json={"persona_id": "co-roorkee-city"}
+        ).json()["token"]
+        features = app_client.get(
+            "/parcels", headers=auth_headers(token)
+        ).json()["features"]
+        assert len(features) == 5
+        assert all(f["properties"]["jurisdiction_id"] == "taluk-b1" for f in features)
+
+
+class TestCasesListStateSince:
+    def test_state_since_matches_last_event(self, client: TestClient, state_token: str):
+        cases = client.get("/cases", headers=auth_headers(state_token)).json()
+        assert len(cases) == 5
+        for summary in cases:
+            detail = client.get(
+                f"/cases/{summary['id']}", headers=auth_headers(state_token)
+            ).json()
+            assert summary["state_since"] == detail["events"][-1]["occurred_at"]

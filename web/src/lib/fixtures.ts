@@ -3,6 +3,7 @@
 // 29.9N), with several parcels bordering the Upper Ganga Canal to illustrate
 // the waterbody-encroachment storyline.
 
+import type { Persona } from "./api";
 import type { Alert, Case, Parcel } from "./types";
 
 function square(
@@ -340,5 +341,88 @@ export const FIXTURE_CASES: Case[] = [
         artifacts: ["closure_summary_9002.pdf"],
       },
     ],
+  },
+];
+
+const VIEWER_CAPABILITIES = [
+  "See every parcel, alert and case in scope",
+  "Cannot act on cases",
+  "Cannot edit tags or boundary grades",
+];
+
+const CASE_OFFICER_CAPABILITIES = [
+  "Move cases through due process",
+  "Create alerts and tag parcels",
+  "Cannot see other jurisdictions' parcels (even that they exist)",
+  "Cannot upgrade boundary grades",
+];
+
+const SURVEY_OFFICER_CAPABILITIES = [
+  "Upgrade boundary grades after ground survey",
+  "Cannot transition cases",
+];
+
+const DATA_ADMIN_CAPABILITIES = [
+  "Manage parcel records and tags in scope",
+  "Cannot move cases through the legal chain",
+];
+
+// Mirrors the 5 demo personas served by GET /demo/personas so the personas
+// page (and PersonaCard) can be exercised without a backend.
+export const FIXTURE_PERSONAS: Persona[] = [
+  {
+    id: "vc-hrda",
+    name: "Vice Chairman, HRDA",
+    role: "viewer",
+    jurisdiction_id: "state",
+    jurisdiction_name: "Haridwar–Roorkee Development Authority",
+    description:
+      "Oversees the full authority with read-only visibility into every parcel, alert and case.",
+    visible_parcels: 30,
+    capabilities: VIEWER_CAPABILITIES,
+  },
+  {
+    id: "eo-haridwar",
+    name: "Enforcement Officer, Haridwar",
+    role: "case_officer",
+    jurisdiction_id: "dist-a",
+    jurisdiction_name: "Haridwar Division",
+    description:
+      "Drives cases through due process for encroachments within Haridwar division.",
+    visible_parcels: 15,
+    capabilities: CASE_OFFICER_CAPABILITIES,
+  },
+  {
+    id: "survey-roorkee",
+    name: "Survey Officer, Roorkee",
+    role: "survey_officer",
+    jurisdiction_id: "dist-b",
+    jurisdiction_name: "Roorkee Division",
+    description:
+      "Conducts ground surveys and upgrades boundary grades for parcels in Roorkee division.",
+    visible_parcels: 15,
+    capabilities: SURVEY_OFFICER_CAPABILITIES,
+  },
+  {
+    id: "co-roorkee-city",
+    name: "Case Officer, Roorkee City",
+    role: "case_officer",
+    jurisdiction_id: "taluk-b1",
+    jurisdiction_name: "Roorkee City",
+    description:
+      "Handles enforcement cases scoped to Roorkee City taluk only.",
+    visible_parcels: 5,
+    capabilities: CASE_OFFICER_CAPABILITIES,
+  },
+  {
+    id: "admin-hq",
+    name: "Data Administrator, HRDA HQ",
+    role: "data_admin",
+    jurisdiction_id: "state",
+    jurisdiction_name: "Haridwar–Roorkee Development Authority",
+    description:
+      "Maintains parcel records and tags across the authority; does not act on cases.",
+    visible_parcels: 30,
+    capabilities: DATA_ADMIN_CAPABILITIES,
   },
 ];

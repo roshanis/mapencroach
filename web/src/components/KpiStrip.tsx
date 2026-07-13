@@ -1,20 +1,10 @@
-import type { Alert, Case, Parcel } from "@/lib/types";
+import { TERMINAL_STATES, type Alert, type Case, type Parcel } from "@/lib/types";
 
 export interface KpiStripProps {
   parcels: Parcel[];
   alerts: Alert[];
   cases: Case[];
 }
-
-// Case states that mean the case is no longer actively moving through the
-// due-process pipeline. Everything else (including states not yet present
-// in the CaseState union, e.g. legacy/backend-only states) counts as "in
-// due process".
-const NOT_IN_DUE_PROCESS = new Set([
-  "CLOSED",
-  "DISMISSED_FALSE_POSITIVE",
-  "LEGACY_REFERRED",
-]);
 
 interface KpiTile {
   testId: string;
@@ -26,7 +16,7 @@ export function KpiStrip({ parcels, alerts, cases }: KpiStripProps) {
   const openAlerts = alerts.filter((a) => a.status === "open").length;
   const redAlerts = alerts.filter((a) => a.tier === "red").length;
   const casesInDueProcess = cases.filter(
-    (c) => !NOT_IN_DUE_PROCESS.has(c.state)
+    (c) => !TERMINAL_STATES.has(c.state)
   ).length;
 
   const tiles: KpiTile[] = [

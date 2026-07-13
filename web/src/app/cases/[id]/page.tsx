@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getCaseForRequest } from "@/lib/server-api";
+import { STATE_DESCRIPTIONS } from "@/lib/explanations";
+import { CASE_STATE_CHAIN, STATE_LABELS } from "@/lib/types";
 import { AllowedNextSteps } from "@/components/AllowedNextSteps";
 import { StateRail } from "@/components/StateRail";
 import { TopBar } from "@/components/TopBar";
@@ -52,6 +54,21 @@ export default async function CaseDetailPage({
             Due-Process Progress
           </h2>
           <StateRail currentState={caseRecord.state} />
+          <details className="mt-4 text-xs text-gray-500">
+            <summary className="cursor-pointer text-gov">
+              What do these steps mean?
+            </summary>
+            <ul className="mt-2 flex flex-col gap-2">
+              {CASE_STATE_CHAIN.map((state) => (
+                <li key={state}>
+                  <span className="font-medium text-gray-700">
+                    {STATE_LABELS[state]}:
+                  </span>{" "}
+                  {STATE_DESCRIPTIONS[state]}
+                </li>
+              ))}
+            </ul>
+          </details>
         </section>
 
         <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">

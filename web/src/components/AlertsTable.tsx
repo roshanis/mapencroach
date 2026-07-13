@@ -4,6 +4,10 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { TierChip } from "./TierChip";
 import { ageFromNow, sortBySeverityDesc } from "@/lib/format";
+import {
+  ALERT_STATUS_DESCRIPTIONS,
+  SEVERITY_EXPLANATION,
+} from "@/lib/explanations";
 import type { Alert, AlertStatus, AlertTier } from "@/lib/types";
 
 export interface AlertsTableProps {
@@ -75,7 +79,9 @@ export function AlertsTable({ alerts }: AlertsTableProps) {
           <tr>
             <th className="px-4 py-2">Tier</th>
             <th className="px-4 py-2">Parcel</th>
-            <th className="px-4 py-2">Severity</th>
+            <th className="px-4 py-2" title={SEVERITY_EXPLANATION}>
+              Severity
+            </th>
             <th className="px-4 py-2">Area (m²)</th>
             <th className="px-4 py-2">Status</th>
             <th className="px-4 py-2">Age</th>
@@ -98,7 +104,10 @@ export function AlertsTable({ alerts }: AlertsTableProps) {
               </td>
               <td className="px-4 py-2">{alert.severity_score}</td>
               <td className="px-4 py-2">{alert.area_m2.toLocaleString()}</td>
-              <td className="px-4 py-2 capitalize">
+              <td
+                className="px-4 py-2 capitalize"
+                title={ALERT_STATUS_DESCRIPTIONS[alert.status]}
+              >
                 {alert.status.replace("_", " ")}
               </td>
               <td className="px-4 py-2 text-gray-500">
@@ -115,6 +124,9 @@ export function AlertsTable({ alerts }: AlertsTableProps) {
           )}
         </tbody>
       </table>
+      <p data-testid="severity-footnote" className="text-xs text-gray-400">
+        {SEVERITY_EXPLANATION}
+      </p>
     </div>
   );
 }

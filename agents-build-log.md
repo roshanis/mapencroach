@@ -148,3 +148,19 @@ Nits: Sentinel-1B is dead (constellation = 1A+1C); Phase 0 of 2–4 weeks unreal
 - DEMO.md: Stop 5 (persona switching: scoping + read-only refusal), tags beat in Stop 3
 ### Diff summary: Backend TDD red-first (224 passed / 99.60% cov / ruff clean). Web verified independently: 80 passed / tsc clean / build clean with parcel/case/alert routes dynamic. Local E2E smoke on port 8001: personas listed unauthenticated; eo-haridwar sees exactly 4 parcels and 404s on parcel-5; vc-hrda tag attempt → 403 role message; admin-hq tag add → 201 audited. Demo endpoints structurally absent outside demo mode (tested).
 ### Recommendations / Next steps: push (auto-deploys); live-verify /demo/personas on Render + persona-scoped parcel counts + tag flow; note persona tokens minted server-side with the real secret, 8h expiry.
+
+## [AGENT: Claude] [2026-07-13T00:00Z]
+### Action: Code review — Batch 2 (WP4 personas page, WP5 cases index, WP6 inline explainability)
+### Files changed: none (review only)
+### Diff summary: Reviewed 11 modified files (git diff HEAD) + 8 brand-new files (direct read). Found 1 WARNING, 3 NITPICKs, no BLOCKERs. All 154 tests pass; tsc clean.
+### Recommendations / Next steps: See reviewer findings below. Top priority: fix CasesTable concluded-section double-counting bug (CLOSED appears in both TERMINAL_STATES and the explicit check). Second: extract roleLabel to lib/format.ts to remove the duplication between PersonaCard and ViewingAsBanner. CaseEvent.to_state typed as CaseState (not AnyCaseState) is a latent risk — log a TODO for when the backend starts emitting special states in event history.
+
+## [AGENT: Claude] [2026-07-13T15:40Z]
+### Action: Approved-plan execution — console intuitiveness overhaul, expanded seed (30 parcels / 6 named taluks / 10 alerts / 5 cases), personas showcase
+### Files changed:
+- backend (orchestrator, TDD): store.py (JURISDICTION_NAMES; +taluk-a3 Laksar, taluk-b3 Narsan; parcels 8→30 with protagonists byte-identical; alerts 4→10 incl. UNDER_REVIEW/ESCALATED, alert-3 RESOLVED→CLOSED for filter coherence; cases 2→5 incl. STAYED_BY_COURT + SURVEY_REQUESTED pauses), app.py (jurisdiction_name in features; state_since on /cases list; 5th persona co-roorkee-city; /demo/personas + login enriched with jurisdiction_name/visible_parcels/capabilities), tests (+10, two hardcoded persona counts now store-derived)
+- web Batch 1 (Sonnet 5): NavLinks (active-route nav + mobile), TopBar mount, jurisdictionLabel + fallback map, MapIntroPanel (localStorage-dismissible "What am I looking at?")
+- web Batch 2 (Sonnet 5): lib/cookies.ts (+persona meta cookie), /personas page + PersonaCard (live "sees N of M" + capabilities from API), ViewingAsBanner on all pages, /cases index + CasesTable (In due process / Paused / Concluded, step-k-of-11 bars) + CaseStateChip, StateRail special-state banner, lib/explanations.ts + tier/severity/status/state tooltips with touch fallbacks, shared state constants dedup
+- DEMO.md (Stop 4 opens from Cases queue; Stop 5 = personas page, 30/15/5 story), README.md
+### Diff summary: Backend 234 passed / 99.62% cov / ruff clean. Web 157 passed (was 80) / tsc clean / build clean (routes: /cases dynamic, /personas static). Batch 2's reviewer sub-pass caught and fixed section-exclusivity + sort-stability issues in CasesTable. Full-stack local integration: 15/15 probes (cases grouping incl. both paused labels, jurisdiction names, severity footnote, paused-case rail banner).
+### Recommendations / Next steps: push (auto-deploy), live-verify /personas + /cases + persona visible_parcels 30/15/5; user should eyeball map density at zoom 11 and the mobile hamburger.

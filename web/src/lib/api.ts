@@ -32,6 +32,7 @@ interface ParcelFeatureProperties {
   land_category: LandCategory;
   boundary_grade: BoundaryGrade;
   jurisdiction_id: string;
+  jurisdiction_name?: string;
   tags?: string[];
 }
 
@@ -68,6 +69,7 @@ function featureToParcel(feature: ParcelFeature): Parcel {
     land_category: properties.land_category,
     boundary_grade: properties.boundary_grade,
     jurisdiction_id: properties.jurisdiction_id,
+    jurisdiction_name: properties.jurisdiction_name,
     geometry,
     centroid: centroidOf(geometry),
     tags: properties.tags ?? [],
@@ -276,7 +278,10 @@ export interface Persona {
   name: string;
   role: string;
   jurisdiction_id: string;
+  jurisdiction_name?: string;
   description: string;
+  visible_parcels?: number;
+  capabilities?: string[];
 }
 
 /**

@@ -13,6 +13,9 @@ describe("ParcelAttributesCard", () => {
     expect(card).toHaveTextContent(parcel.ulpin);
     expect(card).toHaveTextContent(parcel.owning_department);
     expect(card).toHaveTextContent("Waterbody");
+    // jurisdiction_id "UK-URBAN-01" has no fallback-map entry or
+    // jurisdiction_name in fixtures, so it renders via title-casing.
+    expect(card).toHaveTextContent("Uk Urban 01");
 
     const badge = screen.getByTestId("boundary-grade-badge");
     expect(badge).toHaveAttribute("data-grade", "A");
