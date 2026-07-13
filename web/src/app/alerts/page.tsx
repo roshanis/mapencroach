@@ -1,12 +1,12 @@
 import Link from "next/link";
-import { getAlerts } from "@/lib/api";
+import { getAlertsForRequest } from "@/lib/server-api";
 import { AlertsTable } from "@/components/AlertsTable";
 import { TopBar } from "@/components/TopBar";
 
 export const dynamic = "force-dynamic";
 
 export default async function AlertsQueuePage() {
-  const alerts = await getAlerts();
+  const alerts = await getAlertsForRequest();
 
   return (
     <div className="flex min-h-screen flex-col">

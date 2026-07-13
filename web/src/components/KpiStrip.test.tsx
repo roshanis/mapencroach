@@ -25,6 +25,7 @@ function makeParcel(id: string): Parcel {
       ],
     },
     centroid: [77.979, 29.913],
+    tags: [],
   };
 }
 

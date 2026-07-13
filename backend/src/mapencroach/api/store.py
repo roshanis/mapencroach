@@ -117,6 +117,10 @@ class Store:
         ]
         store = cls(jurisdiction_rows=rows)
 
+        seed_tags = {
+            "parcel-1": ["court-monitored"],
+            "parcel-7": ["legacy-review"],
+        }
         parcel_specs = [
             # Upper Ganga Canal bank, Haridwar
             ("parcel-1", "SN-101", "taluk-a1", "waterbody", "A", 78.145, 29.938),
@@ -164,6 +168,7 @@ class Store:
                 "boundary_grade": boundary_grade,
                 "jurisdiction_id": jurisdiction_id,
                 "geometry": geometry,
+                "tags": list(seed_tags.get(parcel_id, [])),
             }
 
         store.record_audit(

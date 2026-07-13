@@ -62,6 +62,10 @@ On parcel-1 (canal land):
 > "Waterbody, Grade A boundary — DGPS-verified, enforcement can rely on it. That's
 > why this alert is red: high-value land, trustworthy boundary, big change."
 
+Point at the **Tags** section — parcel-1 comes seeded with `court-monitored`. Add one
+live (`repeat-offender`): tags are how officers layer their institutional knowledge
+onto the record, and every add/remove lands in the audit chain with their identity.
+
 Go back to the alert queue, click the **amber** row (forest parcel, Grade C):
 
 > "Same detection, weaker footing. Grade C — unverified: a notice cannot rely on this
@@ -93,6 +97,22 @@ the evidence field — refused again, naming the missing dismissal reason.
 Do refusals freely — they change nothing. Only advance the case legally (e.g.
 RESPONSE WINDOW) as your finale if at all: it mutates the demo until the
 free-tier API instance next restarts, which conveniently resets everything.
+
+### Stop 5 — Become someone else (persona switcher)
+
+Top bar → persona dropdown. Pick **Enforcement Officer, Haridwar**:
+
+> "Same system, different officer. Watch the map."
+
+The page reloads scoped to their jurisdiction — 4 Haridwar-side parcels; the
+Roorkee parcels aren't hidden, they *don't exist* for this officer (direct URLs
+404 too). Then switch to **Vice Chairman, HRDA** and try to add a tag:
+
+> "The Vice Chairman sees everything — and can change nothing."
+
+The tag is refused with the role message on screen. Four demo personas cover the
+spread: statewide viewer, district case officer, district survey officer,
+statewide data admin. Reset with the × to return to the default officer.
 
 ---
 

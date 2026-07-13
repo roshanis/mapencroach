@@ -39,6 +39,7 @@ export const FIXTURE_PARCELS: Parcel[] = [
     jurisdiction_id: "UK-URBAN-01",
     geometry: square(77.979, 29.913, 0.003),
     centroid: [77.979, 29.913],
+    tags: ["court-monitored"],
   },
   {
     id: "PCL-1002",
@@ -50,6 +51,7 @@ export const FIXTURE_PARCELS: Parcel[] = [
     jurisdiction_id: "UK-URBAN-01",
     geometry: square(77.983, 29.915, 0.0028),
     centroid: [77.983, 29.915],
+    tags: [],
   },
   {
     id: "PCL-1003",
@@ -61,6 +63,7 @@ export const FIXTURE_PARCELS: Parcel[] = [
     jurisdiction_id: "UK-URBAN-01",
     geometry: square(77.97, 29.921, 0.004),
     centroid: [77.97, 29.921],
+    tags: [],
   },
   {
     id: "PCL-1004",
@@ -72,6 +75,7 @@ export const FIXTURE_PARCELS: Parcel[] = [
     jurisdiction_id: "UK-URBAN-02",
     geometry: square(78.02, 29.896, 0.0035),
     centroid: [78.02, 29.896],
+    tags: ["legacy-review"],
   },
   {
     id: "PCL-1005",
@@ -83,6 +87,7 @@ export const FIXTURE_PARCELS: Parcel[] = [
     jurisdiction_id: "UK-URBAN-02",
     geometry: square(78.03, 29.891, 0.003),
     centroid: [78.03, 29.891],
+    tags: [],
   },
   {
     id: "PCL-1006",
@@ -94,6 +99,7 @@ export const FIXTURE_PARCELS: Parcel[] = [
     jurisdiction_id: "UK-RURAL-01",
     geometry: square(78.06, 29.936, 0.0045),
     centroid: [78.06, 29.936],
+    tags: [],
   },
   {
     id: "PCL-1007",
@@ -105,6 +111,7 @@ export const FIXTURE_PARCELS: Parcel[] = [
     jurisdiction_id: "UK-RURAL-01",
     geometry: square(78.05, 29.946, 0.004),
     centroid: [78.05, 29.946],
+    tags: [],
   },
   {
     id: "PCL-1008",
@@ -116,6 +123,7 @@ export const FIXTURE_PARCELS: Parcel[] = [
     jurisdiction_id: "UK-URBAN-01",
     geometry: square(77.976, 29.91, 0.0025),
     centroid: [77.976, 29.91],
+    tags: [],
   },
   {
     id: "PCL-1009",
@@ -127,6 +135,7 @@ export const FIXTURE_PARCELS: Parcel[] = [
     jurisdiction_id: "UK-URBAN-02",
     geometry: square(78.015, 29.884, 0.003),
     centroid: [78.015, 29.884],
+    tags: [],
   },
   {
     id: "PCL-1010",
@@ -138,6 +147,7 @@ export const FIXTURE_PARCELS: Parcel[] = [
     jurisdiction_id: "UK-RURAL-02",
     geometry: square(78.09, 29.956, 0.005),
     centroid: [78.09, 29.956],
+    tags: [],
   },
 ];
 

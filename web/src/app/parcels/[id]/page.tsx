@@ -1,10 +1,17 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getAlerts, getCases, getParcel } from "@/lib/api";
+import {
+  getAlertsForRequest,
+  getCasesForRequest,
+  getParcelForRequest,
+} from "@/lib/server-api";
 import { ParcelAttributesCard } from "@/components/ParcelAttributesCard";
+import { TagEditor } from "@/components/TagEditor";
 import { TierChip } from "@/components/TierChip";
 import { TopBar } from "@/components/TopBar";
 import ParcelMiniMap from "@/components/ParcelMiniMap";
+
+export const dynamic = "force-dynamic";
 
 export default async function ParcelProfilePage({
   params,
@@ -12,13 +19,16 @@ export default async function ParcelProfilePage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const parcel = await getParcel(id);
+  const parcel = await getParcelForRequest(id);
 
   if (!parcel) {
     notFound();
   }
 
-  const [allAlerts, allCases] = await Promise.all([getAlerts(), getCases()]);
+  const [allAlerts, allCases] = await Promise.all([
+    getAlertsForRequest(),
+    getCasesForRequest(),
+  ]);
   const linkedAlerts = allAlerts.filter((a) => a.parcel_id === id);
   const linkedCases = allCases.filter((c) => c.parcel_id === id);
 
@@ -36,6 +46,13 @@ export default async function ParcelProfilePage({
         </div>
 
         <ParcelAttributesCard parcel={parcel} />
+
+        <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-4 text-base font-semibold text-gray-900">
+            Tags
+          </h2>
+          <TagEditor parcelId={parcel.id} initialTags={parcel.tags} />
+        </section>
 
         <section
           data-testid="parcel-mini-map-section"

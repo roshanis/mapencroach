@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  addParcelTag,
   getAlerts,
   getCase,
   getCases,
   getParcel,
   getParcels,
+  getPersonas,
+  loginPersona,
+  removeParcelTag,
   transitionCase,
 } from "./api";
 import { FIXTURE_ALERTS, FIXTURE_CASES, FIXTURE_PARCELS } from "./fixtures";
@@ -301,5 +305,310 @@ describe("api client with NEXT_PUBLIC_API_URL set", () => {
       detail: "No backend configured — fixture mode is read-only.",
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("authHeaders token precedence", () => {
+  afterEach(() => {
+    document.cookie = "mapencroach_token=; path=/; max-age=0";
+  });
+
+  it("prefers the cookie token over NEXT_PUBLIC_API_TOKEN when posting a transition", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    process.env.NEXT_PUBLIC_API_TOKEN = "env-token";
+    document.cookie = "mapencroach_token=cookie-tok; path=/";
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      statusText: "Created",
+      json: async () => ({}),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await transitionCase("CASE-9001", "RESPONSE_WINDOW", {}, "note");
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers).toMatchObject({
+      Authorization: "Bearer cookie-tok",
+    });
+  });
+
+  it("uses a tokenOverride argument over both cookie and env token", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    process.env.NEXT_PUBLIC_API_TOKEN = "env-token";
+    document.cookie = "mapencroach_token=cookie-tok; path=/";
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({
+        type: "FeatureCollection",
+        features: [],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getParcels(undefined, "override-tok");
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers).toMatchObject({
+      Authorization: "Bearer override-tok",
+    });
+  });
+});
+
+describe("demo persona endpoints", () => {
+  it("getPersonas returns [] when no backend is configured", async () => {
+    delete process.env.NEXT_PUBLIC_API_URL;
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const personas = await getPersonas();
+
+    expect(personas).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("getPersonas parses the list when a backend is configured", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const personaList = [
+      {
+        id: "persona-1",
+        name: "Deputy Collector",
+        role: "case_officer",
+        jurisdiction_id: "UK-URBAN-01",
+        description: "Handles show-cause notices.",
+      },
+    ];
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => personaList,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const personas = await getPersonas();
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://api.example.test/demo/personas"
+    );
+    expect(personas).toEqual(personaList);
+  });
+
+  it("getPersonas returns [] on a 404 (non-demo backend)", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+      json: async () => ({}),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const personas = await getPersonas();
+
+    expect(personas).toEqual([]);
+  });
+
+  it("getPersonas returns [] when fetch throws", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockRejectedValue(new Error("network down"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const personas = await getPersonas();
+
+    expect(personas).toEqual([]);
+  });
+
+  it("loginPersona returns null when no backend is configured", async () => {
+    delete process.env.NEXT_PUBLIC_API_URL;
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await loginPersona("persona-1");
+
+    expect(result).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("loginPersona posts the persona_id and returns token + persona on success", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const persona = {
+      id: "persona-1",
+      name: "Deputy Collector",
+      role: "case_officer",
+      jurisdiction_id: "UK-URBAN-01",
+      description: "Handles show-cause notices.",
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({ token: "tok-123", persona, expires_in_hours: 8 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await loginPersona("persona-1");
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://api.example.test/demo/login"
+    );
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ persona_id: "persona-1" });
+    expect(result).toEqual({ token: "tok-123", persona });
+  });
+
+  it("loginPersona returns null on a 404 unknown persona", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+      json: async () => ({ detail: "unknown persona" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await loginPersona("bogus");
+
+    expect(result).toBeNull();
+  });
+});
+
+describe("parcel tag endpoints", () => {
+  it("addParcelTag returns ok:false without calling fetch when no backend is configured", async () => {
+    delete process.env.NEXT_PUBLIC_API_URL;
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await addParcelTag("PCL-1001", "court-monitored");
+
+    expect(result).toEqual({
+      ok: false,
+      status: 0,
+      detail: "No backend configured — fixture mode is read-only.",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("addParcelTag success returns tags parsed from the returned Feature", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    process.env.NEXT_PUBLIC_API_TOKEN = "test-token-123";
+
+    const feature = {
+      type: "Feature",
+      geometry: { type: "Polygon", coordinates: [[]] },
+      properties: {
+        id: "PCL-1001",
+        survey_no: "44/2",
+        ulpin: "UK17HR0001001",
+        owning_department: "Water Resources Department",
+        land_category: "waterbody",
+        boundary_grade: "A",
+        jurisdiction_id: "UK-URBAN-01",
+        tags: ["court-monitored", "flagged"],
+      },
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      statusText: "Created",
+      json: async () => feature,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await addParcelTag("PCL-1001", "flagged");
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://api.example.test/parcels/PCL-1001/tags"
+    );
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.method).toBe("POST");
+    expect(init.headers).toMatchObject({
+      "Content-Type": "application/json",
+      Authorization: "Bearer test-token-123",
+    });
+    expect(JSON.parse(init.body)).toEqual({ tag: "flagged" });
+    expect(result).toEqual({
+      ok: true,
+      status: 201,
+      tags: ["court-monitored", "flagged"],
+    });
+  });
+
+  it("addParcelTag passes through the 403 detail for a wrong-role persona", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      statusText: "Forbidden",
+      json: async () => ({
+        detail: "viewer role cannot tag parcels",
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await addParcelTag("PCL-1001", "flagged");
+
+    expect(result).toEqual({
+      ok: false,
+      status: 403,
+      detail: "viewer role cannot tag parcels",
+    });
+  });
+
+  it("removeParcelTag success returns tags parsed from the returned Feature", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+
+    const feature = {
+      type: "Feature",
+      geometry: { type: "Polygon", coordinates: [[]] },
+      properties: {
+        id: "PCL-1001",
+        survey_no: "44/2",
+        ulpin: "UK17HR0001001",
+        owning_department: "Water Resources Department",
+        land_category: "waterbody",
+        boundary_grade: "A",
+        jurisdiction_id: "UK-URBAN-01",
+        tags: [],
+      },
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => feature,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await removeParcelTag("PCL-1001", "court-monitored");
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://api.example.test/parcels/PCL-1001/tags/court-monitored"
+    );
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.method).toBe("DELETE");
+    expect(result).toEqual({ ok: true, status: 200, tags: [] });
+  });
+
+  it("removeParcelTag returns ok:false on a 404 absent tag", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+      json: async () => ({ detail: "tag not present" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await removeParcelTag("PCL-1001", "nope");
+
+    expect(result).toEqual({ ok: false, status: 404, detail: "tag not present" });
   });
 });

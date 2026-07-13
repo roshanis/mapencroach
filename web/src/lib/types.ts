@@ -59,6 +59,8 @@ export interface Parcel {
   geometry: GeoJSON.Polygon;
   /** Approximate centroid for map panning, [lng, lat]. */
   centroid: [number, number];
+  /** Free-text tags applied by case officers / data admins. */
+  tags: string[];
 }
 
 export interface Alert {

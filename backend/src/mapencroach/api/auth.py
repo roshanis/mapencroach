@@ -25,6 +25,11 @@ def _secret() -> str:
     return os.environ.get("MAPENCROACH_JWT_SECRET", _DEFAULT_SECRET)
 
 
+def signing_secret() -> str:
+    """The active signing secret, for callers that mint tokens (demo login)."""
+    return _secret()
+
+
 class Role(StrEnum):
     VIEWER = "viewer"
     CASE_OFFICER = "case_officer"

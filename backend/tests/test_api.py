@@ -682,3 +682,156 @@ class TestRequiredArtifactsInCaseDetail:
         body = resp.json()
         assert set(body["required_artifacts"].keys()) == set(body["allowed_transitions"])
         assert body["required_artifacts"]["HEARING_SCHEDULED"] == ["hearing_date"]
+
+
+class TestParcelTags:
+    """Tags are officer-curated labels on parcels: validated, deduplicated,
+    jurisdiction-scoped, and audited like every other mutation."""
+
+    def test_feature_properties_include_seeded_tags(
+        self, client: TestClient, state_token: str
+    ):
+        resp = client.get("/parcels/parcel-1", headers=auth_headers(state_token))
+        assert resp.status_code == 200
+        assert resp.json()["properties"]["tags"] == ["court-monitored"]
+
+    def test_case_officer_adds_tag(self, client: TestClient, state_token: str):
+        resp = client.post(
+            "/parcels/parcel-2/tags",
+            headers=auth_headers(state_token),
+            json={"tag": "eviction-planned"},
+        )
+        assert resp.status_code == 201
+        assert "eviction-planned" in resp.json()["properties"]["tags"]
+        # Persisted, not just echoed.
+        again = client.get("/parcels/parcel-2", headers=auth_headers(state_token))
+        assert "eviction-planned" in again.json()["properties"]["tags"]
+
+    def test_add_is_idempotent_and_normalizes_case(
+        self, client: TestClient, state_token: str
+    ):
+        for raw in ["High-Priority", "  high-priority  ", "high-priority"]:
+            resp = client.post(
+                "/parcels/parcel-2/tags",
+                headers=auth_headers(state_token),
+                json={"tag": raw},
+            )
+            assert resp.status_code in (200, 201)
+        tags = resp.json()["properties"]["tags"]
+        assert tags.count("high-priority") == 1
+
+    def test_invalid_tag_is_422(self, client: TestClient, state_token: str):
+        for bad in ["", "Not Valid!!", "-leading-hyphen", "x" * 60]:
+            resp = client.post(
+                "/parcels/parcel-2/tags",
+                headers=auth_headers(state_token),
+                json={"tag": bad},
+            )
+            assert resp.status_code == 422, bad
+
+    def test_viewer_cannot_tag(self, client: TestClient, store: Store):
+        viewer = token_for("viewer-1", Role.VIEWER, store.root_jurisdiction_id)
+        resp = client.post(
+            "/parcels/parcel-2/tags",
+            headers=auth_headers(viewer),
+            json={"tag": "sneaky"},
+        )
+        assert resp.status_code == 403
+
+    def test_out_of_scope_parcel_is_404(self, client: TestClient, store: Store):
+        # parcel-1 is in dist-a; a dist-b officer must not learn it exists.
+        officer_b = token_for("officer-b", Role.CASE_OFFICER, store.district_b_id)
+        resp = client.post(
+            "/parcels/parcel-1/tags",
+            headers=auth_headers(officer_b),
+            json={"tag": "anything"},
+        )
+        assert resp.status_code == 404
+
+    def test_delete_tag(self, client: TestClient, state_token: str):
+        resp = client.delete(
+            "/parcels/parcel-1/tags/court-monitored", headers=auth_headers(state_token)
+        )
+        assert resp.status_code == 200
+        assert "court-monitored" not in resp.json()["properties"]["tags"]
+
+    def test_delete_absent_tag_is_404(self, client: TestClient, state_token: str):
+        resp = client.delete(
+            "/parcels/parcel-2/tags/never-was", headers=auth_headers(state_token)
+        )
+        assert resp.status_code == 404
+
+    def test_tag_mutations_are_audited(self, client: TestClient, store: Store, state_token: str):
+        before = len(store.audit_chain)
+        client.post(
+            "/parcels/parcel-2/tags",
+            headers=auth_headers(state_token),
+            json={"tag": "audited-tag"},
+        )
+        client.delete(
+            "/parcels/parcel-2/tags/audited-tag", headers=auth_headers(state_token)
+        )
+        assert len(store.audit_chain) == before + 2
+        assert verify_chain(store.audit_chain).ok
+
+
+class TestDemoPersonas:
+    """Demo persona endpoints exist only when MAPENCROACH_DEMO=1, so
+    production deployments never expose a token-minting surface."""
+
+    def test_endpoints_absent_outside_demo_mode(self, store: Store, monkeypatch):
+        monkeypatch.delenv("MAPENCROACH_DEMO", raising=False)
+        app_client = TestClient(create_app(store))
+        assert app_client.get("/demo/personas").status_code == 404
+        assert (
+            app_client.post("/demo/login", json={"persona_id": "vc-hrda"}).status_code
+            == 404
+        )
+
+    def _demo_client(self, store: Store, monkeypatch) -> TestClient:
+        monkeypatch.setenv("MAPENCROACH_DEMO", "1")
+        return TestClient(create_app(store))
+
+    def test_personas_listed_without_secrets(self, store: Store, monkeypatch):
+        app_client = self._demo_client(store, monkeypatch)
+        resp = app_client.get("/demo/personas")
+        assert resp.status_code == 200
+        personas = resp.json()
+        assert len(personas) >= 4
+        for p in personas:
+            assert {"id", "name", "role", "jurisdiction_id", "description"} <= set(p)
+            assert "token" not in p and "secret" not in p
+
+    def test_login_returns_working_scoped_token(self, store: Store, monkeypatch):
+        app_client = self._demo_client(store, monkeypatch)
+        resp = app_client.post("/demo/login", json={"persona_id": "eo-haridwar"})
+        assert resp.status_code == 200
+        body = resp.json()
+        token = body["token"]
+        assert body["persona"]["id"] == "eo-haridwar"
+        parcels = app_client.get("/parcels", headers=auth_headers(token))
+        assert parcels.status_code == 200
+        features = parcels.json()["features"]
+        # dist-a scope: only the 4 Haridwar-side parcels are visible.
+        assert len(features) == 4
+
+    def test_viewer_persona_reads_but_cannot_mutate(self, store: Store, monkeypatch):
+        app_client = self._demo_client(store, monkeypatch)
+        token = app_client.post(
+            "/demo/login", json={"persona_id": "vc-hrda"}
+        ).json()["token"]
+        assert (
+            len(app_client.get("/parcels", headers=auth_headers(token)).json()["features"])
+            == 8
+        )
+        resp = app_client.post(
+            "/parcels/parcel-1/tags",
+            headers=auth_headers(token),
+            json={"tag": "nope"},
+        )
+        assert resp.status_code == 403
+
+    def test_unknown_persona_is_404(self, store: Store, monkeypatch):
+        app_client = self._demo_client(store, monkeypatch)
+        resp = app_client.post("/demo/login", json={"persona_id": "ghost"})
+        assert resp.status_code == 404

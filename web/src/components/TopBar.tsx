@@ -1,3 +1,5 @@
+import { PersonaSwitcher } from "./PersonaSwitcher";
+
 export interface TopBarProps {
   jurisdiction?: string;
 }
@@ -13,11 +15,14 @@ export function TopBar({ jurisdiction = "All Jurisdictions" }: TopBarProps) {
           Encroachment Monitoring Console
         </span>
       </div>
-      <div
-        data-testid="jurisdiction-placeholder"
-        className="rounded border border-white/30 px-3 py-1 text-xs text-white/90"
-      >
-        {jurisdiction}
+      <div className="flex items-center gap-3">
+        <div
+          data-testid="jurisdiction-placeholder"
+          className="rounded border border-white/30 px-3 py-1 text-xs text-white/90"
+        >
+          {jurisdiction}
+        </div>
+        <PersonaSwitcher />
       </div>
     </header>
   );

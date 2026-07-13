@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getCase } from "@/lib/api";
+import { getCaseForRequest } from "@/lib/server-api";
 import { AllowedNextSteps } from "@/components/AllowedNextSteps";
 import { StateRail } from "@/components/StateRail";
 import { TopBar } from "@/components/TopBar";
@@ -21,7 +21,7 @@ export default async function CaseDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const caseRecord = await getCase(id);
+  const caseRecord = await getCaseForRequest(id);
 
   if (!caseRecord) {
     notFound();

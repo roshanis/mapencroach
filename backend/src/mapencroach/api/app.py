@@ -9,14 +9,22 @@ we don't leak that they exist.
 """
 
 import os
-from datetime import UTC, datetime
+import re
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from mapencroach.api.auth import Role, User, current_user, require_roles
+from mapencroach.api.auth import (
+    Role,
+    User,
+    create_token,
+    current_user,
+    require_roles,
+    signing_secret,
+)
 from mapencroach.api.store import Store
 from mapencroach.domain.alerts import severity_score
 from mapencroach.domain.case_engine import (
@@ -31,6 +39,46 @@ from mapencroach.domain.case_engine import (
 
 _VALID_GRADES = {"A", "B", "C"}
 
+# Lowercase slug, hyphen-separated, 1-39 chars, no leading hyphen.
+_TAG_PATTERN = re.compile(r"[a-z0-9][a-z0-9-]{0,38}")
+
+# Demo identities for the persona switcher. Only served when
+# MAPENCROACH_DEMO=1, so production never exposes a token-minting surface.
+_DEMO_PERSONAS: list[dict[str, str]] = [
+    {
+        "id": "vc-hrda",
+        "name": "Vice Chairman, HRDA",
+        "role": "viewer",
+        "jurisdiction_id": "state",
+        "description": "Sees the whole authority's estate. Read-only: no case "
+        "actions, no tagging - the console enforces it.",
+    },
+    {
+        "id": "eo-haridwar",
+        "name": "Enforcement Officer, Haridwar",
+        "role": "case_officer",
+        "jurisdiction_id": "dist-a",
+        "description": "Runs encroachment cases for Haridwar-side parcels. "
+        "Cannot see - or even confirm the existence of - Roorkee parcels.",
+    },
+    {
+        "id": "survey-roorkee",
+        "name": "Survey Officer, Roorkee",
+        "role": "survey_officer",
+        "jurisdiction_id": "dist-b",
+        "description": "Upgrades boundary grades after ground survey on the "
+        "Roorkee side. Cannot transition cases.",
+    },
+    {
+        "id": "admin-hq",
+        "name": "Data Administrator, HRDA HQ",
+        "role": "data_admin",
+        "jurisdiction_id": "state",
+        "description": "Manages parcel records and tags authority-wide, but "
+        "cannot move a case through the legal chain.",
+    },
+]
+
 
 class BoundaryGradePatch(BaseModel):
     grade: str
@@ -42,6 +90,14 @@ class AlertCreate(BaseModel):
     tier: str
     area_m2: float
     detected_at: datetime
+
+
+class TagCreate(BaseModel):
+    tag: str
+
+
+class PersonaLogin(BaseModel):
+    persona_id: str
 
 
 class TransitionRequest(BaseModel):
@@ -62,6 +118,7 @@ def _parcel_to_feature(parcel: dict[str, Any]) -> dict[str, Any]:
             "land_category": parcel["land_category"],
             "boundary_grade": parcel["boundary_grade"],
             "jurisdiction_id": parcel["jurisdiction_id"],
+            "tags": list(parcel.get("tags", [])),
         },
     }
 
@@ -87,8 +144,9 @@ def create_app(store: Store | None = None) -> FastAPI:
     "mapencroach.api.app:create_app" --factory` picks this up with no
     extra wiring.
     """
+    demo_mode = os.environ.get("MAPENCROACH_DEMO") == "1"
     if store is None:
-        store = Store.seed_demo() if os.environ.get("MAPENCROACH_DEMO") == "1" else Store()
+        store = Store.seed_demo() if demo_mode else Store()
 
     app = FastAPI(title="mapencroach API")
     app.state.store = store
@@ -162,6 +220,95 @@ def create_app(store: Store | None = None) -> FastAPI:
             object_id=parcel_id,
         )
         return _parcel_to_feature(parcel)
+
+    @app.post("/parcels/{parcel_id}/tags", status_code=status.HTTP_201_CREATED)
+    def add_parcel_tag(
+        parcel_id: str,
+        body: TagCreate,
+        response: Response,
+        store: StoreDep,
+        user: Annotated[User, Depends(require_roles(Role.CASE_OFFICER, Role.DATA_ADMIN))],
+    ) -> dict[str, Any]:
+        parcel = store.parcels.get(parcel_id)
+        scope = _user_scope(store, user)
+        if parcel is None or parcel["jurisdiction_id"] not in scope:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="parcel not found")
+
+        tag = body.tag.strip().lower()
+        if not _TAG_PATTERN.fullmatch(tag):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="tags are 1-39 chars of lowercase letters, digits and hyphens, "
+                "starting with a letter or digit",
+            )
+
+        tags: list[str] = parcel.setdefault("tags", [])
+        if tag in tags:
+            response.status_code = status.HTTP_200_OK
+            return _parcel_to_feature(parcel)
+
+        tags.append(tag)
+        store.record_audit(
+            actor=user.sub,
+            action="parcel.tag.add",
+            object_type="parcel",
+            object_id=f"{parcel_id}:{tag}",
+        )
+        return _parcel_to_feature(parcel)
+
+    @app.delete("/parcels/{parcel_id}/tags/{tag}")
+    def remove_parcel_tag(
+        parcel_id: str,
+        tag: str,
+        store: StoreDep,
+        user: Annotated[User, Depends(require_roles(Role.CASE_OFFICER, Role.DATA_ADMIN))],
+    ) -> dict[str, Any]:
+        parcel = store.parcels.get(parcel_id)
+        scope = _user_scope(store, user)
+        if parcel is None or parcel["jurisdiction_id"] not in scope:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="parcel not found")
+
+        normalized = tag.strip().lower()
+        tags: list[str] = parcel.setdefault("tags", [])
+        if normalized not in tags:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="tag not found")
+
+        tags.remove(normalized)
+        store.record_audit(
+            actor=user.sub,
+            action="parcel.tag.remove",
+            object_type="parcel",
+            object_id=f"{parcel_id}:{normalized}",
+        )
+        return _parcel_to_feature(parcel)
+
+    # ------------------------------------------------------------------
+    # Demo personas (registered only in demo mode)
+    # ------------------------------------------------------------------
+
+    if demo_mode:
+
+        @app.get("/demo/personas")
+        def list_personas() -> list[dict[str, str]]:
+            return _DEMO_PERSONAS
+
+        @app.post("/demo/login")
+        def demo_login(body: PersonaLogin) -> dict[str, Any]:
+            persona = next(
+                (p for p in _DEMO_PERSONAS if p["id"] == body.persona_id), None
+            )
+            if persona is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="unknown persona"
+                )
+            token = create_token(
+                sub=persona["id"],
+                role=Role(persona["role"]),
+                jurisdiction_id=persona["jurisdiction_id"],
+                secret=signing_secret(),
+                expires_at=datetime.now(UTC) + timedelta(hours=8),
+            )
+            return {"token": token, "persona": persona, "expires_in_hours": 8}
 
     # ------------------------------------------------------------------
     # Alerts

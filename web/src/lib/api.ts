@@ -16,6 +16,9 @@ import type {
   Parcel,
 } from "./types";
 
+export const TOKEN_COOKIE = "mapencroach_token";
+export const PERSONA_COOKIE = "mapencroach_persona";
+
 function getApiBase(): string | undefined {
   const base = process.env.NEXT_PUBLIC_API_URL;
   return base && base.length > 0 ? base.replace(/\/$/, "") : undefined;
@@ -29,6 +32,7 @@ interface ParcelFeatureProperties {
   land_category: LandCategory;
   boundary_grade: BoundaryGrade;
   jurisdiction_id: string;
+  tags?: string[];
 }
 
 interface ParcelFeature {
@@ -66,6 +70,7 @@ function featureToParcel(feature: ParcelFeature): Parcel {
     jurisdiction_id: properties.jurisdiction_id,
     geometry,
     centroid: centroidOf(geometry),
+    tags: properties.tags ?? [],
   };
 }
 
@@ -100,20 +105,34 @@ function normalizeCase(raw: Case): Case {
   };
 }
 
-function authHeaders(): HeadersInit | undefined {
-  const token = process.env.NEXT_PUBLIC_API_TOKEN;
+function cookieValue(name: string): string | undefined {
+  if (typeof document === "undefined") return undefined;
+  const prefix = `${name}=`;
+  const match = document.cookie
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(prefix));
+  if (!match) return undefined;
+  return decodeURIComponent(match.slice(prefix.length));
+}
+
+function authHeaders(tokenOverride?: string): HeadersInit | undefined {
+  const token =
+    tokenOverride ??
+    (typeof document !== "undefined" ? cookieValue(TOKEN_COOKIE) : undefined) ??
+    process.env.NEXT_PUBLIC_API_TOKEN;
   return token ? { Authorization: `Bearer ${token}` } : undefined;
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url, { headers: authHeaders() });
+async function fetchJson<T>(url: string, token?: string): Promise<T> {
+  const res = await fetch(url, { headers: authHeaders(token) });
   if (!res.ok) {
     throw new Error(`Request failed: ${res.status} ${res.statusText} (${url})`);
   }
   return (await res.json()) as T;
 }
 
-export async function getParcels(bbox?: BBox): Promise<Parcel[]> {
+export async function getParcels(bbox?: BBox, token?: string): Promise<Parcel[]> {
   const base = getApiBase();
   if (!base) {
     if (!bbox) return FIXTURE_PARCELS;
@@ -132,32 +151,42 @@ export async function getParcels(bbox?: BBox): Promise<Parcel[]> {
     ? `?bbox=${bbox.west},${bbox.south},${bbox.east},${bbox.north}`
     : "";
   const collection = await fetchJson<ParcelFeatureCollection>(
-    `${base}/parcels${params}`
+    `${base}/parcels${params}`,
+    token
   );
   return collection.features.map(featureToParcel);
 }
 
-export async function getParcel(id: string): Promise<Parcel | undefined> {
+export async function getParcel(
+  id: string,
+  token?: string
+): Promise<Parcel | undefined> {
   const base = getApiBase();
   if (!base) {
     return FIXTURE_PARCELS.find((p) => p.id === id);
   }
   try {
-    const feature = await fetchJson<ParcelFeature>(`${base}/parcels/${id}`);
+    const feature = await fetchJson<ParcelFeature>(
+      `${base}/parcels/${id}`,
+      token
+    );
     return featureToParcel(feature);
   } catch {
     return undefined;
   }
 }
 
-export async function getAlerts(filters?: AlertFilters): Promise<Alert[]> {
+export async function getAlerts(
+  filters?: AlertFilters,
+  token?: string
+): Promise<Alert[]> {
   const base = getApiBase();
   let alerts: Alert[];
   if (!base) {
     alerts = FIXTURE_ALERTS;
   } else {
     // Backend enums are uppercase (RED/OPEN); UI keys off lowercase.
-    alerts = (await fetchJson<Alert[]>(`${base}/alerts`)).map((a) => ({
+    alerts = (await fetchJson<Alert[]>(`${base}/alerts`, token)).map((a) => ({
       ...a,
       tier: a.tier.toLowerCase() as Alert["tier"],
       status: a.status.toLowerCase() as Alert["status"],
@@ -171,20 +200,23 @@ export async function getAlerts(filters?: AlertFilters): Promise<Alert[]> {
   });
 }
 
-export async function getCases(): Promise<Case[]> {
+export async function getCases(token?: string): Promise<Case[]> {
   const base = getApiBase();
   if (!base) return FIXTURE_CASES;
-  const cases = await fetchJson<Case[]>(`${base}/cases`);
+  const cases = await fetchJson<Case[]>(`${base}/cases`, token);
   return cases.map(normalizeCase);
 }
 
-export async function getCase(id: string): Promise<Case | undefined> {
+export async function getCase(
+  id: string,
+  token?: string
+): Promise<Case | undefined> {
   const base = getApiBase();
   if (!base) {
     return FIXTURE_CASES.find((c) => c.id === id);
   }
   try {
-    const raw = await fetchJson<Case>(`${base}/cases/${id}`);
+    const raw = await fetchJson<Case>(`${base}/cases/${id}`, token);
     return normalizeCase(raw);
   } catch {
     return undefined;
@@ -201,7 +233,8 @@ export async function transitionCase(
   caseId: string,
   toState: string,
   artifacts: Record<string, string>,
-  note?: string
+  note?: string,
+  token?: string
 ): Promise<TransitionResult> {
   const base = getApiBase();
   if (!base) {
@@ -216,7 +249,7 @@ export async function transitionCase(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...authHeaders(),
+      ...authHeaders(token),
     },
     body: JSON.stringify({ to_state: toState, artifacts, note }),
   });
@@ -236,4 +269,146 @@ export async function transitionCase(
   }
 
   return { ok: false, status: res.status, detail };
+}
+
+export interface Persona {
+  id: string;
+  name: string;
+  role: string;
+  jurisdiction_id: string;
+  description: string;
+}
+
+/**
+ * Lists demo personas. Only present when the backend runs in demo mode
+ * (404 otherwise); never throws — callers get [] for any failure so
+ * non-demo deployments render nothing.
+ */
+export async function getPersonas(): Promise<Persona[]> {
+  const base = getApiBase();
+  if (!base) return [];
+  try {
+    const res = await fetch(`${base}/demo/personas`);
+    if (!res.ok) return [];
+    return (await res.json()) as Persona[];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Logs in as a demo persona. Never throws — null on no-backend or any
+ * failure (e.g. 404 unknown persona).
+ */
+export async function loginPersona(
+  personaId: string
+): Promise<{ token: string; persona: Persona } | null> {
+  const base = getApiBase();
+  if (!base) return null;
+  try {
+    const res = await fetch(`${base}/demo/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ persona_id: personaId }),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as {
+      token: string;
+      persona: Persona;
+      expires_in_hours: number;
+    };
+    return { token: body.token, persona: body.persona };
+  } catch {
+    return null;
+  }
+}
+
+export interface TagResult {
+  ok: boolean;
+  status: number;
+  detail?: string;
+  tags?: string[];
+}
+
+async function tagRequest(
+  url: string,
+  method: "POST" | "DELETE",
+  body: Record<string, unknown> | undefined,
+  token?: string
+): Promise<TagResult> {
+  const base = getApiBase();
+  if (!base) {
+    return {
+      ok: false,
+      status: 0,
+      detail: "No backend configured — fixture mode is read-only.",
+    };
+  }
+
+  const res = await fetch(url, {
+    method,
+    headers: {
+      ...(body ? { "Content-Type": "application/json" } : {}),
+      ...authHeaders(token),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  if (res.ok) {
+    try {
+      const feature = (await res.json()) as ParcelFeature;
+      return { ok: true, status: res.status, tags: feature.properties.tags ?? [] };
+    } catch {
+      return { ok: true, status: res.status };
+    }
+  }
+
+  let detail: string = res.statusText;
+  try {
+    const errBody = (await res.json()) as { detail?: string };
+    if (typeof errBody?.detail === "string") {
+      detail = errBody.detail;
+    }
+  } catch {
+    // fall back to statusText
+  }
+
+  return { ok: false, status: res.status, detail };
+}
+
+export async function addParcelTag(
+  parcelId: string,
+  tag: string,
+  token?: string
+): Promise<TagResult> {
+  const base = getApiBase();
+  if (!base) {
+    return {
+      ok: false,
+      status: 0,
+      detail: "No backend configured — fixture mode is read-only.",
+    };
+  }
+  return tagRequest(`${base}/parcels/${parcelId}/tags`, "POST", { tag }, token);
+}
+
+export async function removeParcelTag(
+  parcelId: string,
+  tag: string,
+  token?: string
+): Promise<TagResult> {
+  const base = getApiBase();
+  if (!base) {
+    return {
+      ok: false,
+      status: 0,
+      detail: "No backend configured — fixture mode is read-only.",
+    };
+  }
+  return tagRequest(
+    `${base}/parcels/${parcelId}/tags/${encodeURIComponent(tag)}`,
+    "DELETE",
+    undefined,
+    token
+  );
 }
