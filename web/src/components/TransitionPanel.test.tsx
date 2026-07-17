@@ -11,49 +11,26 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
 
-const ALL_15_STATES = [
-  "NEW",
-  "TRIAGED",
-  "INSPECTION_ASSIGNED",
-  "INSPECTED",
-  "SHOW_CAUSE_ISSUED",
-  "RESPONSE_WINDOW",
-  "HEARING_SCHEDULED",
-  "HEARING_HELD",
-  "ORDER_ISSUED",
-  "ACTION_TAKEN",
-  "CLOSED",
-  "DISMISSED_FALSE_POSITIVE",
-  "LEGACY_REFERRED",
-  "SURVEY_REQUESTED",
-  "STAYED_BY_COURT",
-];
-
 describe("TransitionPanel", () => {
-  it("renders all 15 options with allowed/refused suffixes", () => {
+  it("shows only legal next steps as primary action buttons", () => {
     render(
       <TransitionPanel
         caseId="CASE-1"
-        allowedTransitions={["RESPONSE_WINDOW", "DISMISSED_FALSE_POSITIVE"]}
+        allowedTransitions={["RESPONSE_WINDOW", "SURVEY_REQUESTED"]}
         requiredArtifacts={{}}
       />
     );
 
-    const select = screen.getByTestId("transition-select");
-    const options = select.querySelectorAll("option");
-    expect(options).toHaveLength(15);
-
-    ALL_15_STATES.forEach((state, idx) => {
-      const label = state.replace(/_/g, " ");
-      const suffix =
-        state === "RESPONSE_WINDOW" || state === "DISMISSED_FALSE_POSITIVE"
-          ? " — allowed"
-          : " — will be refused";
-      expect(options[idx].textContent).toBe(`${label}${suffix}`);
-    });
+    expect(
+      screen.getByRole("button", { name: "Open response window" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Request boundary survey" })
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("transition-select")).not.toBeInTheDocument();
   });
 
-  it("shows prefilled artifact inputs for an allowed state that requires artifacts", () => {
+  it("shows required evidence for the selected legal action without fake values", () => {
     render(
       <TransitionPanel
         caseId="CASE-1"
@@ -64,19 +41,12 @@ describe("TransitionPanel", () => {
       />
     );
 
-    const select = screen.getByTestId(
-      "transition-select"
-    ) as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: "DISMISSED_FALSE_POSITIVE" } });
-
-    const input = screen.getByTestId(
-      "artifact-input-dismissal_reason"
-    ) as HTMLInputElement;
-    expect(input).toBeInTheDocument();
-    expect(input.value).toBe("dismissal_reason-demo.pdf");
+    const input = screen.getByLabelText("Dismissal reason") as HTMLInputElement;
+    expect(input.value).toBe("");
+    expect(screen.getByRole("button", { name: "Record dismissal" })).toBeDisabled();
   });
 
-  it("shows the refusal hint when a non-allowed state is selected", () => {
+  it("keeps invalid-transition testing inside an explicit demo disclosure", () => {
     render(
       <TransitionPanel
         caseId="CASE-1"
@@ -85,19 +55,11 @@ describe("TransitionPanel", () => {
       />
     );
 
-    const select = screen.getByTestId(
-      "transition-select"
-    ) as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: "ORDER_ISSUED" } });
-
-    expect(
-      screen.getByText(
-        "Not legal from the current state — submit to see the engine refuse."
-      )
-    ).toBeInTheDocument();
+    expect(screen.getByText("Demo: test the policy guard")).toBeInTheDocument();
+    expect(screen.getByTestId("guard-transition-select")).toBeInTheDocument();
   });
 
-  it("renders a red refusal banner with verbatim detail on failed submit", async () => {
+  it("renders the backend refusal verbatim when the demo guard is submitted", async () => {
     vi.mocked(transitionCase).mockResolvedValue({
       ok: false,
       status: 409,
@@ -112,29 +74,52 @@ describe("TransitionPanel", () => {
       />
     );
 
-    const select = screen.getByTestId(
-      "transition-select"
-    ) as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: "ORDER_ISSUED" } });
-
-    fireEvent.click(screen.getByTestId("transition-submit"));
+    fireEvent.change(screen.getByTestId("guard-transition-select"), {
+      target: { value: "ORDER_ISSUED" },
+    });
+    fireEvent.click(screen.getByTestId("guard-transition-submit"));
 
     await waitFor(() => {
       expect(screen.getByTestId("transition-result")).toBeInTheDocument();
     });
-
-    const banner = screen.getByTestId("transition-result");
-    expect(banner).toHaveAttribute("data-outcome", "refused");
-    expect(banner).toHaveTextContent(
+    expect(screen.getByTestId("transition-result")).toHaveTextContent(
       "Refused (HTTP 409): cannot transition from SHOW_CAUSE_ISSUED to ORDER_ISSUED"
     );
   });
 
-  it("renders a green success banner on successful submit", async () => {
-    vi.mocked(transitionCase).mockResolvedValue({
-      ok: true,
-      status: 201,
+  it("records an allowed step after required evidence is supplied", async () => {
+    vi.mocked(transitionCase).mockResolvedValue({ ok: true, status: 201 });
+
+    render(
+      <TransitionPanel
+        caseId="CASE-1"
+        allowedTransitions={["DISMISSED_FALSE_POSITIVE"]}
+        requiredArtifacts={{
+          DISMISSED_FALSE_POSITIVE: ["dismissal_reason"],
+        }}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText("Dismissal reason"), {
+      target: { value: "Verified duplicate detection" },
     });
+    fireEvent.click(screen.getByRole("button", { name: "Record dismissal" }));
+
+    await waitFor(() => {
+      expect(transitionCase).toHaveBeenCalledWith(
+        "CASE-1",
+        "DISMISSED_FALSE_POSITIVE",
+        { dismissal_reason: "Verified duplicate detection" },
+        ""
+      );
+    });
+    expect(screen.getByTestId("transition-result")).toHaveTextContent(
+      "Transition recorded — the case advanced."
+    );
+  });
+
+  it("shows a retryable error when the transition service cannot be reached", async () => {
+    vi.mocked(transitionCase).mockRejectedValue(new Error("offline"));
 
     render(
       <TransitionPanel
@@ -144,16 +129,12 @@ describe("TransitionPanel", () => {
       />
     );
 
-    fireEvent.click(screen.getByTestId("transition-submit"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Record response window" })
+    );
 
-    await waitFor(() => {
-      expect(screen.getByTestId("transition-result")).toBeInTheDocument();
-    });
-
-    const banner = screen.getByTestId("transition-result");
-    expect(banner).toHaveAttribute("data-outcome", "success");
-    expect(banner).toHaveTextContent(
-      "Transition recorded — the case advanced."
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Transition service could not be reached. Try again."
     );
   });
 });

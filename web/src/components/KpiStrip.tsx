@@ -14,7 +14,9 @@ interface KpiTile {
 
 export function KpiStrip({ parcels, alerts, cases }: KpiStripProps) {
   const openAlerts = alerts.filter((a) => a.status === "open").length;
-  const redAlerts = alerts.filter((a) => a.tier === "red").length;
+  const redAlerts = alerts.filter(
+    (a) => a.tier === "red" && a.status !== "closed"
+  ).length;
   const casesInDueProcess = cases.filter(
     (c) => !TERMINAL_STATES.has(c.state)
   ).length;
@@ -27,12 +29,12 @@ export function KpiStrip({ parcels, alerts, cases }: KpiStripProps) {
     },
     {
       testId: "kpi-open-alerts",
-      label: "Open alerts",
+      label: "Needs triage",
       value: openAlerts,
     },
     {
       testId: "kpi-red-alerts",
-      label: "Red alerts",
+      label: "Urgent alerts",
       value: redAlerts,
     },
     {
@@ -45,7 +47,7 @@ export function KpiStrip({ parcels, alerts, cases }: KpiStripProps) {
   return (
     <div
       data-testid="kpi-strip"
-      className="flex flex-row gap-3 rounded bg-white/90 px-3 py-2 shadow"
+      className="grid grid-cols-2 gap-x-3 gap-y-2 rounded bg-white/90 px-3 py-2 shadow sm:flex sm:flex-row"
     >
       {tiles.map((tile) => (
         <div

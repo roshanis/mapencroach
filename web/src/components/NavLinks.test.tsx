@@ -8,7 +8,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 describe("NavLinks", () => {
-  it("renders 4 nav items with the expected labels", () => {
+  it("keeps primary navigation focused on operational work", () => {
     vi.mocked(usePathname).mockReturnValue("/");
 
     render(<NavLinks />);
@@ -16,7 +16,7 @@ describe("NavLinks", () => {
     expect(screen.getAllByText("Map").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Alerts").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Cases").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Personas").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Personas")).not.toBeInTheDocument();
   });
 
   it("marks Map as active on the root path", () => {
@@ -31,10 +31,8 @@ describe("NavLinks", () => {
 
     const alertsLink = screen.getAllByRole("link", { name: "Alerts" })[0];
     const casesLink = screen.getAllByRole("link", { name: "Cases" })[0];
-    const personasLink = screen.getAllByRole("link", { name: "Personas" })[0];
     expect(alertsLink).not.toHaveAttribute("aria-current");
     expect(casesLink).not.toHaveAttribute("aria-current");
-    expect(personasLink).not.toHaveAttribute("aria-current");
   });
 
   it("does not mark Map as active on other paths (no prefix matching against /)", () => {
@@ -96,7 +94,9 @@ describe("NavLinks", () => {
       expect(alertsLinksOpen).toHaveLength(2);
 
       // Click the mobile dropdown's Alerts link (the last one rendered).
-      fireEvent.click(alertsLinksOpen[alertsLinksOpen.length - 1]);
+      const mobileAlertsLink = alertsLinksOpen[alertsLinksOpen.length - 1];
+      mobileAlertsLink.addEventListener("click", (event) => event.preventDefault());
+      fireEvent.click(mobileAlertsLink);
 
       expect(hamburger).toHaveAttribute("aria-expanded", "false");
       expect(screen.getAllByRole("link", { name: "Alerts" })).toHaveLength(1);

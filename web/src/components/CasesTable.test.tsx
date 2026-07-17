@@ -1,13 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { useRouter } from "next/navigation";
 import { CasesTable } from "./CasesTable";
 import type { Case } from "@/lib/types";
 
-const pushMock = vi.fn();
+const replaceMock = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useRouter: vi.fn(),
+  usePathname: () => "/cases",
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 function daysAgoIso(days: number): string {
@@ -29,13 +31,13 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-07-13T12:00:00Z"));
   vi.mocked(useRouter).mockReturnValue({
-    push: pushMock,
+    replace: replaceMock,
   } as unknown as ReturnType<typeof useRouter>);
 });
 
 afterEach(() => {
   vi.useRealTimers();
-  pushMock.mockReset();
+  replaceMock.mockReset();
 });
 
 describe("CasesTable", () => {
@@ -165,14 +167,15 @@ describe("CasesTable", () => {
     expect(screen.getByText("+2 more")).toBeInTheDocument();
   });
 
-  it("navigates to /cases/{id} on row click", () => {
+  it("uses a real link to navigate to the case", () => {
     const cases: Case[] = [makeCase({ id: "CASE-9001", state: "NEW" })];
 
     render(<CasesTable cases={cases} />);
 
-    screen.getByTestId("case-row").click();
-
-    expect(pushMock).toHaveBeenCalledWith("/cases/CASE-9001");
+    expect(screen.getByRole("link", { name: "CASE-9001" })).toHaveAttribute(
+      "href",
+      "/cases/CASE-9001"
+    );
   });
 
   it("shows Case and Parcel ids in the row", () => {
@@ -219,5 +222,36 @@ describe("CasesTable", () => {
       "M",
       "Z",
     ]);
+  });
+
+  it("searches by case or parcel id", () => {
+    const cases: Case[] = [
+      makeCase({ id: "CASE-1", parcel_id: "PCL-ALPHA" }),
+      makeCase({ id: "CASE-2", parcel_id: "PCL-BETA" }),
+    ];
+
+    render(<CasesTable cases={cases} />);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search cases" }), {
+      target: { value: "BETA" },
+    });
+
+    expect(screen.getAllByTestId("case-row")).toHaveLength(1);
+    expect(screen.getByText("Showing 1 of 2 cases")).toBeInTheDocument();
+  });
+
+  it("filters by workflow bucket with visible counts", () => {
+    const cases: Case[] = [
+      makeCase({ id: "1", state: "NEW" }),
+      makeCase({ id: "2", state: "STAYED_BY_COURT" }),
+      makeCase({ id: "3", state: "CLOSED" }),
+    ];
+
+    render(<CasesTable cases={cases} />);
+    fireEvent.click(screen.getByRole("button", { name: "Paused (1)" }));
+
+    expect(screen.getAllByTestId("case-row")).toHaveLength(1);
+    expect(replaceMock).toHaveBeenCalledWith("/cases?view=paused", {
+      scroll: false,
+    });
   });
 });

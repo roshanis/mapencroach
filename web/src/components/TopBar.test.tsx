@@ -25,7 +25,10 @@ describe("TopBar", () => {
     expect(screen.getAllByText("Map").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Alerts").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Cases").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Personas").length).toBeGreaterThan(0);
+    expect(screen.getByRole("link", { name: "Demo roles" })).toHaveAttribute(
+      "href",
+      "/personas"
+    );
     expect(screen.getByTestId("jurisdiction-placeholder")).toHaveTextContent(
       "Test Jurisdiction"
     );
@@ -48,6 +51,15 @@ describe("TopBar", () => {
     const subtitle = screen.getByText("Encroachment Monitoring Console");
     expect(subtitle).toHaveClass("hidden");
     expect(subtitle).toHaveClass("md:inline");
+    await waitFor(() => expect(getPersonas).toHaveBeenCalled());
+  });
+
+  it("keeps the long jurisdiction label out of the smallest header layout", async () => {
+    vi.mocked(usePathname).mockReturnValue("/");
+
+    render(<TopBar jurisdiction="Test Jurisdiction" />);
+    expect(screen.getByTestId("jurisdiction-placeholder")).toHaveClass("hidden");
+    expect(screen.getByTestId("jurisdiction-placeholder")).toHaveClass("lg:block");
     await waitFor(() => expect(getPersonas).toHaveBeenCalled());
   });
 });

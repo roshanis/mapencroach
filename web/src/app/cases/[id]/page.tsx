@@ -3,7 +3,6 @@ import { notFound } from "next/navigation";
 import { getCaseForRequest } from "@/lib/server-api";
 import { STATE_DESCRIPTIONS } from "@/lib/explanations";
 import { CASE_STATE_CHAIN, STATE_LABELS } from "@/lib/types";
-import { AllowedNextSteps } from "@/components/AllowedNextSteps";
 import { StateRail } from "@/components/StateRail";
 import { TopBar } from "@/components/TopBar";
 import { TransitionPanel } from "@/components/TransitionPanel";
@@ -34,12 +33,15 @@ export default async function CaseDetailPage({
       <TopBar />
       <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 p-6">
         <div>
-          <Link
-            href={`/parcels/${caseRecord.parcel_id}`}
-            className="text-sm text-gov hover:underline"
-          >
-            &larr; Back to parcel {caseRecord.parcel_id}
-          </Link>
+          <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-2 text-sm text-slate-500">
+            <Link href="/cases" className="text-gov hover:underline">Cases</Link>
+            <span aria-hidden>/</span>
+            <Link href={`/parcels/${caseRecord.parcel_id}`} className="text-gov hover:underline">
+              {caseRecord.parcel_id}
+            </Link>
+            <span aria-hidden>/</span>
+            <span aria-current="page">{caseRecord.id}</span>
+          </nav>
           <h1 className="mt-2 text-xl font-semibold text-gray-900">
             Case {caseRecord.id}
           </h1>
@@ -73,9 +75,11 @@ export default async function CaseDetailPage({
 
         <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
           <h2 className="mb-4 text-base font-semibold text-gray-900">
-            Allowed Next Steps
+            Take the next legal step
           </h2>
-          <AllowedNextSteps transitions={caseRecord.allowed_transitions ?? []} />
+          <p className="text-sm text-slate-600">
+            Only actions permitted from the current stage are available. Required evidence is shown before submission.
+          </p>
           <TransitionPanel
             caseId={caseRecord.id}
             allowedTransitions={caseRecord.allowed_transitions ?? []}

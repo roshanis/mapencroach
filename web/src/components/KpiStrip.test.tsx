@@ -95,8 +95,8 @@ describe("KpiStrip", () => {
   it("shows all four labels", () => {
     render(<KpiStrip parcels={PARCELS} alerts={ALERTS} cases={CASES} />);
     expect(screen.getByText("Parcels monitored")).toBeInTheDocument();
-    expect(screen.getByText("Open alerts")).toBeInTheDocument();
-    expect(screen.getByText("Red alerts")).toBeInTheDocument();
+    expect(screen.getByText("Needs triage")).toBeInTheDocument();
+    expect(screen.getByText("Urgent alerts")).toBeInTheDocument();
     expect(screen.getByText("Cases in due process")).toBeInTheDocument();
   });
 
@@ -112,9 +112,20 @@ describe("KpiStrip", () => {
     expect(screen.getByTestId("kpi-open-alerts")).toHaveTextContent("3");
   });
 
-  it("computes red alerts as count of tier === red regardless of status", () => {
+  it("computes urgent alerts as unresolved red alerts", () => {
     render(<KpiStrip parcels={PARCELS} alerts={ALERTS} cases={CASES} />);
     // 2 red alerts total: one open, one escalated.
+    expect(screen.getByTestId("kpi-red-alerts")).toHaveTextContent("2");
+  });
+
+  it("does not count a closed red alert as urgent", () => {
+    const alertsWithClosedRed: Alert[] = [
+      ...ALERTS,
+      makeAlert("ALT-7", "red", "closed"),
+    ];
+    render(
+      <KpiStrip parcels={PARCELS} alerts={alertsWithClosedRed} cases={CASES} />
+    );
     expect(screen.getByTestId("kpi-red-alerts")).toHaveTextContent("2");
   });
 

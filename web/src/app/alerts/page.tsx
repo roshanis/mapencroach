@@ -20,7 +20,7 @@ export default async function AlertsQueuePage() {
             Alert Queue
           </h1>
           <p className="text-sm text-gray-500">
-            Click a row to open the associated parcel profile.
+            Search or filter the queue, then open a parcel link to review the record.
           </p>
         </div>
         <AlertsTable alerts={alerts} />

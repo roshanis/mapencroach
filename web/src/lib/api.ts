@@ -4,7 +4,12 @@
 // Otherwise they fall back to the built-in fixtures so the UI can be demoed
 // with zero backend.
 
-import { FIXTURE_ALERTS, FIXTURE_CASES, FIXTURE_PARCELS } from "./fixtures";
+import {
+  FIXTURE_ALERTS,
+  FIXTURE_CASES,
+  FIXTURE_PARCELS,
+  FIXTURE_PARCEL_CONTEXTS,
+} from "./fixtures";
 import type {
   Alert,
   AlertFilters,
@@ -14,6 +19,7 @@ import type {
   LandCategory,
   BoundaryGrade,
   Parcel,
+  ParcelContext,
 } from "./types";
 
 export const TOKEN_COOKIE = "mapencroach_token";
@@ -173,6 +179,58 @@ export async function getParcel(
       token
     );
     return featureToParcel(feature);
+  } catch {
+    return undefined;
+  }
+}
+
+export async function getParcelContext(
+  id: string,
+  token?: string
+): Promise<ParcelContext | undefined> {
+  const base = getApiBase();
+  if (!base) {
+    const fixture = FIXTURE_PARCEL_CONTEXTS[id];
+    if (fixture) return fixture;
+    const parcel = FIXTURE_PARCELS.find((candidate) => candidate.id === id);
+    if (!parcel) return undefined;
+    return {
+      parcel_id: parcel.id,
+      canonical_id: parcel.id,
+      aliases: [
+        {
+          scheme: "survey_no",
+          value: parcel.survey_no,
+          source: "Illustrative demo parcel register",
+          valid_from: null,
+          valid_to: null,
+          match_method: "authoritative_identifier",
+          confidence: 1,
+        },
+        {
+          scheme: "ULPIN",
+          value: parcel.ulpin,
+          source: "Illustrative demo parcel register",
+          valid_from: null,
+          valid_to: null,
+          match_method: "authoritative_identifier",
+          confidence: 1,
+        },
+      ],
+      lineage: [],
+      geographic_links: [],
+      observations: [],
+      sources: [],
+      classification: "context_only",
+      disclaimer:
+        "Contextual signals support prioritization only. They are not enforcement evidence and do not establish parcel ownership, boundaries, or encroachment.",
+    };
+  }
+  try {
+    return await fetchJson<ParcelContext>(
+      `${base}/parcels/${id}/context`,
+      token
+    );
   } catch {
     return undefined;
   }

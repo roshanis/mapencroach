@@ -244,6 +244,16 @@ def create_app(store: Store | None = None) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="parcel not found")
         return _parcel_to_feature(parcel)
 
+    @app.get("/parcels/{parcel_id}/context")
+    def get_parcel_context(
+        parcel_id: str, store: StoreDep, user: CurrentUser
+    ) -> dict[str, Any]:
+        parcel = store.parcels.get(parcel_id)
+        scope = _user_scope(store, user)
+        if parcel is None or parcel["jurisdiction_id"] not in scope:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="parcel not found")
+        return store.context_for_parcel(parcel_id).to_dict()
+
     @app.patch("/parcels/{parcel_id}/boundary-grade")
     def patch_boundary_grade(
         parcel_id: str,

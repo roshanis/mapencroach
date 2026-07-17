@@ -24,6 +24,14 @@ const TIER_COLORS: Record<AlertTier, string> = {
   legacy: "#7b3fa0",
 };
 
+function styleAlertMarker(element: HTMLButtonElement, selected: boolean) {
+  element.dataset.selected = String(selected);
+  element.style.transform = selected ? "scale(1.45)" : "scale(1)";
+  element.style.boxShadow = selected
+    ? "0 0 0 4px rgba(255,255,255,0.9), 0 0 0 7px rgba(28,79,140,0.65)"
+    : "0 0 0 1px rgba(0,0,0,0.25)";
+}
+
 export interface MapLibreMapProps {
   parcels: Parcel[];
   alerts: Alert[];
@@ -33,6 +41,7 @@ export interface MapLibreMapProps {
   onReady?: (api: { panTo: (lngLat: [number, number]) => void }) => void;
   /** Called when an alert marker is clicked. */
   onAlertClick?: (alertId: string) => void;
+  selectedAlertId?: string;
 }
 
 export default function MapLibreMap({
@@ -42,9 +51,13 @@ export default function MapLibreMap({
   zoom = 11,
   onReady,
   onAlertClick,
+  selectedAlertId,
 }: MapLibreMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<import("maplibre-gl").Map | null>(null);
+  const markerElementsRef = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const onAlertClickRef = useRef(onAlertClick);
+  const selectedAlertIdRef = useRef(selectedAlertId);
   const [mode, setMode] = useState<BasemapMode>("satellite");
 
   function handleBasemapChange(newMode: BasemapMode) {
@@ -62,9 +75,21 @@ export default function MapLibreMap({
   }
 
   useEffect(() => {
+    onAlertClickRef.current = onAlertClick;
+  }, [onAlertClick]);
+
+  useEffect(() => {
+    selectedAlertIdRef.current = selectedAlertId;
+    markerElementsRef.current.forEach((element, alertId) => {
+      styleAlertMarker(element, alertId === selectedAlertId);
+    });
+  }, [selectedAlertId]);
+
+  useEffect(() => {
     let cancelled = false;
     let mapInstance: import("maplibre-gl").Map | null = null;
     const markers: import("maplibre-gl").Marker[] = [];
+    const markerElements = markerElementsRef.current;
 
     async function init() {
       const maplibregl = (await import("maplibre-gl")).default;
@@ -155,7 +180,8 @@ export default function MapLibreMap({
         for (const alert of alerts) {
           const parcel = parcels.find((p) => p.id === alert.parcel_id);
           if (!parcel) continue;
-          const el = document.createElement("div");
+          const el = document.createElement("button");
+          el.type = "button";
           el.style.width = "14px";
           el.style.height = "14px";
           el.style.borderRadius = "50%";
@@ -164,9 +190,14 @@ export default function MapLibreMap({
           el.style.backgroundColor = TIER_COLORS[alert.tier];
           el.setAttribute("data-testid", "alert-marker");
           el.setAttribute("data-alert-id", alert.id);
+          el.setAttribute("aria-label", `Select alert ${alert.id}`);
           el.style.cursor = "pointer";
+          el.style.padding = "0";
+          el.style.transition = "transform 150ms ease, box-shadow 150ms ease";
+          styleAlertMarker(el, alert.id === selectedAlertIdRef.current);
+          markerElements.set(alert.id, el);
           if (onAlertClick) {
-            el.addEventListener("click", () => onAlertClick(alert.id));
+            el.addEventListener("click", () => onAlertClickRef.current?.(alert.id));
           }
 
           const marker = new maplibregl.Marker({ element: el })
@@ -188,6 +219,7 @@ export default function MapLibreMap({
     return () => {
       cancelled = true;
       markers.forEach((m) => m.remove());
+      markerElements.clear();
       mapInstance?.remove();
       mapRef.current = null;
     };

@@ -10,13 +10,20 @@ interface later; callers should depend only on the attributes/methods
 documented here, not on dict internals.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 
 from mapencroach.audit.chain import AuditEntry, append_entry
+from mapencroach.context.shrug import ShrugImportManifest
 from mapencroach.domain.alerts import AlertTier, severity_score
 from mapencroach.domain.case_engine import Case, CaseState, transition
+from mapencroach.domain.geography import (
+    ContextObservation,
+    GeographicLink,
+    ParcelAlias,
+    ParcelContext,
+)
 from mapencroach.domain.jurisdiction import JurisdictionTree
 
 _PARCEL_SIZE_DEG = 0.001  # ~110m square at this latitude
@@ -70,6 +77,7 @@ class Store:
     parcels: dict[str, dict[str, Any]] = field(default_factory=dict)
     alerts: dict[str, dict[str, Any]] = field(default_factory=dict)
     cases: dict[str, CaseRecord] = field(default_factory=dict)
+    parcel_contexts: dict[str, ParcelContext] = field(default_factory=dict)
     audit_chain: list[AuditEntry] = field(default_factory=list)
 
     root_jurisdiction_id: str = "state"
@@ -116,6 +124,35 @@ class Store:
     def next_case_id(self) -> str:
         self._next_case_seq += 1
         return f"case-{self._next_case_seq}"
+
+    def context_for_parcel(self, parcel_id: str) -> ParcelContext:
+        """Return canonical identifiers plus any linked context for a parcel."""
+        parcel = self.parcels[parcel_id]
+        aliases = tuple(
+            ParcelAlias(
+                scheme=scheme,
+                value=parcel[key],
+                source="Illustrative demo parcel register",
+                valid_from=None,
+                valid_to=None,
+                match_method="authoritative_identifier",
+                confidence=1.0,
+            )
+            for scheme, key in (("survey_no", "survey_no"), ("ULPIN", "ulpin"))
+            if parcel.get(key)
+        )
+        stored = self.parcel_contexts.get(parcel_id)
+        if stored is not None:
+            return replace(stored, aliases=aliases)
+        return ParcelContext(
+            parcel_id=parcel_id,
+            canonical_id=parcel_id,
+            aliases=aliases,
+            lineage=(),
+            geographic_links=(),
+            observations=(),
+            sources=(),
+        )
 
     @classmethod
     def seed_demo(cls) -> "Store":
@@ -229,6 +266,78 @@ class Store:
                 "geometry": geometry,
                 "tags": list(seed_tags.get(parcel_id, [])),
             }
+
+        context_manifest = ShrugImportManifest.demo(
+            source_id="shrug-compatible-demo",
+            module="SHRUG-compatible planning indicators",
+            version="Illustrative demo v1",
+        )
+        context_source = context_manifest.to_source()
+        store.parcel_contexts["parcel-1"] = ParcelContext(
+            parcel_id="parcel-1",
+            canonical_id="parcel-1",
+            aliases=(),
+            lineage=(),
+            geographic_links=(
+                GeographicLink(
+                    scheme="SHRUG_SHRID2",
+                    geographic_unit_id="demo-hrda-001",
+                    name="Haridwar context unit (illustrative)",
+                    level="village_or_town",
+                    match_method="centroid_within_demo_geometry",
+                    confidence=0.78,
+                    source_id=context_source.id,
+                ),
+            ),
+            observations=(
+                ContextObservation(
+                    key="tree_cover_change",
+                    label="Tree-cover trend",
+                    value=-3.4,
+                    unit="percentage points",
+                    period="2015-2021",
+                    trend="falling",
+                    source_id=context_source.id,
+                ),
+                ContextObservation(
+                    key="night_light_mean",
+                    label="Night-light intensity",
+                    value=4.2,
+                    unit="illustrative index",
+                    period="2021",
+                    trend="rising",
+                    source_id=context_source.id,
+                ),
+                ContextObservation(
+                    key="road_access",
+                    label="Road access",
+                    value="Connected",
+                    unit="illustrative category",
+                    period="2021",
+                    trend=None,
+                    source_id=context_source.id,
+                ),
+                ContextObservation(
+                    key="canal_presence",
+                    label="Canal presence",
+                    value=True,
+                    unit="illustrative flag",
+                    period="2021",
+                    trend=None,
+                    source_id=context_source.id,
+                ),
+                ContextObservation(
+                    key="population_pressure",
+                    label="Settlement pressure",
+                    value="Elevated",
+                    unit="illustrative category",
+                    period="2011-2021",
+                    trend="rising",
+                    source_id=context_source.id,
+                ),
+            ),
+            sources=(context_source,),
+        )
 
         store.record_audit(
             actor="system", action="parcel.seed", object_type="parcel", object_id="bulk"

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { AlertsTable } from "./AlertsTable";
 import {
   ALERT_STATUS_DESCRIPTIONS,
@@ -7,8 +7,12 @@ import {
 } from "@/lib/explanations";
 import type { Alert } from "@/lib/types";
 
+const replaceMock = vi.fn();
+
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn() }),
+  usePathname: () => "/alerts",
+  useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ replace: replaceMock }),
 }));
 
 const ALERTS: Alert[] = [
@@ -60,6 +64,40 @@ describe("AlertsTable — explainability (WP6)", () => {
     );
     expect(screen.getByTestId("severity-footnote").className).toContain(
       "text-gray-400"
+    );
+  });
+
+  it("searches by alert or parcel id and reports the result count", () => {
+    render(<AlertsTable alerts={ALERTS} />);
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search alerts" }), {
+      target: { value: "PCL-2" },
+    });
+
+    expect(screen.getAllByTestId("alert-row")).toHaveLength(1);
+    expect(screen.getByText("Showing 1 of 2 alerts")).toBeInTheDocument();
+  });
+
+  it("shows filter counts and persists filters in the URL", () => {
+    render(<AlertsTable alerts={ALERTS} />);
+
+    expect(screen.getByRole("option", { name: "Open (1)" })).toBeInTheDocument();
+    fireEvent.change(screen.getByTestId("status-filter"), {
+      target: { value: "escalated" },
+    });
+
+    expect(replaceMock).toHaveBeenCalledWith(
+      "/alerts?status=escalated",
+      { scroll: false }
+    );
+  });
+
+  it("uses real parcel links instead of pointer-only table rows", () => {
+    render(<AlertsTable alerts={ALERTS} />);
+
+    expect(screen.getByRole("link", { name: "PCL-1" })).toHaveAttribute(
+      "href",
+      "/parcels/PCL-1"
     );
   });
 });

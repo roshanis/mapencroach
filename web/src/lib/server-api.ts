@@ -10,9 +10,10 @@ import {
   getCase,
   getCases,
   getParcel,
+  getParcelContext,
   TOKEN_COOKIE,
 } from "./api";
-import type { Alert, AlertFilters, Case, Parcel } from "./types";
+import type { Alert, AlertFilters, Case, Parcel, ParcelContext } from "./types";
 
 export async function serverToken(): Promise<string | undefined> {
   try {
@@ -27,6 +28,13 @@ export async function getParcelForRequest(
 ): Promise<Parcel | undefined> {
   const token = await serverToken();
   return getParcel(id, token);
+}
+
+export async function getParcelContextForRequest(
+  id: string
+): Promise<ParcelContext | undefined> {
+  const token = await serverToken();
+  return getParcelContext(id, token);
 }
 
 export async function getAlertsForRequest(

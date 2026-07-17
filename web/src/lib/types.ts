@@ -64,6 +64,71 @@ export interface Parcel {
   tags: string[];
 }
 
+export interface ParcelAlias {
+  scheme: string;
+  value: string;
+  source: string;
+  valid_from: string | null;
+  valid_to: string | null;
+  match_method: string;
+  confidence: number;
+}
+
+export interface ParcelLineageEdge {
+  related_parcel_id: string;
+  relation: "split_from" | "merged_from" | "renumbered_from";
+  effective_on: string | null;
+  source: string;
+  confidence: number;
+}
+
+export interface ParcelGeographicLink {
+  scheme: string;
+  geographic_unit_id: string;
+  name: string;
+  level: string;
+  match_method: string;
+  confidence: number;
+  source_id: string;
+  context_only: true;
+}
+
+export interface ParcelContextObservation {
+  key: string;
+  label: string;
+  value: number | string | boolean;
+  unit: string;
+  period: string;
+  trend: string | null;
+  source_id: string;
+  context_only: true;
+}
+
+export interface ParcelContextSource {
+  id: string;
+  provider: string;
+  dataset: string;
+  version: string;
+  vintage: string;
+  license: string;
+  source_url: string;
+  resolution: string;
+  limitations: string[];
+  is_demo: boolean;
+}
+
+export interface ParcelContext {
+  parcel_id: string;
+  canonical_id: string;
+  aliases: ParcelAlias[];
+  lineage: ParcelLineageEdge[];
+  geographic_links: ParcelGeographicLink[];
+  observations: ParcelContextObservation[];
+  sources: ParcelContextSource[];
+  classification: "context_only";
+  disclaimer: string;
+}
+
 export interface Alert {
   id: string;
   parcel_id: string;

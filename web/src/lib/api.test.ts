@@ -5,13 +5,19 @@ import {
   getCase,
   getCases,
   getParcel,
+  getParcelContext,
   getParcels,
   getPersonas,
   loginPersona,
   removeParcelTag,
   transitionCase,
 } from "./api";
-import { FIXTURE_ALERTS, FIXTURE_CASES, FIXTURE_PARCELS } from "./fixtures";
+import {
+  FIXTURE_ALERTS,
+  FIXTURE_CASES,
+  FIXTURE_PARCELS,
+  FIXTURE_PARCEL_CONTEXTS,
+} from "./fixtures";
 
 const ORIGINAL_ENV = process.env.NEXT_PUBLIC_API_URL;
 const ORIGINAL_TOKEN = process.env.NEXT_PUBLIC_API_TOKEN;
@@ -44,6 +50,13 @@ describe("api client without NEXT_PUBLIC_API_URL", () => {
     expect(parcel?.id).toBe("PCL-1001");
   });
 
+  it("falls back to a provenance-bearing fixture parcel context", async () => {
+    delete process.env.NEXT_PUBLIC_API_URL;
+    const context = await getParcelContext("PCL-1001");
+    expect(context).toEqual(FIXTURE_PARCEL_CONTEXTS["PCL-1001"]);
+    expect(context?.sources[0].is_demo).toBe(true);
+  });
+
   it("falls back to fixture alerts and applies tier filter", async () => {
     delete process.env.NEXT_PUBLIC_API_URL;
     const alerts = await getAlerts({ tier: "red" });
@@ -62,6 +75,25 @@ describe("api client without NEXT_PUBLIC_API_URL", () => {
 });
 
 describe("api client with NEXT_PUBLIC_API_URL set", () => {
+  it("fetches the parcel context from its dedicated endpoint", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const remoteContext = FIXTURE_PARCEL_CONTEXTS["PCL-1001"];
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => remoteContext,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const context = await getParcelContext("PCL-REMOTE-1");
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://api.example.test/parcels/PCL-REMOTE-1/context"
+    );
+    expect(context).toEqual(remoteContext);
+  });
+
   it("fetches parcels from the REST backend as GeoJSON and maps them to Parcel objects", async () => {
     process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
 

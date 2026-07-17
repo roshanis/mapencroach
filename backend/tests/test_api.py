@@ -180,6 +180,55 @@ class TestParcelDetail:
         assert resp.status_code == 404
 
 
+class TestParcelContext:
+    def test_context_exposes_identity_lineage_sources_and_context_only_signals(
+        self, client: TestClient, state_token: str
+    ):
+        resp = client.get("/parcels/parcel-1/context", headers=auth_headers(state_token))
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["canonical_id"] == "parcel-1"
+        assert {alias["scheme"] for alias in body["aliases"]} >= {"ULPIN", "survey_no"}
+        assert body["classification"] == "context_only"
+        assert "not enforcement evidence" in body["disclaimer"].lower()
+        assert body["geographic_links"][0]["scheme"] == "SHRUG_SHRID2"
+        assert body["observations"]
+        assert all(item["context_only"] is True for item in body["observations"])
+        assert body["sources"][0]["is_demo"] is True
+        assert body["sources"][0]["limitations"]
+
+    def test_context_for_unmatched_parcel_is_an_honest_empty_bundle(
+        self, client: TestClient, state_token: str
+    ):
+        resp = client.get("/parcels/parcel-2/context", headers=auth_headers(state_token))
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["canonical_id"] == "parcel-2"
+        assert body["observations"] == []
+        assert body["geographic_links"] == []
+
+    def test_context_for_unknown_parcel_is_404(self, client: TestClient, state_token: str):
+        resp = client.get("/parcels/does-not-exist/context", headers=auth_headers(state_token))
+
+        assert resp.status_code == 404
+
+    def test_context_for_out_of_scope_parcel_is_404_not_403(
+        self, client: TestClient, dist_a_token: str, store: Store
+    ):
+        out_of_scope_id = next(
+            pid
+            for pid, parcel in store.parcels.items()
+            if parcel["jurisdiction_id"] in store.dist_b_scope
+        )
+
+        resp = client.get(
+            f"/parcels/{out_of_scope_id}/context", headers=auth_headers(dist_a_token)
+        )
+
+        assert resp.status_code == 404
+
 class TestBoundaryGradePatch:
     def test_survey_officer_can_patch(
         self, client: TestClient, survey_officer_dist_a_token: str, store: Store

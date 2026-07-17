@@ -4,7 +4,7 @@
 // the waterbody-encroachment storyline.
 
 import type { Persona } from "./api";
-import type { Alert, Case, Parcel } from "./types";
+import type { Alert, Case, Parcel, ParcelContext } from "./types";
 
 function square(
   centerLng: number,
@@ -151,6 +151,151 @@ export const FIXTURE_PARCELS: Parcel[] = [
     tags: [],
   },
 ];
+
+const CONTEXT_DISCLAIMER =
+  "Contextual signals support prioritization only. They are not enforcement evidence and do not establish parcel ownership, boundaries, or encroachment.";
+
+export const FIXTURE_PARCEL_CONTEXTS: Record<string, ParcelContext> = {
+  "PCL-1001": {
+    parcel_id: "PCL-1001",
+    canonical_id: "PCL-1001",
+    aliases: [
+      {
+        scheme: "survey_no",
+        value: "44/2",
+        source: "Illustrative demo parcel register",
+        valid_from: null,
+        valid_to: null,
+        match_method: "authoritative_identifier",
+        confidence: 1,
+      },
+      {
+        scheme: "ULPIN",
+        value: "UK17HR0001001",
+        source: "Illustrative demo parcel register",
+        valid_from: null,
+        valid_to: null,
+        match_method: "authoritative_identifier",
+        confidence: 1,
+      },
+    ],
+    lineage: [],
+    geographic_links: [
+      {
+        scheme: "SHRUG_SHRID2",
+        geographic_unit_id: "demo-hrda-001",
+        name: "Haridwar context unit (illustrative)",
+        level: "village_or_town",
+        match_method: "centroid_within_demo_geometry",
+        confidence: 0.78,
+        source_id: "shrug-compatible-demo",
+        context_only: true,
+      },
+    ],
+    observations: [
+      {
+        key: "tree_cover_change",
+        label: "Tree-cover trend",
+        value: -3.4,
+        unit: "percentage points",
+        period: "2015–2021",
+        trend: "falling",
+        source_id: "shrug-compatible-demo",
+        context_only: true,
+      },
+      {
+        key: "night_light_mean",
+        label: "Night-light intensity",
+        value: 4.2,
+        unit: "illustrative index",
+        period: "2021",
+        trend: "rising",
+        source_id: "shrug-compatible-demo",
+        context_only: true,
+      },
+      {
+        key: "road_access",
+        label: "Road access",
+        value: "Connected",
+        unit: "illustrative category",
+        period: "2021",
+        trend: null,
+        source_id: "shrug-compatible-demo",
+        context_only: true,
+      },
+      {
+        key: "canal_presence",
+        label: "Canal presence",
+        value: true,
+        unit: "illustrative flag",
+        period: "2021",
+        trend: null,
+        source_id: "shrug-compatible-demo",
+        context_only: true,
+      },
+      {
+        key: "population_pressure",
+        label: "Settlement pressure",
+        value: "Elevated",
+        unit: "illustrative category",
+        period: "2011–2021",
+        trend: "rising",
+        source_id: "shrug-compatible-demo",
+        context_only: true,
+      },
+    ],
+    sources: [
+      {
+        id: "shrug-compatible-demo",
+        provider: "mapencroach demo",
+        dataset: "SHRUG-compatible planning indicators",
+        version: "Illustrative demo v1",
+        vintage: "Illustrative demo period",
+        license:
+          "Illustrative data generated for this demo; no SHRUG data redistributed",
+        source_url: "https://docs.devdatalab.org/",
+        resolution: "Fictional SHRUG-compatible village/town unit",
+        limitations: [
+          "Illustrative values only; not sourced from Development Data Lab.",
+          "Not a parcel measurement and not enforcement evidence.",
+        ],
+        is_demo: true,
+      },
+    ],
+    classification: "context_only",
+    disclaimer: CONTEXT_DISCLAIMER,
+  },
+  "PCL-1002": {
+    parcel_id: "PCL-1002",
+    canonical_id: "PCL-1002",
+    aliases: [
+      {
+        scheme: "survey_no",
+        value: "44/5",
+        source: "Illustrative demo parcel register",
+        valid_from: null,
+        valid_to: null,
+        match_method: "authoritative_identifier",
+        confidence: 1,
+      },
+      {
+        scheme: "ULPIN",
+        value: "UK17HR0001002",
+        source: "Illustrative demo parcel register",
+        valid_from: null,
+        valid_to: null,
+        match_method: "authoritative_identifier",
+        confidence: 1,
+      },
+    ],
+    lineage: [],
+    geographic_links: [],
+    observations: [],
+    sources: [],
+    classification: "context_only",
+    disclaimer: CONTEXT_DISCLAIMER,
+  },
+};
 
 export const FIXTURE_ALERTS: Alert[] = [
   {

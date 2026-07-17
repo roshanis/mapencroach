@@ -22,7 +22,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8000 NEXT_PUBLIC_API_TOKEN=<token> npm run 
 ```
 
 Sanity check: open http://localhost:3000 — the map should show parcels and colored
-alert markers, with the nav bar (Map / Alerts / Cases / Personas) up top and the
+alert markers, with the primary nav bar (Map / Alerts / Cases) up top and the
 "What am I looking at?" intro panel top right. If the map is empty, the token is
 missing or expired: re-mint it and restart `npm run dev`.
 
@@ -41,8 +41,9 @@ Close other tabs, hide bookmarks bar, zoom browser to 110%.
 > says something changed on government land. Red means act now."
 
 The KPI strip (top) gives the executive summary at a glance: parcels monitored,
-open alerts, red alerts, cases in due process. Point at the legend, then the red
-marker. Click an alert in the left sidebar to show the map fly to it. The
+alerts needing triage, urgent alerts, and cases in due process. Point at the legend,
+then the red marker. Click an alert in the work queue or on the map to select it,
+then use the action card to open its parcel record. The
 satellite/streets toggle is top-left if anyone asks for context.
 
 ### Stop 2 — Alert queue (`/alerts`)
@@ -54,7 +55,7 @@ Filter **Tier → red**. Point at the severity score (60).
 > "Severity isn't a guess. It's computed: how big the change is, what kind of land —
 > a waterbody scores highest — and how much we trust the parcel boundary."
 
-Click the red row — it opens the parcel.
+Click the parcel link in the red row — it opens the parcel record.
 
 ### Stop 3 — Parcel profile (`/parcels/parcel-1`, then `/parcels/parcel-3`)
 
@@ -89,8 +90,8 @@ Open **case-1**:
 > 'demolish' — the Supreme Court's November 2024 guidelines are encoded as the state
 > machine."
 
-**Now hand them the mouse.** In the transition panel, pick
-"ORDER ISSUED — will be refused" and click **Attempt transition**:
+**Now hand them the mouse.** In **Demo: test the policy guard**, pick
+**Order Issued** and click **Submit blocked transition**:
 
 > "Watch — I'm trying to jump straight to a demolition order."
 
@@ -104,7 +105,7 @@ free-tier API instance next restarts, which conveniently resets everything.
 
 ### Stop 5 — Who sees what (personas)
 
-Open **Personas** in the nav:
+Open **Demo roles** at the right side of the header:
 
 > "Every login is scoped to a jurisdiction and a role — and this page shows it
 > before you even switch. The Vice Chairman sees all 30 parcels; the Haridwar

@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo } from "react";
-import { useRouter } from "next/navigation";
+import { useMemo, useState } from "react";
+import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { CaseStateChip } from "./CaseStateChip";
 import {
   CASE_STATE_CHAIN,
@@ -122,16 +123,114 @@ function StageProgress({ state }: { state: Case["state"] }) {
 
 export function CasesTable({ cases }: CasesTableProps) {
   const router = useRouter();
-  const sections = useMemo(() => buildSections(cases), [cases]);
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const [query, setQuery] = useState(searchParams.get("q") ?? "");
+  const [bucketFilter, setBucketFilter] = useState<Bucket | "all">(
+    (searchParams.get("view") as Bucket | null) ?? "all"
+  );
+
+  const bucketCounts = useMemo(() => {
+    const counts: Record<Bucket | "all", number> = {
+      all: cases.length,
+      active: 0,
+      paused: 0,
+      concluded: 0,
+    };
+    cases.forEach((item) => {
+      counts[classifyCase(item)] += 1;
+    });
+    return counts;
+  }, [cases]);
+
+  function persistFilters(next: { query?: string; bucket?: Bucket | "all" }) {
+    const params = new URLSearchParams(searchParams.toString());
+    const nextQuery = next.query ?? query;
+    const nextBucket = next.bucket ?? bucketFilter;
+    if (nextQuery.trim()) params.set("q", nextQuery.trim());
+    else params.delete("q");
+    if (nextBucket !== "all") params.set("view", nextBucket);
+    else params.delete("view");
+    const suffix = params.toString();
+    router.replace(`${pathname}${suffix ? `?${suffix}` : ""}`, {
+      scroll: false,
+    });
+  }
+
+  const filteredCases = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    return cases.filter((item) => {
+      if (bucketFilter !== "all" && classifyCase(item) !== bucketFilter) {
+        return false;
+      }
+      if (!normalizedQuery) return true;
+      return [item.id, item.parcel_id, item.alert_id, item.state]
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedQuery);
+    });
+  }, [cases, query, bucketFilter]);
+
+  const sections = useMemo(() => buildSections(filteredCases), [filteredCases]);
+
+  const bucketLabels: Array<{ key: Bucket | "all"; label: string }> = [
+    { key: "all", label: "All" },
+    { key: "active", label: "In due process" },
+    { key: "paused", label: "Paused" },
+    { key: "concluded", label: "Concluded" },
+  ];
 
   return (
-    <div data-testid="cases-table" className="flex flex-col gap-6">
+    <div data-testid="cases-table" className="flex flex-col gap-5">
+      <div className="rounded-lg border border-slate-200 bg-white p-4">
+        <label className="flex max-w-md flex-col gap-1 text-sm text-slate-700">
+          Search
+          <input
+            type="search"
+            aria-label="Search cases"
+            value={query}
+            placeholder="Case, parcel, alert, or stage"
+            onChange={(event) => {
+              const nextQuery = event.target.value;
+              setQuery(nextQuery);
+              persistFilters({ query: nextQuery });
+            }}
+            className="rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-gov focus:ring-2 focus:ring-gov/20"
+          />
+        </label>
+        <div className="mt-3 flex flex-wrap gap-2" aria-label="Case workflow filters">
+          {bucketLabels.map((bucket) => (
+            <button
+              key={bucket.key}
+              type="button"
+              aria-pressed={bucketFilter === bucket.key}
+              onClick={() => {
+                setBucketFilter(bucket.key);
+                persistFilters({ bucket: bucket.key });
+              }}
+              className={`rounded-full px-3 py-1.5 text-xs font-medium ring-1 ring-inset ${
+                bucketFilter === bucket.key
+                  ? "bg-gov text-white ring-gov"
+                  : "bg-white text-slate-600 ring-slate-300 hover:bg-slate-50"
+              }`}
+            >
+              {bucket.label} ({bucketCounts[bucket.key]})
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <p className="text-sm text-slate-500">
+        Showing {filteredCases.length} of {cases.length} cases
+      </p>
+
       {sections.map((section) => (
         <div key={section.title} className="flex flex-col gap-2">
           <h3 className="text-xs uppercase tracking-wide text-gray-500">
             {section.title}
           </h3>
-          <table className="w-full border-collapse overflow-hidden rounded-lg border border-gray-200 text-sm">
+          <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+          <table className="min-w-[48rem] w-full border-collapse text-sm">
             <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
               <tr>
                 <th className="px-4 py-2">Case</th>
@@ -149,11 +248,15 @@ export function CasesTable({ cases }: CasesTableProps) {
                     key={c.id}
                     data-testid="case-row"
                     data-case-id={c.id}
-                    onClick={() => router.push(`/cases/${c.id}`)}
-                    className="cursor-pointer border-t border-gray-100 hover:bg-gray-50"
+                    className="border-t border-gray-100 hover:bg-gray-50"
                   >
-                    <td className="px-4 py-2 font-medium text-gray-900">
-                      {c.id}
+                    <td className="px-4 py-2 font-medium">
+                      <Link
+                        href={`/cases/${c.id}`}
+                        className="text-gov underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-gov/30"
+                      >
+                        {c.id}
+                      </Link>
                     </td>
                     <td className="px-4 py-2 text-gray-700">{c.parcel_id}</td>
                     <td className="px-4 py-2">
@@ -171,6 +274,7 @@ export function CasesTable({ cases }: CasesTableProps) {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       ))}
       {sections.length === 0 && (
