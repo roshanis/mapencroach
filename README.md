@@ -36,6 +36,12 @@ map at http://localhost:3000/console. Alert queue, parcel profiles, and case
 detail remain linked from the operational console.
 Omit both env vars to run the UI on built-in fixture data with no backend at all.
 
+Google Maps is the production map provider when both
+`NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` and `NEXT_PUBLIC_GOOGLE_MAP_ID` are set. The
+console falls back to MapLibre when either value is absent or Google cannot
+load; never commit the API key, and restrict it to approved web referrers and
+the Maps JavaScript API.
+
 ## Tests
 
 ```bash
@@ -62,6 +68,6 @@ See [DEPLOY.md](DEPLOY.md) — console on Vercel, API on Render (demo data only)
 | `backend/src/mapencroach/audit/` | Tamper-evident hash chain |
 | `backend/src/mapencroach/imagery/` | Hash-on-ingest scene registry (STAC) |
 | `backend/src/mapencroach/api/` | FastAPI: JWT auth, RBAC, jurisdiction-scoped endpoints |
-| `web/` | Next.js + MapLibre admin console |
+| `web/` | Next.js console with Google Maps and a MapLibre fallback |
 | `PLAN.md` / `PLAN.html` | Implementation plan v2.0 (Builder's Edition) |
 | `agents-build-log.md` | Agent build log |

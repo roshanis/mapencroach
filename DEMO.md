@@ -37,14 +37,15 @@ Close other tabs, hide bookmarks bar, zoom browser to 110%.
 > "This is the government estate of the Haridwar–Roorkee Development Authority —
 > canal land along the Upper Ganga Canal, Rajaji forest fringe, SIDCUL industrial
 > plots, municipal land — each parcel colored by category (legend, bottom-left),
-> drawn over satellite imagery. The colored dots are alerts: places where imagery
+> drawn over Google satellite imagery. The colored dots are alerts: places where imagery
 > says something changed on government land. Red means act now."
 
 The KPI strip (top) gives the executive summary at a glance: parcels monitored,
 alerts needing triage, urgent alerts, and cases in due process. Point at the legend,
 then the red marker. Click an alert in the work queue or on the map to select it,
 then use the action card to open its parcel record. The
-satellite/streets toggle is top-left if anyone asks for context.
+satellite/streets toggle is top-left if anyone asks for context. If Google is
+unavailable, the console states that it has switched to the MapLibre fallback.
 
 ### Stop 2 — Alert queue (`/alerts`)
 

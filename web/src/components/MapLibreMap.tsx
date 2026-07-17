@@ -3,8 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import type * as MapLibreGL from "maplibre-gl";
 import { LAND_CATEGORY_COLORS } from "@/lib/types";
-import type { Parcel, Alert, AlertTier } from "@/lib/types";
+import type { AlertTier } from "@/lib/types";
 import { BasemapToggle, type BasemapMode } from "./BasemapToggle";
+import type { OperationalMapProps } from "./map-types";
 
 function buildLandCategoryMatchExpression(
   fallback: string
@@ -32,17 +33,7 @@ function styleAlertMarker(element: HTMLButtonElement, selected: boolean) {
     : "0 0 0 1px rgba(0,0,0,0.25)";
 }
 
-export interface MapLibreMapProps {
-  parcels: Parcel[];
-  alerts: Alert[];
-  center?: [number, number];
-  zoom?: number;
-  /** Called when the map instance has been created (for imperative pan/fly-to). */
-  onReady?: (api: { panTo: (lngLat: [number, number]) => void }) => void;
-  /** Called when an alert marker is clicked. */
-  onAlertClick?: (alertId: string) => void;
-  selectedAlertId?: string;
-}
+export type MapLibreMapProps = OperationalMapProps;
 
 export default function MapLibreMap({
   parcels,

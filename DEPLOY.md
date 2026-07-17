@@ -68,8 +68,14 @@ In the Vercel project → **Settings → Environment Variables**:
 |-----|-------|
 | `NEXT_PUBLIC_API_URL` | `https://<your-api>.onrender.com` |
 | `NEXT_PUBLIC_API_TOKEN` | the token from step 3 |
+| `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | restricted Maps JavaScript API browser key |
+| `NEXT_PUBLIC_GOOGLE_MAP_ID` | JavaScript vector map ID |
 
 Then **Deployments → Redeploy** (env vars are baked in at build time).
+
+Restrict the Google browser key to the production Vercel hostname (and only
+the preview/local hostnames that need it) plus the Maps JavaScript API. The map
+ID is public configuration; the API key must never be committed to this repo.
 
 ## 5. Verify
 
@@ -89,3 +95,5 @@ Then **Deployments → Redeploy** (env vars are baked in at build time).
 | Everything 401 | Token minted with a different secret than the Render env var, or expired |
 | First load takes a minute | Render free tier waking up — warm it before demos |
 | Site shows fixture data (parcels named PCL-…) | `NEXT_PUBLIC_API_URL` not set at build time — set env vars, then redeploy |
+| Console says Google Maps is not configured | One or both Google Maps variables are missing from the Vercel deployment environment |
+| Console falls back after trying Google Maps | Check billing, Maps JavaScript API enablement, map ID, and the API key's website/API restrictions |

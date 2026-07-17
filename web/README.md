@@ -2,12 +2,13 @@
 
 Government console for monitoring land parcel encroachment alerts and
 due-process cases. Built with Next.js 15 (App Router), TypeScript, Tailwind
-CSS, and MapLibre GL JS.
+CSS, Google Maps JavaScript API, and a MapLibre GL JS fallback.
 
 ## Pages
 
-- `/` — Command map: full-height MapLibre map with parcel boundaries (colored
-  by boundary grade) and alert markers (colored by tier), plus a
+- `/` — Public product landing page.
+- `/console` — Command map: full-height Google map with parcel boundaries
+  (colored by land category) and alert markers (colored by tier), plus a
   severity-sorted alert sidebar.
 - `/parcels/[id]` — Parcel profile: attributes card, mini map, imagery
   timeline placeholder, linked alerts and cases.
@@ -42,10 +43,22 @@ npm test          # runs the vitest suite once
 npm run test:watch
 ```
 
-Tests run in `jsdom` via Vitest + Testing Library. `maplibre-gl` is
-dynamically imported client-side only (`src/components/MapView.tsx` /
-`ParcelMiniMap.tsx` wrap `MapLibreMap.tsx` with `next/dynamic` and
-`ssr: false`), so no WebGL context is required to build or test.
+Tests run in `jsdom` via Vitest + Testing Library. `MapView.tsx` dynamically
+loads the configured provider client-side, so neither Google Maps nor
+MapLibre requires a browser map context during builds or unit tests.
+
+## Map provider
+
+Set both values to use Google Maps on the command map and parcel mini-maps:
+
+```bash
+NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your_restricted_browser_key
+NEXT_PUBLIC_GOOGLE_MAP_ID=your_javascript_map_id
+```
+
+If either value is missing, or Google cannot load, the interface explicitly
+falls back to the existing MapLibre satellite/street map. Restrict the browser
+key by website referrer and to the Maps JavaScript API; do not commit it.
 
 ## Connecting to a real backend
 
@@ -84,12 +97,13 @@ the `/parcels` request when a bounding box is supplied to `getParcels(bbox)`.
 web/
   src/
     app/
-      page.tsx                 Command map
+      page.tsx                 Public landing page
+      console/page.tsx         Command map
       parcels/[id]/page.tsx    Parcel profile
       alerts/page.tsx          Alert queue
       cases/[id]/page.tsx      Case detail
     components/                Shared UI (TierChip, BoundaryGradeBadge,
-                                StateRail, MapLibreMap, MapView, etc.)
+                                StateRail, GoogleMap, MapLibreMap, MapView, etc.)
     lib/
       api.ts                   Typed data client (REST or fixtures)
       fixtures.ts               Built-in demo data
