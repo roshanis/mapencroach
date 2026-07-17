@@ -6,6 +6,10 @@ describe("LandingPage", () => {
   it("leads with the product outcome and a direct path into the console", () => {
     render(<LandingPage />);
 
+    expect(screen.getByTestId("landing-shell")).toHaveClass(
+      "bg-gray-100",
+      "text-gray-900"
+    );
     expect(
       screen.getByRole("heading", {
         level: 1,
@@ -15,6 +19,15 @@ describe("LandingPage", () => {
     expect(
       screen.getAllByRole("link", { name: "Open command map" })[0]
     ).toHaveAttribute("href", "/console");
+    expect(
+      screen.getAllByRole("link", { name: "Open command map" })[0]
+    ).toHaveClass("bg-gov");
+    expect(
+      screen.getByRole("heading", {
+        level: 1,
+        name: "See land risk early. Move every case lawfully.",
+      })
+    ).toHaveClass("font-semibold", "tracking-tight");
     expect(
       screen.getByRole("link", { name: "See how it works" })
     ).toHaveAttribute("href", "#how-it-works");

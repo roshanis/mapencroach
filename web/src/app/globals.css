@@ -21,27 +21,27 @@ body {
 }
 
 ::selection {
-  color: #0d332d;
-  background: #a9e7d0;
+  color: #123963;
+  background: #dbeafe;
 }
 
 .landing-grid {
-  background-color: #f6f8f5;
+  background-color: #f3f4f6;
   background-image:
-    radial-gradient(circle at 86% 16%, rgba(83, 181, 145, 0.16), transparent 30%),
+    radial-gradient(circle at 86% 16%, rgba(58, 111, 174, 0.14), transparent 30%),
     radial-gradient(circle at 8% 88%, rgba(236, 142, 50, 0.08), transparent 28%),
-    linear-gradient(rgba(31, 88, 73, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(31, 88, 73, 0.035) 1px, transparent 1px);
+    linear-gradient(rgba(28, 79, 140, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(28, 79, 140, 0.04) 1px, transparent 1px);
   background-size: auto, auto, 44px 44px, 44px 44px;
 }
 
 .landing-map {
-  background-color: #dfe9e2;
+  background-color: #e2e8f0;
   background-image:
     linear-gradient(30deg, transparent 46%, rgba(255, 255, 255, 0.78) 47%, rgba(255, 255, 255, 0.78) 49%, transparent 50%),
     linear-gradient(118deg, transparent 57%, rgba(77, 124, 160, 0.2) 58%, rgba(77, 124, 160, 0.2) 61%, transparent 62%),
-    linear-gradient(rgba(29, 72, 60, 0.055) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(29, 72, 60, 0.055) 1px, transparent 1px);
+    linear-gradient(rgba(28, 79, 140, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(28, 79, 140, 0.055) 1px, transparent 1px);
   background-size: 190px 190px, 260px 260px, 32px 32px, 32px 32px;
 }
 

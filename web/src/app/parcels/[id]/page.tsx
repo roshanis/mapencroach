@@ -14,6 +14,7 @@ import { TagEditor } from "@/components/TagEditor";
 import { TierChip } from "@/components/TierChip";
 import { TopBar } from "@/components/TopBar";
 import ParcelMiniMap from "@/components/ParcelMiniMap";
+import { HistoricalImageryTimeline } from "@/components/HistoricalImageryTimeline";
 import { jurisdictionLabel } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -85,18 +86,7 @@ export default async function ParcelProfilePage({
                 <ParcelAttributesCard parcel={parcel} />
               </div>
 
-              <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
-                <h2 className="mb-4 text-base font-semibold text-gray-900">
-                  Imagery Timeline
-                </h2>
-                <div
-                  data-testid="imagery-timeline-placeholder"
-                  className="flex h-32 items-center justify-center rounded border border-dashed border-gray-300 text-sm text-gray-400"
-                >
-                  Imagery timeline coming soon — satellite pass history will
-                  render here.
-                </div>
-              </section>
+              <HistoricalImageryTimeline parcel={parcel} />
 
               <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
                 <h2 className="mb-4 text-base font-semibold text-gray-900">

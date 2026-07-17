@@ -65,6 +65,14 @@ On parcel-1 (canal land):
 > "Waterbody, Grade A boundary — DGPS-verified, enforcement can rely on it. That's
 > why this alert is red: high-value land, trustworthy boundary, big change."
 
+Use the **Imagery Timeline** to switch between the verified 1990 and 2000
+Landsat annual mosaics and the 2010 MODIS observation. The 1985 tab deliberately
+shows a coverage gap rather than inventing a scene.
+
+> "These historical maps give the officer visual planning context and retain their
+> NASA source, capture date, and resolution. They are not enforcement evidence —
+> the cadastral record, survey, and field inspection still control the finding."
+
 Point at the **Tags** section — parcel-1 comes seeded with `court-monitored`. Add one
 live (`repeat-offender`): tags are how officers layer their institutional knowledge
 onto the record, and every add/remove lands in the audit chain with their identity.

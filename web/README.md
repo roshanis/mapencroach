@@ -10,8 +10,8 @@ CSS, Google Maps JavaScript API, and a MapLibre GL JS fallback.
 - `/console` — Command map: full-height Google map with parcel boundaries
   (colored by land category) and alert markers (colored by tier), plus a
   severity-sorted alert sidebar.
-- `/parcels/[id]` — Parcel profile: attributes card, mini map, imagery
-  timeline placeholder, linked alerts and cases.
+- `/parcels/[id]` — Parcel profile: attributes card, mini map, historical
+  imagery timeline, linked alerts and cases.
 - `/alerts` — Alert queue: filterable (tier, status), severity-sorted table.
 - `/cases/[id]` — Case detail: due-process state rail, event history,
   evidence packet placeholder.
@@ -59,6 +59,21 @@ NEXT_PUBLIC_GOOGLE_MAP_ID=your_javascript_map_id
 If either value is missing, or Google cannot load, the interface explicitly
 falls back to the existing MapLibre satellite/street map. Restrict the browser
 key by website referrer and to the Maps JavaScript API; do not commit it.
+
+## Historical imagery
+
+The parcel profile requests true-color historical context directly from the
+public NASA Global Imagery Browse Services (GIBS) WMS. The timeline currently
+offers Landsat WELD 30 m annual mosaics for 1990 and 2000 and a MODIS Terra
+250 m observation from 2010. The 1985 choice is retained as an explicit
+coverage gap because NASA GIBS does not return a usable scene for the demo
+area and date.
+
+Every scene identifies its source, capture date, and resolution. This imagery
+is for planning context only; it must not be treated as enforcement evidence
+or as a substitute for cadastral records, surveys, or field inspection.
+Availability and cloud cover can vary, and the interface displays a recoverable
+error state when the remote service cannot load a selected scene.
 
 ## Connecting to a real backend
 
