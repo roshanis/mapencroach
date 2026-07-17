@@ -31,7 +31,9 @@ npm install                                # first time only
 NEXT_PUBLIC_API_URL=http://localhost:8000 NEXT_PUBLIC_API_TOKEN=<token-from-step-2> npm run dev
 ```
 
-Open http://localhost:3000 — command map, alert queue, parcel profiles, case detail.
+Open http://localhost:3000 for the product landing page, then enter the command
+map at http://localhost:3000/console. Alert queue, parcel profiles, and case
+detail remain linked from the operational console.
 Omit both env vars to run the UI on built-in fixture data with no backend at all.
 
 ## Tests

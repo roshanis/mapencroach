@@ -73,8 +73,9 @@ Then **Deployments → Redeploy** (env vars are baked in at build time).
 
 ## 5. Verify
 
-- Open the Vercel URL: the map shows 8 parcels and 4 alert markers (live data,
-  not fixtures — check the Network tab hits `onrender.com`).
+- Open the Vercel URL: the product landing page loads, and its primary CTA opens
+  `/console`, where the map shows live backend parcel and alert data rather than
+  the built-in `PCL-…` fixtures.
 - `/cases/case-1` shows the due-process rail with evidence artifacts and
   Allowed Next Steps.
 - The 409 encore from DEMO.md works against the hosted API too — replace

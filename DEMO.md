@@ -21,8 +21,8 @@ print(create_token('officer-1', 'case_officer', 'state', 'dev-secret-do-not-depl
 NEXT_PUBLIC_API_URL=http://localhost:8000 NEXT_PUBLIC_API_TOKEN=<token> npm run dev
 ```
 
-Sanity check: open http://localhost:3000 — the map should show parcels and colored
-alert markers, with the primary nav bar (Map / Alerts / Cases) up top and the
+Sanity check: open http://localhost:3000/console — the map should show parcels and colored
+alert markers, with the primary nav bar (Command map / Alerts / Cases) up top and the
 "What am I looking at?" intro panel top right. If the map is empty, the token is
 missing or expired: re-mint it and restart `npm run dev`.
 
@@ -32,7 +32,7 @@ Close other tabs, hide bookmarks bar, zoom browser to 110%.
 
 ## The script (4 stops, ~1 minute each)
 
-### Stop 1 — Command map (`/`)
+### Stop 1 — Command map (`/console`)
 
 > "This is the government estate of the Haridwar–Roorkee Development Authority —
 > canal land along the Upper Ganga Canal, Rajaji forest fringe, SIDCUL industrial

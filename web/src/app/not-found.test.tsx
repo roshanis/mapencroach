@@ -15,7 +15,7 @@ describe("not-found state", () => {
     );
     expect(screen.getByRole("link", { name: "Open command map" })).toHaveAttribute(
       "href",
-      "/"
+      "/console"
     );
   });
 });

@@ -11,7 +11,11 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { href: "/", label: "Map", match: (path) => path === "/" },
+  {
+    href: "/console",
+    label: "Command map",
+    match: (path) => path === "/console",
+  },
   {
     href: "/alerts",
     label: "Alerts",

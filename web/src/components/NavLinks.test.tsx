@@ -9,23 +9,24 @@ vi.mock("next/navigation", () => ({
 
 describe("NavLinks", () => {
   it("keeps primary navigation focused on operational work", () => {
-    vi.mocked(usePathname).mockReturnValue("/");
+    vi.mocked(usePathname).mockReturnValue("/console");
 
     render(<NavLinks />);
 
-    expect(screen.getAllByText("Map").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Command map").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Alerts").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Cases").length).toBeGreaterThan(0);
     expect(screen.queryByText("Personas")).not.toBeInTheDocument();
   });
 
-  it("marks Map as active on the root path", () => {
-    vi.mocked(usePathname).mockReturnValue("/");
+  it("marks Command map as active on the console path", () => {
+    vi.mocked(usePathname).mockReturnValue("/console");
 
     render(<NavLinks />);
 
-    const mapLinks = screen.getAllByRole("link", { name: "Map" });
+    const mapLinks = screen.getAllByRole("link", { name: "Command map" });
     const desktopMapLink = mapLinks[0];
+    expect(desktopMapLink).toHaveAttribute("href", "/console");
     expect(desktopMapLink).toHaveAttribute("aria-current", "page");
     expect(desktopMapLink.className).toContain("bg-white/15");
 
@@ -35,12 +36,21 @@ describe("NavLinks", () => {
     expect(casesLink).not.toHaveAttribute("aria-current");
   });
 
-  it("does not mark Map as active on other paths (no prefix matching against /)", () => {
+  it("does not mark Command map as active on the landing page", () => {
+    vi.mocked(usePathname).mockReturnValue("/");
+
+    render(<NavLinks />);
+
+    const mapLink = screen.getAllByRole("link", { name: "Command map" })[0];
+    expect(mapLink).not.toHaveAttribute("aria-current");
+  });
+
+  it("does not mark Command map as active on other paths", () => {
     vi.mocked(usePathname).mockReturnValue("/alerts");
 
     render(<NavLinks />);
 
-    const mapLink = screen.getAllByRole("link", { name: "Map" })[0];
+    const mapLink = screen.getAllByRole("link", { name: "Command map" })[0];
     expect(mapLink).not.toHaveAttribute("aria-current");
   });
 
@@ -53,7 +63,7 @@ describe("NavLinks", () => {
     expect(alertsLink).toHaveAttribute("aria-current", "page");
     expect(alertsLink.className).toContain("bg-white/15");
 
-    const mapLink = screen.getAllByRole("link", { name: "Map" })[0];
+    const mapLink = screen.getAllByRole("link", { name: "Command map" })[0];
     expect(mapLink).not.toHaveAttribute("aria-current");
   });
 
@@ -68,7 +78,7 @@ describe("NavLinks", () => {
 
   describe("mobile hamburger menu", () => {
     it("has a hamburger button collapsed by default", () => {
-      vi.mocked(usePathname).mockReturnValue("/");
+      vi.mocked(usePathname).mockReturnValue("/console");
 
       render(<NavLinks />);
 
@@ -77,7 +87,7 @@ describe("NavLinks", () => {
     });
 
     it("expands the dropdown when clicked, and collapses again when clicking a link inside", () => {
-      vi.mocked(usePathname).mockReturnValue("/");
+      vi.mocked(usePathname).mockReturnValue("/console");
 
       render(<NavLinks />);
 

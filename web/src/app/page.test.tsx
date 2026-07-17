@@ -1,91 +1,47 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import CommandMapPage from "./page";
-import { getAlerts, getCases, getParcels } from "@/lib/api";
-import {
-  FIXTURE_ALERTS,
-  FIXTURE_CASES,
-  FIXTURE_PARCELS,
-} from "@/lib/fixtures";
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+import LandingPage from "./page";
 
-vi.mock("@/lib/api", () => ({
-  getAlerts: vi.fn(),
-  getCases: vi.fn(),
-  getParcels: vi.fn(),
-}));
-
-vi.mock("next/navigation", () => ({
-  usePathname: () => "/",
-  useRouter: () => ({ push: vi.fn() }),
-}));
-
-vi.mock("@/components/TopBar", () => ({
-  TopBar: () => <div>Top bar</div>,
-}));
-
-vi.mock("@/components/MapIntroPanel", () => ({
-  MapIntroPanel: () => null,
-}));
-
-vi.mock("@/components/MapLegend", () => ({
-  MapLegend: () => null,
-}));
-
-vi.mock("@/components/MapView", () => ({
-  default: ({
-    alerts,
-    onAlertClick,
-  }: {
-    alerts: typeof FIXTURE_ALERTS;
-    onAlertClick?: (id: string) => void;
-  }) => (
-    <button
-      type="button"
-      onClick={() => alerts[0] && onAlertClick?.(alerts[0].id)}
-    >
-      Select first map alert
-    </button>
-  ),
-}));
-
-beforeEach(() => {
-  vi.mocked(getParcels).mockResolvedValue(FIXTURE_PARCELS);
-  vi.mocked(getAlerts).mockResolvedValue(FIXTURE_ALERTS);
-  vi.mocked(getCases).mockResolvedValue(FIXTURE_CASES);
-});
-
-describe("CommandMapPage", () => {
-  it("shows an honest loading state before map data is ready", () => {
-    vi.mocked(getParcels).mockReturnValue(new Promise(() => undefined));
-    vi.mocked(getAlerts).mockReturnValue(new Promise(() => undefined));
-    vi.mocked(getCases).mockReturnValue(new Promise(() => undefined));
-
-    render(<CommandMapPage />);
-
-    expect(screen.getByText("Loading jurisdiction data…")).toBeInTheDocument();
-  });
-
-  it("shows a retryable error instead of an empty map when data fails", async () => {
-    vi.mocked(getParcels).mockRejectedValue(new Error("offline"));
-
-    render(<CommandMapPage />);
+describe("LandingPage", () => {
+  it("leads with the product outcome and a direct path into the console", () => {
+    render(<LandingPage />);
 
     expect(
-      await screen.findByText("Jurisdiction data could not be loaded")
+      screen.getByRole("heading", {
+        level: 1,
+        name: "See land risk early. Move every case lawfully.",
+      })
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    expect(
+      screen.getAllByRole("link", { name: "Open command map" })[0]
+    ).toHaveAttribute("href", "/console");
+    expect(
+      screen.getByRole("link", { name: "See how it works" })
+    ).toHaveAttribute("href", "#how-it-works");
   });
 
-  it("uses the same selection flow for a map marker and exposes the parcel action", async () => {
-    render(<CommandMapPage />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Select first map alert")).toBeInTheDocument();
-    });
-    fireEvent.click(screen.getByText("Select first map alert"));
+  it("explains the operating model and separates context from evidence", () => {
+    render(<LandingPage />);
 
     expect(
-      await screen.findByRole("link", { name: "Open parcel record" })
-    ).toHaveAttribute("href", "/parcels/PCL-1001");
+      screen.getByRole("heading", { name: "From signal to lawful action" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", {
+        name: "Prioritize with context. Enforce with evidence.",
+      })
+    ).toBeInTheDocument();
+    expect(screen.getByText("30", { selector: "dd" })).toBeInTheDocument();
+    expect(screen.getByText("Monitored parcels")).toBeInTheDocument();
+  });
+
+  it("provides useful landmark navigation and a second conversion point", () => {
+    render(<LandingPage />);
+
+    expect(screen.getByRole("navigation", { name: "Landing" })).toBeInTheDocument();
+    expect(screen.getByRole("contentinfo")).toBeInTheDocument();
+    expect(
+      screen.getAllByRole("link", { name: "Open command map" })
+    ).toHaveLength(3);
   });
 });

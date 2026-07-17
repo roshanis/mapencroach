@@ -21,7 +21,7 @@ export default function NotFound() {
             Return to alert queue
           </Link>
           <Link
-            href="/"
+            href="/console"
             className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-gov focus:ring-offset-2"
           >
             Open command map

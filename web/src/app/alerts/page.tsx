@@ -13,7 +13,7 @@ export default async function AlertsQueuePage() {
       <TopBar />
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 p-6">
         <div>
-          <Link href="/" className="text-sm text-gov hover:underline">
+          <Link href="/console" className="text-sm text-gov hover:underline">
             &larr; Back to command map
           </Link>
           <h1 className="mt-2 text-xl font-semibold text-gray-900">

@@ -49,7 +49,7 @@ export default async function ParcelProfilePage({
       <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 p-6">
         <div>
           <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-2 text-sm text-slate-500">
-            <Link href="/" className="text-gov hover:underline">Map</Link>
+            <Link href="/console" className="text-gov hover:underline">Command map</Link>
             <span aria-hidden>/</span>
             <Link href="/alerts" className="text-gov hover:underline">Alerts</Link>
             <span aria-hidden>/</span>

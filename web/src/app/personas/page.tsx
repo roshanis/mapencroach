@@ -57,7 +57,7 @@ export default function PersonasPage() {
         jurisdiction_name: result.persona.jurisdiction_name,
       })
     );
-    window.location.href = "/";
+    window.location.href = "/console";
   }
 
   return (
