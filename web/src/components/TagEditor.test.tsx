@@ -9,6 +9,35 @@ vi.mock("@/lib/api", () => ({
 }));
 
 describe("TagEditor", () => {
+  it("gives the tag input an accessible name", () => {
+    render(<TagEditor parcelId="PCL-1001" initialTags={[]} />);
+
+    expect(
+      screen.getByRole("textbox", { name: "Add tag" })
+    ).toBe(screen.getByTestId("tag-input"));
+  });
+
+  it("exposes the error text as an alert for assistive tech", async () => {
+    vi.mocked(addParcelTag).mockResolvedValue({
+      ok: false,
+      status: 403,
+      detail: "viewer role cannot tag parcels",
+    });
+
+    render(<TagEditor parcelId="PCL-1001" initialTags={[]} />);
+
+    fireEvent.change(screen.getByTestId("tag-input"), {
+      target: { value: "new-tag" },
+    });
+    fireEvent.click(screen.getByTestId("tag-add"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Refused (HTTP 403): viewer role cannot tag parcels"
+      );
+    });
+  });
+
   it("renders chips from initialTags", () => {
     render(<TagEditor parcelId="PCL-1001" initialTags={["court-monitored", "flagged"]} />);
 

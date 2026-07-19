@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { FIXTURE_ALERTS, FIXTURE_PARCELS } from "@/lib/fixtures";
 import GoogleMap from "./GoogleMap";
 
@@ -10,6 +10,14 @@ const loaderMocks = vi.hoisted(() => ({
 
 vi.mock("@googlemaps/js-api-loader", () => loaderMocks);
 
+class FakeLatLngBounds {
+  extend = vi.fn().mockReturnThis();
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 describe("GoogleMap", () => {
   it("renders the operational GeoJSON and preserves map interactions", async () => {
     const addGeoJson = vi.fn();
@@ -17,15 +25,29 @@ describe("GoogleMap", () => {
     const mapType = vi.fn();
     const panTo = vi.fn();
     const setZoom = vi.fn();
+    const fitBounds = vi.fn();
     const mapConstructor = vi.fn();
     const advancedMarkerConstructor = vi.fn();
     const markers: Array<{ map: unknown }> = [];
+    const boundsInstances: FakeLatLngBounds[] = [];
+
+    vi.stubGlobal("google", {
+      maps: {
+        LatLngBounds: class extends FakeLatLngBounds {
+          constructor() {
+            super();
+            boundsInstances.push(this);
+          }
+        },
+      },
+    });
 
     class FakeMap {
       data = { addGeoJson, setStyle };
       setMapTypeId = mapType;
       panTo = panTo;
       setZoom = setZoom;
+      fitBounds = fitBounds;
 
       constructor(container: HTMLElement, options: google.maps.MapOptions) {
         mapConstructor(container, options);
@@ -95,14 +117,38 @@ describe("GoogleMap", () => {
     expect(setStyle).toHaveBeenCalledOnce();
     expect(advancedMarkerConstructor).toHaveBeenCalledOnce();
 
+    // Camera fits to the two parcels' polygon vertices (10 total: 2 parcels x
+    // 5-point closed rings), with generous padding for the sidebar/HUD chrome.
+    expect(boundsInstances).toHaveLength(1);
+    expect(boundsInstances[0].extend).toHaveBeenCalledTimes(10);
+    expect(fitBounds).toHaveBeenCalledWith(boundsInstances[0], {
+      top: 130,
+      right: 130,
+      bottom: 110,
+      left: 90,
+    });
+
     const markerOptions = advancedMarkerConstructor.mock.calls[0][0];
-    expect(markerOptions.position).toEqual({ lat: 29.913, lng: 77.979 });
-    expect(markerOptions.content).toHaveAttribute(
-      "aria-label",
-      `Select alert ${FIXTURE_ALERTS[0].id}`
+    const wrapper = markerOptions.content as HTMLElement;
+    const button = wrapper.querySelector(
+      '[data-testid="alert-marker"]'
+    ) as HTMLButtonElement;
+
+    expect(button).toBeTruthy();
+    expect(button.getAttribute("aria-label")).toContain(FIXTURE_ALERTS[0].id);
+    expect(button.getAttribute("aria-label")).toContain("Red");
+    expect(button.getAttribute("aria-label")).toContain(
+      String(Math.round(FIXTURE_ALERTS[0].severity_score))
     );
-    expect(markerOptions.content).toHaveAttribute("data-selected", "true");
-    markerOptions.content.click();
+    expect(button).toHaveAttribute("data-selected", "true");
+    expect(button.textContent).toBe(
+      String(Math.round(FIXTURE_ALERTS[0].severity_score))
+    );
+    // The map SDK only ever positions the wrapper -- it must never carry a
+    // transform of its own from our selection styling.
+    expect(wrapper.style.transform).toBe("");
+
+    button.click();
     expect(onAlertClick).toHaveBeenCalledWith(FIXTURE_ALERTS[0].id);
 
     expect(onReady).toHaveBeenCalledOnce();
@@ -127,7 +173,8 @@ describe("GoogleMap", () => {
         onProviderError={onProviderError}
       />
     );
-    expect(markerOptions.content).toHaveAttribute("data-selected", "false");
+    expect(button).toHaveAttribute("data-selected", "false");
+    expect(wrapper.style.transform).toBe("");
 
     unmount();
     expect(markers[0].map).toBeNull();

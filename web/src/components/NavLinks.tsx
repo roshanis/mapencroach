@@ -28,6 +28,18 @@ const NAV_ITEMS: NavItem[] = [
   },
 ];
 
+// Rendered only in the mobile hamburger dropdown, not the desktop nav.
+// TopBar's DemoMenu also links to /personas ("Who sees what →"), but that's
+// tucked behind a click; this keeps a direct, always-discoverable path from
+// the mobile nav too.
+const MOBILE_ONLY_ITEMS: NavItem[] = [
+  {
+    href: "/personas",
+    label: "Demo roles",
+    match: (path) => path === "/personas" || path.startsWith("/personas/"),
+  },
+];
+
 const ACTIVE_CLASSES =
   "rounded px-2.5 py-1 text-xs font-semibold bg-white/15 text-white";
 const INACTIVE_CLASSES =
@@ -69,7 +81,7 @@ export function NavLinks() {
 
       {open && (
         <div className="absolute left-0 right-0 top-14 z-20 flex flex-col border-b border-gray-200 bg-gov shadow-md">
-          {NAV_ITEMS.map((item) => {
+          {[...NAV_ITEMS, ...MOBILE_ONLY_ITEMS].map((item) => {
             const active = item.match(pathname ?? "");
             return (
               <Link

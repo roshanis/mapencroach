@@ -11,9 +11,17 @@ import {
   getCases,
   getParcel,
   getParcelContext,
+  getParcels,
   TOKEN_COOKIE,
 } from "./api";
-import type { Alert, AlertFilters, Case, Parcel, ParcelContext } from "./types";
+import type {
+  Alert,
+  AlertFilters,
+  BBox,
+  Case,
+  Parcel,
+  ParcelContext,
+} from "./types";
 
 export async function serverToken(): Promise<string | undefined> {
   try {
@@ -30,6 +38,11 @@ export async function getParcelForRequest(
   return getParcel(id, token);
 }
 
+export async function getParcelsForRequest(bbox?: BBox): Promise<Parcel[]> {
+  const token = await serverToken();
+  return getParcels(bbox, token);
+}
+
 export async function getParcelContextForRequest(
   id: string
 ): Promise<ParcelContext | undefined> {
@@ -42,6 +55,18 @@ export async function getAlertsForRequest(
 ): Promise<Alert[]> {
   const token = await serverToken();
   return getAlerts(filters, token);
+}
+
+/**
+ * Fetches a single alert by id for the case-summary card. There is no
+ * per-id alert endpoint wired up yet, so this loads the request-scoped
+ * alert list and finds the match; returns undefined if not found.
+ */
+export async function getAlertForRequest(
+  id: string
+): Promise<Alert | undefined> {
+  const alerts = await getAlertsForRequest();
+  return alerts.find((alert) => alert.id === id);
 }
 
 export async function getCaseForRequest(

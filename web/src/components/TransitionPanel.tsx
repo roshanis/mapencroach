@@ -7,7 +7,12 @@ import { CASE_STATE_CHAIN, NON_CHAIN_STATES } from "@/lib/types";
 
 const ALL_STATES: string[] = [...CASE_STATE_CHAIN, ...NON_CHAIN_STATES];
 
-const ACTION_LABELS: Record<string, string> = {
+/**
+ * Human, imperative labels for transition targets (e.g. "Dismiss false
+ * positive"). Exported so other views (e.g. CasesTable's next-step chips)
+ * can reuse the same phrasing instead of duplicating it.
+ */
+export const ACTION_LABELS: Record<string, string> = {
   RESPONSE_WINDOW: "Open response window",
   DISMISSED_FALSE_POSITIVE: "Dismiss false positive",
   LEGACY_REFERRED: "Refer to legacy process",

@@ -15,6 +15,7 @@ import { TierChip } from "@/components/TierChip";
 import { TopBar } from "@/components/TopBar";
 import ParcelMiniMap from "@/components/ParcelMiniMap";
 import { HistoricalImageryTimeline } from "@/components/HistoricalImageryTimeline";
+import { BoundaryGradeEditor } from "@/components/BoundaryGradeEditor";
 import { jurisdictionLabel } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -85,6 +86,11 @@ export default async function ParcelProfilePage({
                 </section>
                 <ParcelAttributesCard parcel={parcel} />
               </div>
+
+              <BoundaryGradeEditor
+                parcelId={parcel.id}
+                initialGrade={parcel.boundary_grade}
+              />
 
               <HistoricalImageryTimeline parcel={parcel} />
 

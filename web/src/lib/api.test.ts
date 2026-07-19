@@ -11,6 +11,7 @@ import {
   loginPersona,
   removeParcelTag,
   transitionCase,
+  updateBoundaryGrade,
 } from "./api";
 import {
   FIXTURE_ALERTS,
@@ -642,5 +643,58 @@ describe("parcel tag endpoints", () => {
     const result = await removeParcelTag("PCL-1001", "nope");
 
     expect(result).toEqual({ ok: false, status: 404, detail: "tag not present" });
+  });
+});
+
+describe("boundary grade endpoint", () => {
+  it("returns fixture-mode read-only without calling fetch", async () => {
+    delete process.env.NEXT_PUBLIC_API_URL;
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await updateBoundaryGrade("PCL-1001", "A", "SR-2026-104");
+
+    expect(result).toEqual({
+      ok: false,
+      status: 0,
+      detail: "No backend configured — fixture mode is read-only.",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("patches the grade with the authenticated survey reference", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    process.env.NEXT_PUBLIC_API_TOKEN = "test-token-123";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({
+        type: "Feature",
+        geometry: FIXTURE_PARCELS[0].geometry,
+        properties: {
+          ...FIXTURE_PARCELS[0],
+          boundary_grade: "A",
+        },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await updateBoundaryGrade("PCL-1001", "A", "SR-2026-104");
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://api.example.test/parcels/PCL-1001/boundary-grade"
+    );
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.method).toBe("PATCH");
+    expect(init.headers).toMatchObject({
+      "Content-Type": "application/json",
+      Authorization: "Bearer test-token-123",
+    });
+    expect(JSON.parse(init.body)).toEqual({
+      grade: "A",
+      survey_reference: "SR-2026-104",
+    });
+    expect(result).toEqual({ ok: true, status: 200, grade: "A" });
   });
 });

@@ -45,7 +45,7 @@ export function StateRail({ currentState }: StateRailProps) {
       )}
       <ol
         data-testid="state-rail"
-        className="flex flex-col gap-0 sm:flex-row sm:flex-wrap sm:items-start"
+        className="flex items-start gap-0 overflow-x-auto pb-2"
       >
         {CASE_STATE_CHAIN.map((state, index) => {
           const isCurrent = !special && state === currentState;
@@ -56,10 +56,10 @@ export function StateRail({ currentState }: StateRailProps) {
               data-testid="state-rail-step"
               data-state={state}
               data-current={isCurrent}
-              className="flex items-center sm:flex-col sm:items-center sm:text-center"
+              className="flex shrink-0 items-start"
             >
               <div
-                className="flex items-center sm:flex-col"
+                className="flex w-[5.5rem] shrink-0 flex-col items-center gap-1.5 text-center"
                 title={STATE_DESCRIPTIONS[state]}
               >
                 <span
@@ -74,7 +74,7 @@ export function StateRail({ currentState }: StateRailProps) {
                   {index + 1}
                 </span>
                 <span
-                  className={`ml-2 whitespace-nowrap text-xs sm:ml-0 sm:mt-1 ${
+                  className={`line-clamp-2 break-words text-[11px] leading-tight ${
                     isCurrent
                       ? "font-semibold text-gov"
                       : isDone
@@ -88,7 +88,7 @@ export function StateRail({ currentState }: StateRailProps) {
               {index < CASE_STATE_CHAIN.length - 1 && (
                 <div
                   aria-hidden
-                  className={`mx-2 h-4 w-px sm:mt-3 sm:h-px sm:w-8 ${
+                  className={`mt-3 h-px w-6 shrink-0 ${
                     isDone ? "bg-gov/40" : "bg-gray-300"
                   }`}
                 />

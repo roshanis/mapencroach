@@ -475,3 +475,64 @@ export async function removeParcelTag(
     token
   );
 }
+
+export interface BoundaryGradeResult {
+  ok: boolean;
+  status: number;
+  detail?: string;
+  grade?: BoundaryGrade;
+}
+
+export async function updateBoundaryGrade(
+  parcelId: string,
+  grade: BoundaryGrade,
+  surveyReference: string,
+  token?: string
+): Promise<BoundaryGradeResult> {
+  const base = getApiBase();
+  if (!base) {
+    return {
+      ok: false,
+      status: 0,
+      detail: "No backend configured — fixture mode is read-only.",
+    };
+  }
+
+  try {
+    const res = await fetch(`${base}/parcels/${parcelId}/boundary-grade`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(token),
+      },
+      body: JSON.stringify({
+        grade,
+        survey_reference: surveyReference,
+      }),
+    });
+
+    if (res.ok) {
+      const feature = (await res.json()) as ParcelFeature;
+      return {
+        ok: true,
+        status: res.status,
+        grade: feature.properties.boundary_grade,
+      };
+    }
+
+    let detail = res.statusText;
+    try {
+      const body = (await res.json()) as { detail?: string };
+      if (typeof body.detail === "string") detail = body.detail;
+    } catch {
+      // Keep the HTTP status text when the backend body is not JSON.
+    }
+    return { ok: false, status: res.status, detail };
+  } catch {
+    return {
+      ok: false,
+      status: 0,
+      detail: "Boundary-grade service could not be reached. Try again.",
+    };
+  }
+}

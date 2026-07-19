@@ -1,12 +1,24 @@
 import Link from "next/link";
-import { getAlertsForRequest } from "@/lib/server-api";
+import {
+  getAlertsForRequest,
+  getCasesForRequest,
+  getParcelsForRequest,
+} from "@/lib/server-api";
 import { AlertsTable } from "@/components/AlertsTable";
 import { TopBar } from "@/components/TopBar";
+import type { Case } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 export default async function AlertsQueuePage() {
-  const alerts = await getAlertsForRequest();
+  const [alerts, parcels, cases] = await Promise.all([
+    getAlertsForRequest(),
+    getParcelsForRequest(),
+    getCasesForRequest(),
+  ]);
+  const casesByAlertId = new Map<string, Case>(
+    cases.map((item) => [item.alert_id, item])
+  );
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -23,7 +35,11 @@ export default async function AlertsQueuePage() {
             Search or filter the queue, then open a parcel link to review the record.
           </p>
         </div>
-        <AlertsTable alerts={alerts} />
+        <AlertsTable
+          alerts={alerts}
+          parcels={parcels}
+          casesByAlertId={casesByAlertId}
+        />
       </main>
     </div>
   );

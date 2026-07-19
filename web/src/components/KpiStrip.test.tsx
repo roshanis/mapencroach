@@ -162,4 +162,27 @@ describe("KpiStrip", () => {
       "0"
     );
   });
+
+  it("renders all four values and labels in the compact variant", () => {
+    render(
+      <KpiStrip parcels={PARCELS} alerts={ALERTS} cases={CASES} variant="compact" />
+    );
+    expect(screen.getByText("Parcels monitored")).toBeInTheDocument();
+    expect(screen.getByText("Needs triage")).toBeInTheDocument();
+    expect(screen.getByText("Urgent alerts")).toBeInTheDocument();
+    expect(screen.getByText("Cases in due process")).toBeInTheDocument();
+    expect(screen.getByTestId("kpi-parcels-monitored")).toHaveTextContent("3");
+    expect(screen.getByTestId("kpi-open-alerts")).toHaveTextContent("3");
+    expect(screen.getByTestId("kpi-red-alerts")).toHaveTextContent("2");
+    expect(screen.getByTestId("kpi-cases-in-due-process")).toHaveTextContent("3");
+  });
+
+  it("lays the compact variant out as a 2x2 grid, not the floating flex-row strip", () => {
+    render(
+      <KpiStrip parcels={PARCELS} alerts={ALERTS} cases={CASES} variant="compact" />
+    );
+    const strip = screen.getByTestId("kpi-strip");
+    expect(strip.className).toContain("grid-cols-2");
+    expect(strip.className).not.toContain("sm:flex");
+  });
 });
