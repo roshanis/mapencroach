@@ -179,4 +179,76 @@ describe("GoogleMap", () => {
     unmount();
     expect(markers[0].map).toBeNull();
   });
+
+  it("constructs the map with the basemap mode toggled before the loader resolved, not the hardcoded default", async () => {
+    const mapConstructor = vi.fn();
+
+    vi.stubGlobal("google", {
+      maps: {
+        LatLngBounds: FakeLatLngBounds,
+      },
+    });
+
+    class FakeMap {
+      data = { addGeoJson: vi.fn(), setStyle: vi.fn() };
+      setMapTypeId = vi.fn();
+      panTo = vi.fn();
+      setZoom = vi.fn();
+      fitBounds = vi.fn();
+
+      constructor(container: HTMLElement, options: google.maps.MapOptions) {
+        mapConstructor(container, options);
+      }
+    }
+
+    class FakeAdvancedMarkerElement {
+      map: unknown;
+
+      constructor(options: google.maps.marker.AdvancedMarkerElementOptions) {
+        this.map = options.map;
+      }
+    }
+
+    // Keep the "maps" library import unresolved until after the toggle
+    // click, simulating a click landing during the loader's async gap
+    // (mapRef.current is still null at that point).
+    let resolveMapsLibrary: (value: { Map: typeof FakeMap }) => void = () => {};
+    const mapsLibraryPromise = new Promise<{ Map: typeof FakeMap }>((resolve) => {
+      resolveMapsLibrary = resolve;
+    });
+
+    loaderMocks.importLibrary.mockImplementation(async (library: string) => {
+      if (library === "maps") return mapsLibraryPromise;
+      if (library === "marker") {
+        return { AdvancedMarkerElement: FakeAdvancedMarkerElement };
+      }
+      throw new Error(`Unexpected library: ${library}`);
+    });
+
+    render(
+      <GoogleMap
+        apiKey="restricted-browser-key"
+        mapId="map-id"
+        parcels={[]}
+        alerts={[]}
+        onReady={vi.fn()}
+        onAlertClick={vi.fn()}
+        onProviderError={vi.fn()}
+      />
+    );
+
+    // The loader hasn't resolved yet, so the Map hasn't been constructed --
+    // mapRef.current is still null and this click is otherwise a silent
+    // no-op on the map itself.
+    fireEvent.click(screen.getByTestId("basemap-streets"));
+
+    resolveMapsLibrary({ Map: FakeMap });
+
+    await waitFor(() => expect(mapConstructor).toHaveBeenCalledOnce());
+
+    expect(mapConstructor).toHaveBeenCalledWith(
+      expect.any(HTMLElement),
+      expect.objectContaining({ mapTypeId: "roadmap" })
+    );
+  });
 });

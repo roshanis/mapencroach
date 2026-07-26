@@ -35,9 +35,15 @@ export default function GoogleMap({
   const onProviderErrorRef = useRef(onProviderError);
   const [mode, setMode] = useState<BasemapMode>("satellite");
   const [loading, setLoading] = useState(true);
+  const modeRef = useRef(mode);
 
   function handleBasemapChange(newMode: BasemapMode) {
+    modeRef.current = newMode;
     setMode(newMode);
+    // While `loading` is true the Map hasn't been constructed yet, so
+    // mapRef.current is null and this is a silent no-op on the map itself.
+    // modeRef.current is already updated above, and the Map constructor
+    // below reads it to pick the correct initial mapTypeId once it runs.
     mapRef.current?.setMapTypeId(newMode === "satellite" ? "hybrid" : "roadmap");
   }
 
@@ -70,7 +76,7 @@ export default function GoogleMap({
           center: { lat: center[1], lng: center[0] },
           zoom,
           mapId,
-          mapTypeId: "hybrid",
+          mapTypeId: modeRef.current === "satellite" ? "hybrid" : "roadmap",
           clickableIcons: false,
           fullscreenControl: true,
           mapTypeControl: false,
@@ -173,7 +179,11 @@ export default function GoogleMap({
       mapRef.current = null;
     };
     // The provider owns one immutable map instance; selection and callbacks are
-    // kept current through refs above.
+    // kept current through refs above. `parcels`, `alerts`, `center`, and
+    // `zoom` are intentionally captured only at mount time (this effect runs
+    // once, deliberately omitting them from its dependency array) -- callers
+    // that need to change any of them must remount this component (e.g. by
+    // changing its `key`) rather than expect a live update.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

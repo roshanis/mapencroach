@@ -83,13 +83,14 @@ export function describeEvent(event: CaseEvent): EventDescription {
 }
 
 /**
- * Humanizes an actor id for display: "system" -> "System"; a "<role>-<n>"
- * id (e.g. "inspector-1", "officer-1") keeps the id but title-cases the
- * encoded role prefix ("Inspector inspector-1", "Officer officer-1");
- * anything else (e.g. a full name) is returned verbatim.
+ * Humanizes an actor id for display: "system" or any "system:<subsystem>"
+ * id (e.g. "system:detector", "system:workflow") -> "System"; a
+ * "<role>-<n>" id (e.g. "inspector-1", "officer-1") keeps the id but
+ * title-cases the encoded role prefix ("Inspector inspector-1", "Officer
+ * officer-1"); anything else (e.g. a full name) is returned verbatim.
  */
 export function describeActor(actor: string): string {
-  if (actor === "system") return "System";
+  if (actor === "system" || actor.startsWith("system:")) return "System";
   const match = actor.match(/^([a-z]+)-\d+$/i);
   if (match) {
     const role = match[1];

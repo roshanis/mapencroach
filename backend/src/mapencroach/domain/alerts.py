@@ -47,6 +47,8 @@ def severity_score(
     importance and boundary survey grade (uncertain boundaries lower
     actionability), with a 20% bump for repeat offenders. Clamped to 100.
     """
+    if area_m2 < 0:
+        raise ValueError(f"area_m2 must be non-negative, got {area_m2!r}")
     if land_category not in LAND_CATEGORY_WEIGHTS:
         raise ValueError(f"unknown land_category: {land_category!r}")
     if boundary_grade not in BOUNDARY_GRADE_MULTIPLIERS:
@@ -60,7 +62,7 @@ def severity_score(
     if repeat_offender:
         score *= _REPEAT_OFFENDER_MULTIPLIER
 
-    score = min(score, 100.0)
+    score = max(0.0, min(score, 100.0))
     return round(score, 1)
 
 

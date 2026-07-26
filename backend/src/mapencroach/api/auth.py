@@ -30,6 +30,14 @@ def signing_secret() -> str:
     return _secret()
 
 
+def using_default_secret() -> bool:
+    """True if MAPENCROACH_JWT_SECRET is unset (or set to the insecure
+    dev default), meaning tokens are signed with a secret published in
+    the public repo. create_app uses this to fail closed outside demo
+    mode."""
+    return _secret() == _DEFAULT_SECRET
+
+
 class Role(StrEnum):
     VIEWER = "viewer"
     CASE_OFFICER = "case_officer"

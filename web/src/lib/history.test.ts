@@ -115,4 +115,16 @@ describe("describeActor", () => {
       "Deputy Collector R. Sharma"
     );
   });
+
+  it('renders "system:detector" as "System"', () => {
+    expect(describeActor("system:detector")).toBe("System");
+  });
+
+  it('renders "system:workflow" as "System"', () => {
+    expect(describeActor("system:workflow")).toBe("System");
+  });
+
+  it('does not treat "systemic reviewer" as a system actor', () => {
+    expect(describeActor("systemic reviewer")).toBe("systemic reviewer");
+  });
 });

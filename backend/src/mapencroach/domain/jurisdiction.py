@@ -20,6 +20,12 @@ class JurisdictionTree:
             if parent_id is not None:
                 self._children.setdefault(parent_id, []).append(node_id)
 
+        for node_id, parent_id in rows:
+            if parent_id is not None and parent_id not in self._parent:
+                raise ValueError(
+                    f"jurisdiction {node_id!r} references unknown parent {parent_id!r}"
+                )
+
         self._reject_cycles()
 
         roots = [node_id for node_id, parent_id in rows if parent_id is None]

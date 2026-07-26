@@ -38,19 +38,30 @@ export default function MapLibreMap({
   const onAlertClickRef = useRef(onAlertClick);
   const selectedAlertIdRef = useRef(selectedAlertId);
   const [mode, setMode] = useState<BasemapMode>("satellite");
+  const modeRef = useRef(mode);
 
   function handleBasemapChange(newMode: BasemapMode) {
+    modeRef.current = newMode;
     setMode(newMode);
-    mapRef.current?.setLayoutProperty(
-      "esri-base",
-      "visibility",
-      newMode === "satellite" ? "visible" : "none"
-    );
-    mapRef.current?.setLayoutProperty(
-      "osm-base",
-      "visibility",
-      newMode === "satellite" ? "none" : "visible"
-    );
+    // Two windows where the map can't take the change yet: (a) the dynamic
+    // `import("maplibre-gl")` hasn't resolved, so mapRef.current is still
+    // null; (b) the map exists but its style hasn't finished loading, so
+    // calling setLayoutProperty would throw ("Style is not done loading").
+    // In both cases modeRef.current is already updated above, and either the
+    // initial style construction or the "load" handler below re-applies it
+    // once the map is actually ready.
+    if (mapRef.current?.isStyleLoaded()) {
+      mapRef.current.setLayoutProperty(
+        "esri-base",
+        "visibility",
+        newMode === "satellite" ? "visible" : "none"
+      );
+      mapRef.current.setLayoutProperty(
+        "osm-base",
+        "visibility",
+        newMode === "satellite" ? "none" : "visible"
+      );
+    }
   }
 
   useEffect(() => {
@@ -101,13 +112,17 @@ export default function MapLibreMap({
               id: "osm-base",
               type: "raster",
               source: "osm",
-              layout: { visibility: "none" },
+              layout: {
+                visibility: modeRef.current === "satellite" ? "none" : "visible",
+              },
             },
             {
               id: "esri-base",
               type: "raster",
               source: "esri-imagery",
-              layout: { visibility: "visible" },
+              layout: {
+                visibility: modeRef.current === "satellite" ? "visible" : "none",
+              },
             },
           ],
         },
@@ -119,6 +134,21 @@ export default function MapLibreMap({
 
       map.on("load", () => {
         if (cancelled) return;
+
+        // Re-apply the current mode now that the style is guaranteed to be
+        // loaded: a toggle click during either failure window above (the
+        // import still pending, or the map constructed but not yet loaded)
+        // only updated modeRef/mode, so pick that up here.
+        map.setLayoutProperty(
+          "esri-base",
+          "visibility",
+          modeRef.current === "satellite" ? "visible" : "none"
+        );
+        map.setLayoutProperty(
+          "osm-base",
+          "visibility",
+          modeRef.current === "satellite" ? "none" : "visible"
+        );
 
         map.addSource("parcels", {
           type: "geojson",
@@ -211,6 +241,11 @@ export default function MapLibreMap({
       mapInstance?.remove();
       mapRef.current = null;
     };
+    // This effect runs once, deliberately omitting `parcels`, `alerts`,
+    // `center`, and `zoom` from its dependency array: they are intentionally
+    // captured only at mount time. Callers that need to change any of them
+    // must remount this component (e.g. by changing its `key`) rather than
+    // expect a live update. Selection and callbacks stay live via refs above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

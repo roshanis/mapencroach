@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { transitionCase, type TransitionResult } from "@/lib/api";
 import { CASE_STATE_CHAIN, NON_CHAIN_STATES } from "@/lib/types";
@@ -69,6 +69,24 @@ export function TransitionPanel({
   const [artifactValues, setArtifactValues] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<TransitionResult | null>(null);
+
+  // The server can re-render this component (e.g. after router.refresh()
+  // following a successful submit) with a brand-new `allowedTransitions`
+  // array object even when its contents haven't changed. Compare by value —
+  // a joined-string key — so we only resync selection state when the case's
+  // actual legal transitions changed, never on identity churn alone (which
+  // would clobber an in-progress, non-default user selection).
+  const allowedTransitionsKey = allowedTransitions.join("|");
+  const previousTransitionsKeyRef = useRef(allowedTransitionsKey);
+  useEffect(() => {
+    if (previousTransitionsKeyRef.current === allowedTransitionsKey) return;
+    previousTransitionsKeyRef.current = allowedTransitionsKey;
+    setSelected(allowedTransitions[0] ?? "");
+    setGuardSelected(blockedStates[0] ?? "");
+    setArtifactValues({});
+    // Intentionally leave `result` untouched: a success banner from the
+    // transition that just triggered this refresh should survive the resync.
+  }, [allowedTransitionsKey, allowedTransitions, blockedStates]);
 
   const artifactNames = requiredArtifacts[selected] ?? [];
   const evidenceComplete = artifactNames.every(

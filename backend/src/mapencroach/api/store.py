@@ -10,6 +10,8 @@ interface later; callers should depend only on the attributes/methods
 documented here, not on dict internals.
 """
 
+import threading
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -102,6 +104,13 @@ class Store:
         self._tree: JurisdictionTree | None = None
         if self.jurisdiction_rows:
             self._tree = JurisdictionTree(self.jurisdiction_rows)
+        # Guards the audit chain append and the id sequences below. All
+        # app.py handlers are sync `def`s, so FastAPI runs them on a
+        # threadpool sharing this one Store -- without a lock, concurrent
+        # requests can interleave append_entry's non-atomic
+        # read-prev-hash-then-append (corrupting the hash chain) or the
+        # id counters' non-atomic increment (handing out duplicate ids).
+        self._lock = threading.Lock()
 
     @property
     def tree(self) -> JurisdictionTree:
@@ -117,24 +126,36 @@ class Store:
     def dist_b_scope(self) -> set[str]:
         return self.tree.scope_ids(self.district_b_id)
 
-    def record_audit(self, *, actor: str, action: str, object_type: str, object_id: str) -> None:
-        append_entry(
-            self.audit_chain,
-            {
-                "actor": actor,
-                "action": action,
-                "object_type": object_type,
-                "object_id": object_id,
-            },
-        )
+    def record_audit(
+        self,
+        *,
+        actor: str,
+        action: str,
+        object_type: str,
+        object_id: str,
+        extra: Mapping[str, Any] | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "actor": actor,
+            "action": action,
+            "object_type": object_type,
+            "object_id": object_id,
+            "at": datetime.now(UTC).isoformat(),
+        }
+        if extra:
+            payload.update(extra)
+        with self._lock:
+            append_entry(self.audit_chain, payload)
 
     def next_alert_id(self) -> str:
-        self._next_alert_seq += 1
-        return f"alert-{self._next_alert_seq}"
+        with self._lock:
+            self._next_alert_seq += 1
+            return f"alert-{self._next_alert_seq}"
 
     def next_case_id(self) -> str:
-        self._next_case_seq += 1
-        return f"case-{self._next_case_seq}"
+        with self._lock:
+            self._next_case_seq += 1
+            return f"case-{self._next_case_seq}"
 
     def context_for_parcel(self, parcel_id: str) -> ParcelContext:
         """Return canonical identifiers plus any linked context for a parcel."""

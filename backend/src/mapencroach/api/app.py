@@ -15,7 +15,7 @@ from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from mapencroach.api.auth import (
     Role,
@@ -24,9 +24,10 @@ from mapencroach.api.auth import (
     current_user,
     require_roles,
     signing_secret,
+    using_default_secret,
 )
 from mapencroach.api.store import JURISDICTION_NAMES, Store
-from mapencroach.domain.alerts import severity_score
+from mapencroach.domain.alerts import AlertTier, severity_score
 from mapencroach.domain.case_engine import (
     Case,
     CaseState,
@@ -134,8 +135,8 @@ class BoundaryGradePatch(BaseModel):
 
 class AlertCreate(BaseModel):
     parcel_id: str
-    tier: str
-    area_m2: float
+    tier: AlertTier
+    area_m2: float = Field(ge=0)
     detected_at: datetime
 
 
@@ -195,6 +196,14 @@ def create_app(store: Store | None = None) -> FastAPI:
     extra wiring.
     """
     demo_mode = os.environ.get("MAPENCROACH_DEMO") == "1"
+    if not demo_mode and using_default_secret():
+        raise RuntimeError(
+            "MAPENCROACH_JWT_SECRET is not set (or is the insecure development "
+            "default). Refusing to start outside demo mode: anyone who has read "
+            "the public repo could mint a valid data_admin token. Set "
+            "MAPENCROACH_JWT_SECRET to a strong secret, or set MAPENCROACH_DEMO=1 "
+            "for a local demo."
+        )
     if store is None:
         store = Store.seed_demo() if demo_mode else Store()
 
@@ -272,12 +281,18 @@ def create_app(store: Store | None = None) -> FastAPI:
                 detail=f"invalid grade {body.grade!r}, must be one of {sorted(_VALID_GRADES)}",
             )
 
+        old_grade = parcel["boundary_grade"]
         parcel["boundary_grade"] = body.grade
         store.record_audit(
             actor=user.sub,
             action="parcel.boundary_grade.update",
             object_type="parcel",
             object_id=parcel_id,
+            extra={
+                "survey_reference": body.survey_reference,
+                "from_grade": old_grade,
+                "to_grade": body.grade,
+            },
         )
         return _parcel_to_feature(parcel)
 
@@ -416,7 +431,7 @@ def create_app(store: Store | None = None) -> FastAPI:
         alert = {
             "id": alert_id,
             "parcel_id": body.parcel_id,
-            "tier": body.tier,
+            "tier": body.tier.value,
             "severity_score": score,
             "area_m2": body.area_m2,
             "status": "OPEN",

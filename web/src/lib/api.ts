@@ -132,10 +132,29 @@ function authHeaders(tokenOverride?: string): HeadersInit | undefined {
   return token ? { Authorization: `Bearer ${token}` } : undefined;
 }
 
+/**
+ * Thrown by fetchJson for any non-ok HTTP response, carrying the numeric
+ * status so callers can distinguish a genuine 404 (record doesn't exist)
+ * from a 500/other server error (retryable — should surface as an error
+ * boundary, not a "not found" page).
+ */
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 async function fetchJson<T>(url: string, token?: string): Promise<T> {
   const res = await fetch(url, { headers: authHeaders(token) });
   if (!res.ok) {
-    throw new Error(`Request failed: ${res.status} ${res.statusText} (${url})`);
+    throw new ApiError(
+      `Request failed: ${res.status} ${res.statusText} (${url})`,
+      res.status
+    );
   }
   return (await res.json()) as T;
 }
@@ -179,8 +198,9 @@ export async function getParcel(
       token
     );
     return featureToParcel(feature);
-  } catch {
-    return undefined;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return undefined;
+    throw err;
   }
 }
 
@@ -231,8 +251,9 @@ export async function getParcelContext(
       `${base}/parcels/${id}/context`,
       token
     );
-  } catch {
-    return undefined;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return undefined;
+    throw err;
   }
 }
 
@@ -278,8 +299,9 @@ export async function getCase(
   try {
     const raw = await fetchJson<Case>(`${base}/cases/${id}`, token);
     return normalizeCase(raw);
-  } catch {
-    return undefined;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return undefined;
+    throw err;
   }
 }
 
@@ -408,35 +430,43 @@ async function tagRequest(
     };
   }
 
-  const res = await fetch(url, {
-    method,
-    headers: {
-      ...(body ? { "Content-Type": "application/json" } : {}),
-      ...authHeaders(token),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-
-  if (res.ok) {
-    try {
-      const feature = (await res.json()) as ParcelFeature;
-      return { ok: true, status: res.status, tags: feature.properties.tags ?? [] };
-    } catch {
-      return { ok: true, status: res.status };
-    }
-  }
-
-  let detail: string = res.statusText;
   try {
-    const errBody = (await res.json()) as { detail?: string };
-    if (typeof errBody?.detail === "string") {
-      detail = errBody.detail;
-    }
-  } catch {
-    // fall back to statusText
-  }
+    const res = await fetch(url, {
+      method,
+      headers: {
+        ...(body ? { "Content-Type": "application/json" } : {}),
+        ...authHeaders(token),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
 
-  return { ok: false, status: res.status, detail };
+    if (res.ok) {
+      try {
+        const feature = (await res.json()) as ParcelFeature;
+        return { ok: true, status: res.status, tags: feature.properties.tags ?? [] };
+      } catch {
+        return { ok: true, status: res.status };
+      }
+    }
+
+    let detail: string = res.statusText;
+    try {
+      const errBody = (await res.json()) as { detail?: string };
+      if (typeof errBody?.detail === "string") {
+        detail = errBody.detail;
+      }
+    } catch {
+      // fall back to statusText
+    }
+
+    return { ok: false, status: res.status, detail };
+  } catch {
+    return {
+      ok: false,
+      status: 0,
+      detail: "Tag service could not be reached. Try again.",
+    };
+  }
 }
 
 export async function addParcelTag(

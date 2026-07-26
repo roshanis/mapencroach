@@ -18,14 +18,34 @@ export function readCookie(name: string): string | undefined {
   return decodeURIComponent(match.slice(prefix.length));
 }
 
+/**
+ * Builds a `document.cookie`-assignable string. Appends `; Secure` only when
+ * running in a browser (`typeof window !== "undefined"`, SSR-safe) that is
+ * currently served over https — an unconditional `Secure` attribute would
+ * silently drop the cookie in plain-http local dev (e.g. Safari).
+ *
+ * `value === undefined` builds the "clear" form (empty value, `max-age=0`
+ * is expected to be passed by the caller).
+ */
+export function buildCookieString(
+  name: string,
+  value: string | undefined,
+  maxAge: number
+): string {
+  const secure =
+    typeof window !== "undefined" && window.location.protocol === "https:"
+      ? "; Secure"
+      : "";
+  const encoded = value !== undefined ? encodeURIComponent(value) : "";
+  return `${name}=${encoded}; path=/; max-age=${maxAge}; SameSite=Lax${secure}`;
+}
+
 export function setCookie(name: string, value: string) {
   if (typeof document === "undefined") return;
-  document.cookie = `${name}=${encodeURIComponent(
-    value
-  )}; path=/; max-age=${COOKIE_MAX_AGE}; SameSite=Lax`;
+  document.cookie = buildCookieString(name, value, COOKIE_MAX_AGE);
 }
 
 export function clearCookie(name: string) {
   if (typeof document === "undefined") return;
-  document.cookie = `${name}=; path=/; max-age=0; SameSite=Lax`;
+  document.cookie = buildCookieString(name, undefined, 0);
 }

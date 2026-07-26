@@ -12,11 +12,12 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
+from conftest import TEST_JWT_SECRET
 from mapencroach.api.app import create_app
 from mapencroach.api.auth import Role, create_token
 from mapencroach.api.store import Store
 
-SECRET = "dev-secret-do-not-deploy"  # noqa: S105 - test fixture default, matches auth.py default
+SECRET = TEST_JWT_SECRET
 
 
 def _auth_headers(store: Store) -> dict[str, str]:

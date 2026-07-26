@@ -25,7 +25,11 @@ export function TagEditor({ parcelId, initialTags }: TagEditorProps) {
         setTags(result.tags ?? tags);
         setInput("");
       } else {
-        setError(`Refused (HTTP ${result.status}): ${result.detail}`);
+        setError(
+          result.status === 0
+            ? result.detail ?? "Tag service could not be reached. Try again."
+            : `Refused (HTTP ${result.status}): ${result.detail}`
+        );
       }
     } finally {
       setSubmitting(false);
@@ -40,7 +44,11 @@ export function TagEditor({ parcelId, initialTags }: TagEditorProps) {
       if (result.ok) {
         setTags(result.tags ?? tags);
       } else {
-        setError(`Refused (HTTP ${result.status}): ${result.detail}`);
+        setError(
+          result.status === 0
+            ? result.detail ?? "Tag service could not be reached. Try again."
+            : `Refused (HTTP ${result.status}): ${result.detail}`
+        );
       }
     } finally {
       setSubmitting(false);

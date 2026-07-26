@@ -10,6 +10,7 @@ bytes) so a scene identifier always resolves to exactly one payload.
 """
 
 import hashlib
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -57,6 +58,7 @@ class SceneRegistry:
 
     _by_id: dict[str, SceneRecord] = field(default_factory=dict)
     _by_hash: dict[str, SceneRecord] = field(default_factory=dict)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def register(
         self,
@@ -72,24 +74,25 @@ class SceneRegistry:
     ) -> SceneRecord:
         sha256 = hashlib.sha256(data).hexdigest()
 
-        if scene_id in self._by_id or sha256 in self._by_hash:
-            raise DuplicateScene(
-                f"scene already registered (scene_id={scene_id!r}, sha256={sha256!r})"
-            )
+        with self._lock:
+            if scene_id in self._by_id or sha256 in self._by_hash:
+                raise DuplicateScene(
+                    f"scene already registered (scene_id={scene_id!r}, sha256={sha256!r})"
+                )
 
-        record = SceneRecord(
-            scene_id=scene_id,
-            sha256=sha256,
-            captured_at=captured_at,
-            sensor=sensor,
-            resolution_m=resolution_m,
-            cloud_pct=cloud_pct,
-            source=source,
-            stac_item=_build_stac_item(scene_id, captured_at, cloud_pct, resolution_m, href),
-        )
-        self._by_id[scene_id] = record
-        self._by_hash[sha256] = record
-        return record
+            record = SceneRecord(
+                scene_id=scene_id,
+                sha256=sha256,
+                captured_at=captured_at,
+                sensor=sensor,
+                resolution_m=resolution_m,
+                cloud_pct=cloud_pct,
+                source=source,
+                stac_item=_build_stac_item(scene_id, captured_at, cloud_pct, resolution_m, href),
+            )
+            self._by_id[scene_id] = record
+            self._by_hash[sha256] = record
+            return record
 
     def get(self, scene_id: str) -> SceneRecord:
         return self._by_id[scene_id]

@@ -3,12 +3,13 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
+from conftest import TEST_JWT_SECRET
 from mapencroach.api.app import create_app
 from mapencroach.api.auth import Role, create_token
 from mapencroach.api.store import Store
 from mapencroach.audit.chain import verify_chain
 
-SECRET = "dev-secret-do-not-deploy"  # noqa: S105 - test fixture default, matches auth.py default
+SECRET = TEST_JWT_SECRET
 
 
 def token_for(sub: str, role: Role, jurisdiction_id: str, secret: str = SECRET) -> str:
@@ -117,6 +118,32 @@ class TestAuth:
         bad = pyjwt.encode(payload, SECRET, algorithm="HS256")
         resp = client.get("/parcels", headers=auth_headers(bad))
         assert resp.status_code == 401
+
+
+class TestSecretGuard:
+    """create_app must fail closed outside demo mode when the JWT secret
+    is still the well-known development default -- otherwise anyone who
+    has read the public repo can mint a valid data_admin token."""
+
+    def test_raises_when_secret_unset_and_not_demo(self, store: Store, monkeypatch):
+        monkeypatch.delenv("MAPENCROACH_JWT_SECRET", raising=False)
+        monkeypatch.delenv("MAPENCROACH_DEMO", raising=False)
+        with pytest.raises(RuntimeError, match="MAPENCROACH_JWT_SECRET"):
+            create_app(store)
+
+    def test_does_not_raise_in_demo_mode_with_default_secret(
+        self, store: Store, monkeypatch
+    ):
+        monkeypatch.delenv("MAPENCROACH_JWT_SECRET", raising=False)
+        monkeypatch.setenv("MAPENCROACH_DEMO", "1")
+        create_app(store)  # must not raise
+
+    def test_does_not_raise_with_explicit_secret_outside_demo(
+        self, store: Store, monkeypatch
+    ):
+        monkeypatch.setenv("MAPENCROACH_JWT_SECRET", "a-real-production-secret")  # noqa: S105
+        monkeypatch.delenv("MAPENCROACH_DEMO", raising=False)
+        create_app(store)  # must not raise
 
 
 class TestParcelsScoping:
@@ -304,6 +331,7 @@ class TestBoundaryGradePatch:
         self, client: TestClient, state_token: str, store: Store
     ):
         parcel_id = next(iter(store.parcels))
+        grade_before = store.parcels[parcel_id]["boundary_grade"]
         before = len(store.audit_chain)
         resp = client.patch(
             f"/parcels/{parcel_id}/boundary-grade",
@@ -315,6 +343,15 @@ class TestBoundaryGradePatch:
         entry = store.audit_chain[-1]
         assert entry.payload["object_id"] == parcel_id
         assert entry.payload["actor"] == "state-user"
+        # The DGPS survey reference justifying the grade change must not be
+        # dropped on the floor -- it's the legally significant part.
+        assert entry.payload["survey_reference"] == "SR-2026-005"
+        assert entry.payload["from_grade"] == grade_before
+        assert entry.payload["to_grade"] == "C"
+        # The audit payload must cover "when", not just "who"/"what".
+        assert "at" in entry.payload
+        datetime.fromisoformat(entry.payload["at"])
+        assert verify_chain(store.audit_chain).ok
 
 
 class TestAlerts:
@@ -435,6 +472,65 @@ class TestAlerts:
             },
         )
         assert resp.status_code == 404
+
+
+class TestAlertTierValidation:
+    """tier is a closed enum (AlertTier), not an arbitrary string -- POST
+    with an unknown tier must 422 rather than silently persisting data no
+    consumer understands."""
+
+    def test_invalid_tier_is_422(self, client: TestClient, state_token: str, store: Store):
+        parcel_id = next(iter(store.parcels))
+        resp = client.post(
+            "/alerts",
+            headers=auth_headers(state_token),
+            json={
+                "parcel_id": parcel_id,
+                "tier": "SUPER_URGENT",
+                "area_m2": 1000,
+                "detected_at": datetime.now(UTC).isoformat(),
+            },
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.parametrize("tier", ["GREEN", "AMBER", "RED", "LEGACY"])
+    def test_valid_tiers_round_trip_and_filter(
+        self, client: TestClient, state_token: str, store: Store, tier: str
+    ):
+        parcel_id = next(iter(store.parcels))
+        resp = client.post(
+            "/alerts",
+            headers=auth_headers(state_token),
+            json={
+                "parcel_id": parcel_id,
+                "tier": tier,
+                "area_m2": 1000,
+                "detected_at": datetime.now(UTC).isoformat(),
+            },
+        )
+        assert resp.status_code == 201
+        created = resp.json()
+        assert created["tier"] == tier
+
+        listed = client.get(
+            "/alerts", headers=auth_headers(state_token), params={"tier": tier}
+        )
+        assert listed.status_code == 200
+        assert any(a["id"] == created["id"] for a in listed.json())
+
+    def test_negative_area_is_422(self, client: TestClient, state_token: str, store: Store):
+        parcel_id = next(iter(store.parcels))
+        resp = client.post(
+            "/alerts",
+            headers=auth_headers(state_token),
+            json={
+                "parcel_id": parcel_id,
+                "tier": "RED",
+                "area_m2": -5000,
+                "detected_at": datetime.now(UTC).isoformat(),
+            },
+        )
+        assert resp.status_code == 422
 
 
 class TestCases:

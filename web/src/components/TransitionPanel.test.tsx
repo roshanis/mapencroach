@@ -137,4 +137,86 @@ describe("TransitionPanel", () => {
       "Transition service could not be reached. Try again."
     );
   });
+
+  it("resyncs selection when allowedTransitions changes after router.refresh(), without clearing the success banner", async () => {
+    vi.mocked(transitionCase).mockResolvedValue({ ok: true, status: 201 });
+
+    const { rerender } = render(
+      <TransitionPanel
+        caseId="CASE-1"
+        allowedTransitions={["DISMISSED_FALSE_POSITIVE"]}
+        requiredArtifacts={{ DISMISSED_FALSE_POSITIVE: ["dismissal_reason"] }}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText("Dismissal reason"), {
+      target: { value: "Verified duplicate detection" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Record dismissal" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("transition-result")).toHaveTextContent(
+        "Transition recorded — the case advanced."
+      );
+    });
+
+    // Simulate the server re-render that router.refresh() triggers: the same
+    // component instance now receives new allowed transitions for the case's
+    // new state.
+    rerender(
+      <TransitionPanel
+        caseId="CASE-1"
+        allowedTransitions={["RESPONSE_WINDOW"]}
+        requiredArtifacts={{}}
+      />
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Open response window" })
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByLabelText("Dismissal reason")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("No evidence reference is required for this step.")
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Record response window" })
+    ).toBeEnabled();
+    // The success banner from the just-completed transition must survive the
+    // resync -- only selection/evidence state resets, not the result.
+    expect(screen.getByTestId("transition-result")).toHaveTextContent(
+      "Transition recorded — the case advanced."
+    );
+  });
+
+  it("does not reset a user's selection when allowedTransitions is replaced by a new array with the same contents", () => {
+    const { rerender } = render(
+      <TransitionPanel
+        caseId="CASE-1"
+        allowedTransitions={["RESPONSE_WINDOW", "SURVEY_REQUESTED"]}
+        requiredArtifacts={{}}
+      />
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Request boundary survey" })
+    );
+    expect(
+      screen.getByRole("button", { name: "Request boundary survey" })
+    ).toHaveAttribute("aria-pressed", "true");
+
+    // A brand-new array object with identical contents (e.g. a fresh render
+    // from the server that didn't actually change the case's legal state)
+    // must not clobber the user's in-progress, non-default selection.
+    rerender(
+      <TransitionPanel
+        caseId="CASE-1"
+        allowedTransitions={["RESPONSE_WINDOW", "SURVEY_REQUESTED"]}
+        requiredArtifacts={{}}
+      />
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Request boundary survey" })
+    ).toHaveAttribute("aria-pressed", "true");
+  });
 });
