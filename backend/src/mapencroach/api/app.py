@@ -5,7 +5,15 @@ before returning, so the chain is a complete record of who changed what
 and when. All read endpoints are jurisdiction-scoped: a caller only ever
 sees rows whose jurisdiction_id lies within JurisdictionTree.scope_ids of
 their own jurisdiction_id. Parcels outside scope 404 rather than 403 so
-we don't leak that they exist.
+we don't leak that they exist. List endpoints (/parcels, /alerts, /cases)
+are paginated with `limit`/`offset` query params and report the unpaginated,
+scope-filtered total via the X-Total-Count response header; their JSON body
+shape is unchanged (a plain array, or for /parcels a GeoJSON
+FeatureCollection) so existing clients don't need an envelope migration.
+Case transitions into a state the domain reserves for legal authority
+(hearing held, order issued, or the case ending) require Role.LEGAL_OFFICER
+or Role.SYSTEM_ADMIN; ordinary triage/survey/notice transitions stay with
+Role.CASE_OFFICER.
 """
 
 import os
@@ -15,7 +23,7 @@ from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from mapencroach.api.auth import (
     Role,
@@ -23,10 +31,10 @@ from mapencroach.api.auth import (
     create_token,
     current_user,
     require_roles,
-    signing_secret,
+    validate_secret_config,
 )
 from mapencroach.api.store import JURISDICTION_NAMES, Store
-from mapencroach.domain.alerts import severity_score
+from mapencroach.domain.alerts import AlertTier, severity_score
 from mapencroach.domain.case_engine import (
     Case,
     CaseState,
@@ -39,8 +47,35 @@ from mapencroach.domain.case_engine import (
 
 _VALID_GRADES = {"A", "B", "C"}
 
+# Demo persona tokens are short-lived: long enough to run a demo session,
+# short enough that a leaked one stops mattering quickly.
+_DEMO_TOKEN_HOURS = 2
+
 # Lowercase slug, hyphen-separated, 1-39 chars, no leading hyphen.
 _TAG_PATTERN = re.compile(r"[a-z0-9][a-z0-9-]{0,38}")
+
+# List endpoint pagination: generous enough for the demo dataset, capped so a
+# caller can't force an unbounded response by omitting `limit`.
+_DEFAULT_PAGE_SIZE = 200
+_MAX_PAGE_SIZE = 1000
+LimitQuery = Annotated[int, Query(ge=1, le=_MAX_PAGE_SIZE)]
+OffsetQuery = Annotated[int, Query(ge=0)]
+
+# Case states the domain reserves for legal authority (a hearing actually
+# held, an order issued, or the case ending) rather than routine
+# triage/survey/notice administration. Scheduling a hearing, requesting a
+# survey, or serving notice stays with the case officer; only these
+# outcomes require Role.LEGAL_OFFICER (or Role.SYSTEM_ADMIN).
+_LEGAL_AUTHORITY_STATES: frozenset[CaseState] = frozenset(
+    {
+        CaseState.HEARING_HELD,
+        CaseState.ORDER_ISSUED,
+        CaseState.CLOSED,
+        CaseState.DISMISSED_FALSE_POSITIVE,
+        CaseState.LEGACY_REFERRED,
+        CaseState.STAYED_BY_COURT,
+    }
+)
 
 # Demo identities for the persona switcher. Only served when
 # MAPENCROACH_DEMO=1, so production never exposes a token-minting surface.
@@ -134,8 +169,8 @@ class BoundaryGradePatch(BaseModel):
 
 class AlertCreate(BaseModel):
     parcel_id: str
-    tier: str
-    area_m2: float
+    tier: AlertTier
+    area_m2: float = Field(ge=0, allow_inf_nan=False)
     detected_at: datetime
 
 
@@ -193,13 +228,22 @@ def create_app(store: Store | None = None) -> FastAPI:
     demo data when MAPENCROACH_DEMO=1, otherwise empty. `uvicorn
     "mapencroach.api.app:create_app" --factory` picks this up with no
     extra wiring.
+
+    Fails closed at startup (raises RuntimeError) rather than booting an
+    insecure server: outside demo mode a real MAPENCROACH_JWT_SECRET is
+    required, and MAPENCROACH_CORS_ORIGINS may not be "*" while credentialed
+    requests are allowed. See `mapencroach.api.auth.validate_secret_config`
+    for the secret rules.
     """
     demo_mode = os.environ.get("MAPENCROACH_DEMO") == "1"
     if store is None:
         store = Store.seed_demo() if demo_mode else Store()
 
+    jwt_secret = validate_secret_config(demo_mode)
+
     app = FastAPI(title="mapencroach API")
     app.state.store = store
+    app.state.jwt_secret = jwt_secret
 
     cors_origins = [
         origin.strip()
@@ -208,12 +252,24 @@ def create_app(store: Store | None = None) -> FastAPI:
         ).split(",")
         if origin.strip()
     ]
+    if "*" in cors_origins:
+        # allow_credentials=True + a wildcard origin lets any site ride a
+        # logged-in browser's cookies/auth header at every endpoint - the
+        # combination CORSMiddleware itself refuses to honor, so failing
+        # fast here is more honest than shipping a CORS policy that
+        # silently never matches.
+        raise RuntimeError(
+            "MAPENCROACH_CORS_ORIGINS may not include '*': this API allows "
+            "credentialed requests, and a wildcard origin combined with "
+            "credentials turns every authenticated endpoint into a CSRF "
+            "surface. List explicit origins instead."
+        )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE"],
+        allow_headers=["Authorization", "Content-Type"],
     )
 
     def get_store() -> Store:
@@ -222,19 +278,29 @@ def create_app(store: Store | None = None) -> FastAPI:
     StoreDep = Annotated[Store, Depends(get_store)]
     CurrentUser = Annotated[User, Depends(current_user)]
 
+    @app.get("/health")
+    def health() -> dict[str, str]:
+        """Liveness/readiness probe for container orchestration. Unauthenticated
+        by design - it reports process health, not application data."""
+        return {"status": "ok"}
+
     # ------------------------------------------------------------------
     # Parcels
     # ------------------------------------------------------------------
 
     @app.get("/parcels")
-    def list_parcels(store: StoreDep, user: CurrentUser) -> dict[str, Any]:
+    def list_parcels(
+        store: StoreDep,
+        user: CurrentUser,
+        response: Response,
+        limit: LimitQuery = _DEFAULT_PAGE_SIZE,
+        offset: OffsetQuery = 0,
+    ) -> dict[str, Any]:
         scope = _user_scope(store, user)
-        features = [
-            _parcel_to_feature(p)
-            for p in store.parcels.values()
-            if p["jurisdiction_id"] in scope
-        ]
-        return {"type": "FeatureCollection", "features": features}
+        matched = [p for p in store.parcels.values() if p["jurisdiction_id"] in scope]
+        response.headers["X-Total-Count"] = str(len(matched))
+        page = matched[offset : offset + limit]
+        return {"type": "FeatureCollection", "features": [_parcel_to_feature(p) for p in page]}
 
     @app.get("/parcels/{parcel_id}")
     def get_parcel(parcel_id: str, store: StoreDep, user: CurrentUser) -> dict[str, Any]:
@@ -272,13 +338,14 @@ def create_app(store: Store | None = None) -> FastAPI:
                 detail=f"invalid grade {body.grade!r}, must be one of {sorted(_VALID_GRADES)}",
             )
 
-        parcel["boundary_grade"] = body.grade
-        store.record_audit(
-            actor=user.sub,
-            action="parcel.boundary_grade.update",
-            object_type="parcel",
-            object_id=parcel_id,
-        )
+        with store.lock:
+            parcel["boundary_grade"] = body.grade
+            store.record_audit(
+                actor=user.sub,
+                action="parcel.boundary_grade.update",
+                object_type="parcel",
+                object_id=parcel_id,
+            )
         return _parcel_to_feature(parcel)
 
     @app.post("/parcels/{parcel_id}/tags", status_code=status.HTTP_201_CREATED)
@@ -302,18 +369,19 @@ def create_app(store: Store | None = None) -> FastAPI:
                 "starting with a letter or digit",
             )
 
-        tags: list[str] = parcel.setdefault("tags", [])
-        if tag in tags:
-            response.status_code = status.HTTP_200_OK
-            return _parcel_to_feature(parcel)
+        with store.lock:
+            tags: list[str] = parcel.setdefault("tags", [])
+            if tag in tags:
+                response.status_code = status.HTTP_200_OK
+                return _parcel_to_feature(parcel)
 
-        tags.append(tag)
-        store.record_audit(
-            actor=user.sub,
-            action="parcel.tag.add",
-            object_type="parcel",
-            object_id=f"{parcel_id}:{tag}",
-        )
+            tags.append(tag)
+            store.record_audit(
+                actor=user.sub,
+                action="parcel.tag.add",
+                object_type="parcel",
+                object_id=f"{parcel_id}:{tag}",
+            )
         return _parcel_to_feature(parcel)
 
     @app.delete("/parcels/{parcel_id}/tags/{tag}")
@@ -329,17 +397,20 @@ def create_app(store: Store | None = None) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="parcel not found")
 
         normalized = tag.strip().lower()
-        tags: list[str] = parcel.setdefault("tags", [])
-        if normalized not in tags:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="tag not found")
+        with store.lock:
+            tags: list[str] = parcel.setdefault("tags", [])
+            if normalized not in tags:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="tag not found"
+                )
 
-        tags.remove(normalized)
-        store.record_audit(
-            actor=user.sub,
-            action="parcel.tag.remove",
-            object_type="parcel",
-            object_id=f"{parcel_id}:{normalized}",
-        )
+            tags.remove(normalized)
+            store.record_audit(
+                actor=user.sub,
+                action="parcel.tag.remove",
+                object_type="parcel",
+                object_id=f"{parcel_id}:{normalized}",
+            )
         return _parcel_to_feature(parcel)
 
     # ------------------------------------------------------------------
@@ -352,7 +423,15 @@ def create_app(store: Store | None = None) -> FastAPI:
         def list_personas(store: StoreDep) -> list[dict[str, Any]]:
             return [_enrich_persona(p, store) for p in _DEMO_PERSONAS]
 
-        @app.post("/demo/login")
+        @app.post(
+            "/demo/login",
+            description=(
+                "DEMO ONLY - never exposed outside MAPENCROACH_DEMO=1. Mints a "
+                f"working, {_DEMO_TOKEN_HOURS}-hour bearer token for the chosen "
+                "persona with no credentials whatsoever; this is the product "
+                "demo's persona switcher, not an authentication flow."
+            ),
+        )
         def demo_login(body: PersonaLogin, store: StoreDep) -> dict[str, Any]:
             persona = next(
                 (p for p in _DEMO_PERSONAS if p["id"] == body.persona_id), None
@@ -365,13 +444,13 @@ def create_app(store: Store | None = None) -> FastAPI:
                 sub=persona["id"],
                 role=Role(persona["role"]),
                 jurisdiction_id=persona["jurisdiction_id"],
-                secret=signing_secret(),
-                expires_at=datetime.now(UTC) + timedelta(hours=8),
+                secret=app.state.jwt_secret,
+                expires_at=datetime.now(UTC) + timedelta(hours=_DEMO_TOKEN_HOURS),
             )
             return {
                 "token": token,
                 "persona": _enrich_persona(persona, store),
-                "expires_in_hours": 8,
+                "expires_in_hours": _DEMO_TOKEN_HOURS,
             }
 
     # ------------------------------------------------------------------
@@ -382,11 +461,14 @@ def create_app(store: Store | None = None) -> FastAPI:
     def list_alerts(
         store: StoreDep,
         user: CurrentUser,
+        response: Response,
         tier: str | None = Query(default=None),
         status_filter: str | None = Query(default=None, alias="status"),
+        limit: LimitQuery = _DEFAULT_PAGE_SIZE,
+        offset: OffsetQuery = 0,
     ) -> list[dict[str, Any]]:
         scope = _user_scope(store, user)
-        results = []
+        matched = []
         for alert in store.alerts.values():
             parcel = store.parcels.get(alert["parcel_id"])
             if parcel is None or parcel["jurisdiction_id"] not in scope:
@@ -395,8 +477,9 @@ def create_app(store: Store | None = None) -> FastAPI:
                 continue
             if status_filter is not None and alert["status"] != status_filter:
                 continue
-            results.append(dict(alert))
-        return results
+            matched.append(dict(alert))
+        response.headers["X-Total-Count"] = str(len(matched))
+        return matched[offset : offset + limit]
 
     @app.post("/alerts", status_code=status.HTTP_201_CREATED)
     def create_alert(
@@ -416,16 +499,17 @@ def create_app(store: Store | None = None) -> FastAPI:
         alert = {
             "id": alert_id,
             "parcel_id": body.parcel_id,
-            "tier": body.tier,
+            "tier": body.tier.value,
             "severity_score": score,
             "area_m2": body.area_m2,
             "status": "OPEN",
             "detected_at": body.detected_at.isoformat(),
         }
-        store.alerts[alert_id] = alert
-        store.record_audit(
-            actor=user.sub, action="alert.create", object_type="alert", object_id=alert_id
-        )
+        with store.lock:
+            store.alerts[alert_id] = alert
+            store.record_audit(
+                actor=user.sub, action="alert.create", object_type="alert", object_id=alert_id
+            )
         return alert
 
     # ------------------------------------------------------------------
@@ -433,14 +517,20 @@ def create_app(store: Store | None = None) -> FastAPI:
     # ------------------------------------------------------------------
 
     @app.get("/cases")
-    def list_cases(store: StoreDep, user: CurrentUser) -> list[dict[str, Any]]:
+    def list_cases(
+        store: StoreDep,
+        user: CurrentUser,
+        response: Response,
+        limit: LimitQuery = _DEFAULT_PAGE_SIZE,
+        offset: OffsetQuery = 0,
+    ) -> list[dict[str, Any]]:
         scope = _user_scope(store, user)
-        results = []
+        matched = []
         for record in store.cases.values():
             if record.jurisdiction_id not in scope:
                 continue
             events = record.case.events
-            results.append(
+            matched.append(
                 {
                     "id": record.case.case_id,
                     "alert_id": record.alert_id,
@@ -449,7 +539,8 @@ def create_app(store: Store | None = None) -> FastAPI:
                     "state_since": events[-1].occurred_at.isoformat() if events else None,
                 }
             )
-        return results
+        response.headers["X-Total-Count"] = str(len(matched))
+        return matched[offset : offset + limit]
 
     @app.get("/cases/{case_id}")
     def get_case(case_id: str, store: StoreDep, user: CurrentUser) -> dict[str, Any]:
@@ -485,7 +576,10 @@ def create_app(store: Store | None = None) -> FastAPI:
         case_id: str,
         body: TransitionRequest,
         store: StoreDep,
-        user: Annotated[User, Depends(require_roles(Role.CASE_OFFICER))],
+        user: Annotated[
+            User,
+            Depends(require_roles(Role.CASE_OFFICER, Role.LEGAL_OFFICER, Role.SYSTEM_ADMIN)),
+        ],
     ) -> dict[str, Any]:
         record = store.cases.get(case_id)
         scope = _user_scope(store, user)
@@ -500,26 +594,39 @@ def create_app(store: Store | None = None) -> FastAPI:
                 detail=f"unknown case state {body.to_state!r}",
             ) from exc
 
-        try:
-            event = transition(
-                record.case,
-                to_state,
-                actor=user.sub,
-                occurred_at=datetime.now(UTC),
-                artifacts=body.artifacts,
-                note=body.note,
-            )
-        except (InvalidTransition, MissingArtifact) as exc:
+        if to_state in _LEGAL_AUTHORITY_STATES and user.role not in (
+            Role.LEGAL_OFFICER,
+            Role.SYSTEM_ADMIN,
+        ):
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT, detail=str(exc)
-            ) from exc
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"transitioning a case to {to_state.value!r} requires legal "
+                    f"authority; role {user.role.value!r} is not permitted"
+                ),
+            )
 
-        store.record_audit(
-            actor=user.sub,
-            action="case.transition",
-            object_type="case",
-            object_id=case_id,
-        )
+        with store.lock:
+            try:
+                event = transition(
+                    record.case,
+                    to_state,
+                    actor=user.sub,
+                    occurred_at=datetime.now(UTC),
+                    artifacts=body.artifacts,
+                    note=body.note,
+                )
+            except (InvalidTransition, MissingArtifact) as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+                ) from exc
+
+            store.record_audit(
+                actor=user.sub,
+                action="case.transition",
+                object_type="case",
+                object_id=case_id,
+            )
 
         allowed, required = _transition_options(record.case)
         return {

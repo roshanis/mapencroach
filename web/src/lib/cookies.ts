@@ -18,14 +18,25 @@ export function readCookie(name: string): string | undefined {
   return decodeURIComponent(match.slice(prefix.length));
 }
 
+/**
+ * `; Secure` when the page itself is served over https — never on plain
+ * http, so localhost/http dev setups keep working. `mapencroach_token`
+ * carries a real bearer credential in live mode, so it must not be sendable
+ * over a plaintext connection once one exists.
+ */
+function secureAttribute(): string {
+  if (typeof window === "undefined") return "";
+  return window.location.protocol === "https:" ? "; Secure" : "";
+}
+
 export function setCookie(name: string, value: string) {
   if (typeof document === "undefined") return;
   document.cookie = `${name}=${encodeURIComponent(
     value
-  )}; path=/; max-age=${COOKIE_MAX_AGE}; SameSite=Lax`;
+  )}; path=/; max-age=${COOKIE_MAX_AGE}; SameSite=Lax${secureAttribute()}`;
 }
 
 export function clearCookie(name: string) {
   if (typeof document === "undefined") return;
-  document.cookie = `${name}=; path=/; max-age=0; SameSite=Lax`;
+  document.cookie = `${name}=; path=/; max-age=0; SameSite=Lax${secureAttribute()}`;
 }

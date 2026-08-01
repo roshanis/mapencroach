@@ -88,6 +88,49 @@ describe("TagEditor", () => {
     expect(removeParcelTag).toHaveBeenCalledWith("PCL-1001", "court-monitored");
   });
 
+  it("catches a thrown fetch rejection on add, resets the spinner, and surfaces an error", async () => {
+    vi.mocked(addParcelTag).mockRejectedValue(new TypeError("Failed to fetch"));
+
+    render(<TagEditor parcelId="PCL-1001" initialTags={[]} />);
+
+    const input = screen.getByTestId("tag-input") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "new-tag" } });
+    fireEvent.click(screen.getByTestId("tag-add"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("tag-error")).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("tag-error")).toHaveTextContent(
+      "Tag service could not be reached. The tag was not saved — try again."
+    );
+    // Spinner/disabled state must reset so the officer can retry.
+    expect(screen.getByTestId("tag-add")).not.toBeDisabled();
+    expect(screen.getByTestId("tag-input")).not.toBeDisabled();
+    // Input is preserved and no chip was optimistically added.
+    expect(screen.getByTestId("tag-input")).toHaveValue("new-tag");
+    expect(screen.queryAllByTestId("tag-chip")).toHaveLength(0);
+  });
+
+  it("catches a thrown fetch rejection on remove, resets the spinner, and surfaces an error", async () => {
+    vi.mocked(removeParcelTag).mockRejectedValue(new TypeError("Failed to fetch"));
+
+    render(<TagEditor parcelId="PCL-1001" initialTags={["court-monitored"]} />);
+
+    fireEvent.click(screen.getByTestId("tag-remove-court-monitored"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("tag-error")).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("tag-error")).toHaveTextContent(
+      "Tag service could not be reached. The tag was not removed — try again."
+    );
+    expect(screen.getByTestId("tag-remove-court-monitored")).not.toBeDisabled();
+    // The chip remains since the removal was never confirmed.
+    expect(screen.getAllByTestId("tag-chip")).toHaveLength(1);
+  });
+
   it("shows an error on remove failure", async () => {
     vi.mocked(removeParcelTag).mockResolvedValue({
       ok: false,

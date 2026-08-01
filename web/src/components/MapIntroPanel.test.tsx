@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MapIntroPanel } from "./MapIntroPanel";
 
@@ -112,5 +112,44 @@ describe("MapIntroPanel", () => {
     });
 
     expect(screen.queryByTestId("map-intro-panel")).not.toBeInTheDocument();
+  });
+
+  it("still renders the panel (defaulting to not-dismissed) when localStorage.getItem throws, e.g. Safari private mode", async () => {
+    const getItemSpy = vi
+      .spyOn(localStorage, "getItem")
+      .mockImplementation(() => {
+        throw new DOMException("Storage is blocked", "SecurityError");
+      });
+
+    render(<MapIntroPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("map-intro-panel")).toBeInTheDocument();
+    });
+
+    getItemSpy.mockRestore();
+  });
+
+  it("dismisses without crashing when localStorage.setItem throws", async () => {
+    const setItemSpy = vi
+      .spyOn(localStorage, "setItem")
+      .mockImplementation(() => {
+        throw new DOMException("Storage is blocked", "SecurityError");
+      });
+
+    render(<MapIntroPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("map-intro-panel")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("map-intro-dismiss"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("map-intro-reopen")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("map-intro-panel")).not.toBeInTheDocument();
+
+    setItemSpy.mockRestore();
   });
 });

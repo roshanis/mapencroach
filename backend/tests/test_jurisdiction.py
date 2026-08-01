@@ -56,9 +56,20 @@ class TestValidation:
         with pytest.raises(ValueError, match="root"):
             JurisdictionTree([("a", None), ("b", None)])
 
-    def test_missing_root_is_rejected(self):
-        with pytest.raises(ValueError, match="root"):
+    def test_dangling_parent_is_rejected(self):
+        # ("a", "ghost") has zero roots, but the more specific and more
+        # useful diagnosis is that "a" points at a parent that doesn't
+        # exist -- that's caught before the generic root-count check runs.
+        with pytest.raises(ValueError, match="unknown parent"):
             JurisdictionTree([("a", "ghost")])
+
+    def test_dangling_parent_with_a_valid_root_elsewhere_is_rejected(self):
+        # A single legitimate root exists (so the old code's only check --
+        # "is there exactly one root?" -- passed), but "village" points at
+        # a parent that was never declared, silently orphaning it (and
+        # anything scoped under it) from every caller's visibility scope.
+        with pytest.raises(ValueError, match="village.*ghost-typo"):
+            JurisdictionTree([("state", None), ("dist", "state"), ("village", "ghost-typo")])
 
     def test_duplicate_ids_are_rejected(self):
         with pytest.raises(ValueError, match="duplicate"):

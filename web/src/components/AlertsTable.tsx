@@ -2,13 +2,14 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { TierChip } from "./TierChip";
 import { ageFromNow, sortBySeverityDesc } from "@/lib/format";
 import {
   ALERT_STATUS_DESCRIPTIONS,
   SEVERITY_EXPLANATION,
 } from "@/lib/explanations";
+import { parseFilterParam } from "@/lib/searchParams";
 import type { Alert, AlertStatus, AlertTier } from "@/lib/types";
 
 export interface AlertsTableProps {
@@ -25,15 +26,14 @@ const STATUS_OPTIONS: (AlertStatus | "all")[] = [
 ];
 
 export function AlertsTable({ alerts }: AlertsTableProps) {
-  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [query, setQuery] = useState(searchParams.get("q") ?? "");
   const [tierFilter, setTierFilter] = useState<AlertTier | "all">(
-    (searchParams.get("tier") as AlertTier | null) ?? "all"
+    parseFilterParam(searchParams.get("tier"), TIER_OPTIONS)
   );
   const [statusFilter, setStatusFilter] = useState<AlertStatus | "all">(
-    (searchParams.get("status") as AlertStatus | null) ?? "all"
+    parseFilterParam(searchParams.get("status"), STATUS_OPTIONS)
   );
 
   function persistFilters(next: {
@@ -54,9 +54,15 @@ export function AlertsTable({ alerts }: AlertsTableProps) {
     else params.delete("status");
 
     const suffix = params.toString();
-    router.replace(`${pathname}${suffix ? `?${suffix}` : ""}`, {
-      scroll: false,
-    });
+    // Persist filters straight into the browser URL without going through
+    // next/navigation's router.replace: on a force-dynamic page that
+    // triggers a full RSC re-fetch of the page on every call, so typing in
+    // the search box re-fetched the whole list on every keystroke.
+    // history.replaceState updates the address bar (and back/forward state)
+    // with none of that — there is nothing here for the server to refetch.
+    if (typeof window !== "undefined") {
+      window.history.replaceState(null, "", `${pathname}${suffix ? `?${suffix}` : ""}`);
+    }
   }
 
   const filtered = useMemo(() => {

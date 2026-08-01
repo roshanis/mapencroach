@@ -57,12 +57,10 @@ describe("api client without NEXT_PUBLIC_API_URL", () => {
     expect(context?.sources[0].is_demo).toBe(true);
   });
 
-  it("falls back to fixture alerts and applies tier filter", async () => {
+  it("falls back to the full, unfiltered fixture alert list (tier/status filtering is AlertsTable's job, client-side)", async () => {
     delete process.env.NEXT_PUBLIC_API_URL;
-    const alerts = await getAlerts({ tier: "red" });
-    expect(alerts.length).toBeGreaterThan(0);
-    expect(alerts.every((a) => a.tier === "red")).toBe(true);
-    expect(alerts.length).toBeLessThan(FIXTURE_ALERTS.length);
+    const alerts = await getAlerts();
+    expect(alerts).toEqual(FIXTURE_ALERTS);
   });
 
   it("falls back to fixture cases", async () => {
@@ -209,6 +207,38 @@ describe("api client with NEXT_PUBLIC_API_URL set", () => {
     expect(result?.events[1].artifacts).toEqual(["triage_note_9001.pdf"]);
   });
 
+  it("drops non-string elements from array-shaped artifacts instead of passing them through unchecked", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+
+    const remoteCase = {
+      id: "CASE-REMOTE-2",
+      alert_id: "ALT-REMOTE-2",
+      parcel_id: "PCL-REMOTE-2",
+      state: "TRIAGED",
+      events: [
+        {
+          from_state: "NEW",
+          to_state: "TRIAGED",
+          actor: "Deputy Collector R. Sharma",
+          occurred_at: "2026-06-19T09:00:00Z",
+          artifacts: ["triage_note.pdf", null, 42, { bad: "shape" }, "second.pdf"],
+        },
+      ],
+    };
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => remoteCase,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await getCase("CASE-REMOTE-2");
+
+    expect(result?.events[0].artifacts).toEqual(["triage_note.pdf", "second.pdf"]);
+  });
+
   it("tolerates the /cases list shape, which omits events", async () => {
     process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
 
@@ -240,7 +270,7 @@ describe("api client with NEXT_PUBLIC_API_URL set", () => {
 
   it("posts a transition and returns ok:true with the auth header when a token is set", async () => {
     process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
-    process.env.NEXT_PUBLIC_API_TOKEN = "test-token-123";
+    document.cookie = "mapencroach_token=test-token-123; path=/";
 
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -276,6 +306,7 @@ describe("api client with NEXT_PUBLIC_API_URL set", () => {
       artifacts: {},
       note: "moving forward",
     });
+    document.cookie = "mapencroach_token=; path=/; max-age=0";
   });
 
   it("returns ok:false with the passed-through detail on a 409 refusal from the case engine", async () => {
@@ -345,30 +376,8 @@ describe("authHeaders token precedence", () => {
     document.cookie = "mapencroach_token=; path=/; max-age=0";
   });
 
-  it("prefers the cookie token over NEXT_PUBLIC_API_TOKEN when posting a transition", async () => {
+  it("uses a tokenOverride argument over the cookie token", async () => {
     process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
-    process.env.NEXT_PUBLIC_API_TOKEN = "env-token";
-    document.cookie = "mapencroach_token=cookie-tok; path=/";
-
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 201,
-      statusText: "Created",
-      json: async () => ({}),
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    await transitionCase("CASE-9001", "RESPONSE_WINDOW", {}, "note");
-
-    const [, init] = fetchMock.mock.calls[0];
-    expect(init.headers).toMatchObject({
-      Authorization: "Bearer cookie-tok",
-    });
-  });
-
-  it("uses a tokenOverride argument over both cookie and env token", async () => {
-    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
-    process.env.NEXT_PUBLIC_API_TOKEN = "env-token";
     document.cookie = "mapencroach_token=cookie-tok; path=/";
 
     const fetchMock = vi.fn().mockResolvedValue({
@@ -388,6 +397,153 @@ describe("authHeaders token precedence", () => {
     expect(init.headers).toMatchObject({
       Authorization: "Bearer override-tok",
     });
+  });
+
+  it("falls back to the cookie token when no override is passed", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    document.cookie = "mapencroach_token=cookie-tok; path=/";
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      statusText: "Created",
+      json: async () => ({}),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await transitionCase("CASE-9001", "RESPONSE_WINDOW", {}, "note");
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers).toMatchObject({
+      Authorization: "Bearer cookie-tok",
+    });
+  });
+
+  it("never sends NEXT_PUBLIC_API_TOKEN as a Bearer fallback, even when set and no cookie/override is present", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    process.env.NEXT_PUBLIC_API_TOKEN = "insecure-client-token";
+    // No cookie set — the old code fell back to the env var here.
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({ type: "FeatureCollection", features: [] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getParcels();
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers).toBeUndefined();
+  });
+});
+
+describe("NEXT_PUBLIC_API_TOKEN insecure-fallback warning", () => {
+  it("warns once at module load when NEXT_PUBLIC_API_TOKEN is set", async () => {
+    vi.resetModules();
+    process.env.NEXT_PUBLIC_API_TOKEN = "insecure-client-token";
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await import("./api");
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("NEXT_PUBLIC_API_TOKEN is set but is ignored")
+    );
+    warnSpy.mockRestore();
+    vi.resetModules();
+  });
+
+  it("does not warn when NEXT_PUBLIC_API_TOKEN is unset", async () => {
+    vi.resetModules();
+    delete process.env.NEXT_PUBLIC_API_TOKEN;
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await import("./api");
+
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+    vi.resetModules();
+  });
+});
+
+describe("distinguishing a genuine 404 from other failures", () => {
+  it("getParcel returns undefined on a genuine 404", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+      json: async () => ({}),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getParcel("PCL-MISSING")).resolves.toBeUndefined();
+  });
+
+  it("getParcel propagates a 500 instead of reporting the parcel missing", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: "Internal Server Error",
+      json: async () => ({}),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getParcel("PCL-1001")).rejects.toMatchObject({ status: 500 });
+  });
+
+  it("getParcel propagates a network failure instead of reporting the parcel missing", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockRejectedValue(new Error("network down"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getParcel("PCL-1001")).rejects.toThrow("network down");
+  });
+
+  it("getCase returns undefined on a genuine 404 but propagates a 401", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      statusText: "Unauthorized",
+      json: async () => ({ detail: "token expired" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getCase("CASE-9001")).rejects.toMatchObject({ status: 401 });
+
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+      json: async () => ({}),
+    });
+    await expect(getCase("CASE-MISSING")).resolves.toBeUndefined();
+  });
+
+  it("getParcelContext returns undefined on a genuine 404 but propagates a 503", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      statusText: "Service Unavailable",
+      json: async () => ({}),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getParcelContext("PCL-1001")).rejects.toMatchObject({
+      status: 503,
+    });
+
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+      json: async () => ({}),
+    });
+    await expect(getParcelContext("PCL-MISSING")).resolves.toBeUndefined();
   });
 });
 
@@ -528,7 +684,7 @@ describe("parcel tag endpoints", () => {
 
   it("addParcelTag success returns tags parsed from the returned Feature", async () => {
     process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
-    process.env.NEXT_PUBLIC_API_TOKEN = "test-token-123";
+    document.cookie = "mapencroach_token=test-token-123; path=/";
 
     const feature = {
       type: "Feature",
@@ -569,6 +725,7 @@ describe("parcel tag endpoints", () => {
       status: 201,
       tags: ["court-monitored", "flagged"],
     });
+    document.cookie = "mapencroach_token=; path=/; max-age=0";
   });
 
   it("addParcelTag passes through the 403 detail for a wrong-role persona", async () => {

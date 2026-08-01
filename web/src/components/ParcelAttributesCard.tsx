@@ -1,22 +1,10 @@
 import { BoundaryGradeBadge } from "./BoundaryGradeBadge";
-import type { Parcel } from "@/lib/types";
+import { LAND_CATEGORY_LABELS, type Parcel } from "@/lib/types";
 import { jurisdictionLabel } from "@/lib/format";
 
 export interface ParcelAttributesCardProps {
   parcel: Parcel;
 }
-
-const LAND_CATEGORY_LABELS: Record<Parcel["land_category"], string> = {
-  waterbody: "Waterbody",
-  forest: "Forest",
-  revenue: "Revenue Land",
-  municipal: "Municipal",
-  agricultural: "Agricultural",
-  grazing: "Grazing (Gauchar)",
-  irrigation: "Irrigation",
-  housing: "Housing",
-  industrial: "Industrial",
-};
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (

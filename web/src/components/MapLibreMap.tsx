@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type * as MapLibreGL from "maplibre-gl";
 import { LAND_CATEGORY_COLORS } from "@/lib/types";
-import type { AlertTier } from "@/lib/types";
+import { createAlertMarkerElement, styleAlertMarker } from "./alertMarker";
 import { BasemapToggle, type BasemapMode } from "./BasemapToggle";
 import type { OperationalMapProps } from "./map-types";
 
@@ -16,21 +16,6 @@ function buildLandCategoryMatchExpression(
     ...Object.entries(LAND_CATEGORY_COLORS).flat(),
     fallback,
   ] as unknown as MapLibreGL.DataDrivenPropertyValueSpecification<string>;
-}
-
-const TIER_COLORS: Record<AlertTier, string> = {
-  green: "#1e8f4e",
-  amber: "#c98a12",
-  red: "#c4321f",
-  legacy: "#7b3fa0",
-};
-
-function styleAlertMarker(element: HTMLButtonElement, selected: boolean) {
-  element.dataset.selected = String(selected);
-  element.style.transform = selected ? "scale(1.45)" : "scale(1)";
-  element.style.boxShadow = selected
-    ? "0 0 0 4px rgba(255,255,255,0.9), 0 0 0 7px rgba(28,79,140,0.65)"
-    : "0 0 0 1px rgba(0,0,0,0.25)";
 }
 
 export type MapLibreMapProps = OperationalMapProps;
@@ -76,6 +61,27 @@ export default function MapLibreMap({
     });
   }, [selectedAlertId]);
 
+  // CONSTRAINT: `parcels`, `alerts`, `center`, and `zoom` are read once, at
+  // mount, by the effect below (empty dep array) — they are a snapshot, not
+  // a live binding. A parent that re-renders this component with new
+  // parcels/alerts/center/zoom after the initial mount will NOT see the map
+  // update; the GeoJSON source and Markers created here are never rebuilt.
+  // This is currently safe only because MapView mounts this component once
+  // data is already loaded and fully remounts it (fresh key) on retry — so
+  // in practice the values never change under a mounted instance today.
+  // `selectedAlertId` and `onAlertClick` are the only props that ARE live,
+  // via the ref pattern below.
+  //
+  // Before adding any feature that streams updated parcels/alerts/center/
+  // zoom into an already-mounted map, this effect needs real sync, not a
+  // fresh mount: parcels via
+  // `(map.getSource("parcels") as GeoJSONSource).setData(...)` (cheap —
+  // no need to remove/re-add the source or layers), alerts via reconciling
+  // the `markerElementsRef` Map (add new marker ids, remove stale ones,
+  // matching the selection-sync pattern already used for
+  // `selectedAlertId` above), and center/zoom via an explicit
+  // `map.jumpTo({ center, zoom })` call in their own effect. Do not
+  // silently assume props are live without doing this.
   useEffect(() => {
     let cancelled = false;
     let mapInstance: import("maplibre-gl").Map | null = null;
@@ -171,21 +177,10 @@ export default function MapLibreMap({
         for (const alert of alerts) {
           const parcel = parcels.find((p) => p.id === alert.parcel_id);
           if (!parcel) continue;
-          const el = document.createElement("button");
-          el.type = "button";
-          el.style.width = "14px";
-          el.style.height = "14px";
-          el.style.borderRadius = "50%";
-          el.style.border = "2px solid white";
-          el.style.boxShadow = "0 0 0 1px rgba(0,0,0,0.25)";
-          el.style.backgroundColor = TIER_COLORS[alert.tier];
-          el.setAttribute("data-testid", "alert-marker");
-          el.setAttribute("data-alert-id", alert.id);
-          el.setAttribute("aria-label", `Select alert ${alert.id}`);
-          el.style.cursor = "pointer";
-          el.style.padding = "0";
-          el.style.transition = "transform 150ms ease, box-shadow 150ms ease";
-          styleAlertMarker(el, alert.id === selectedAlertIdRef.current);
+          const el = createAlertMarkerElement(
+            alert,
+            alert.id === selectedAlertIdRef.current
+          );
           markerElements.set(alert.id, el);
           if (onAlertClick) {
             el.addEventListener("click", () => onAlertClickRef.current?.(alert.id));
@@ -214,6 +209,8 @@ export default function MapLibreMap({
       mapInstance?.remove();
       mapRef.current = null;
     };
+    // Intentionally mount-only — see the CONSTRAINT comment above this
+    // effect.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

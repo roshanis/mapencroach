@@ -63,4 +63,12 @@ describe("HistoricalImageryTimeline", () => {
       screen.getByText(/Historical image unavailable/i)
     ).toBeInTheDocument();
   });
+
+  it("exposes the year switcher to assistive tech as a labeled group, not a bare div", () => {
+    render(<HistoricalImageryTimeline parcel={FIXTURE_PARCELS[0]} />);
+
+    expect(
+      screen.getByRole("group", { name: "Historical imagery year" })
+    ).toBeInTheDocument();
+  });
 });

@@ -67,9 +67,32 @@ class TestGeographicLineageSchema:
 
     def test_lineage_records_split_merge_and_renumber_events(self):
         table = ParcelLineage.__table__
-        assert set(table.c.relation.type.enums) == {"split", "merge", "renumber"}
+        # Values must match domain.geography.LineageRelation exactly, so a
+        # LineageRelation.value can be persisted without violating this
+        # CHECK constraint.
+        assert set(table.c.relation.type.enums) == {
+            "split_from",
+            "merged_from",
+            "renumbered_from",
+        }
         assert {"predecessor_parcel_id", "successor_parcel_id", "effective_on"} <= set(
             table.c.keys()
+        )
+
+    def test_lineage_enum_matches_the_domain_layer(self):
+        from mapencroach.domain.geography import LineageRelation
+
+        table = ParcelLineage.__table__
+        assert set(table.c.relation.type.enums) == {r.value for r in LineageRelation}
+
+    def test_lineage_rejects_self_links_at_the_schema_level(self):
+        table = ParcelLineage.__table__
+        check_constraints = [
+            c for c in table.constraints if c.__class__.__name__ == "CheckConstraint"
+        ]
+        assert any(
+            "predecessor_parcel_id" in str(c.sqltext) and "successor_parcel_id" in str(c.sqltext)
+            for c in check_constraints
         )
 
     def test_context_tables_keep_source_and_context_only_classification(self):
@@ -95,3 +118,12 @@ class TestAuditLog:
     def test_audit_rows_record_actor_action_and_object(self):
         cols = set(AuditLog.__table__.c.keys())
         assert {"actor", "action", "object_type", "object_id", "created_at"} <= cols
+
+    def test_prev_hash_is_unique_so_the_chain_cannot_fork(self):
+        # Two rows claiming the same predecessor would fork the chain --
+        # both branches individually verify, so this must be caught at the
+        # DB level, not left to application-level discipline alone.
+        assert AuditLog.__table__.c.prev_hash.unique is True
+
+    def test_row_hash_is_unique(self):
+        assert AuditLog.__table__.c.row_hash.unique is True

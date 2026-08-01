@@ -4,6 +4,7 @@
 // Otherwise they fall back to the built-in fixtures so the UI can be demoed
 // with zero backend.
 
+import { readCookie } from "./cookies";
 import {
   FIXTURE_ALERTS,
   FIXTURE_CASES,
@@ -12,7 +13,6 @@ import {
 } from "./fixtures";
 import type {
   Alert,
-  AlertFilters,
   BBox,
   Case,
   CaseEvent,
@@ -24,6 +24,23 @@ import type {
 
 export const TOKEN_COOKIE = "mapencroach_token";
 export const PERSONA_COOKIE = "mapencroach_persona";
+
+// NEXT_PUBLIC_* env vars are inlined into the client bundle at build time —
+// anything read from one is visible to every visitor. NEXT_PUBLIC_API_TOKEN
+// used to be used as a Bearer fallback for both reads and writes, which meant
+// any visitor could extract it and act as an authenticated user (including
+// mutating case state and tags). It is no longer read for authentication;
+// warn once if it is still configured so a misconfigured deployment is
+// obvious instead of silently insecure.
+if (process.env.NEXT_PUBLIC_API_TOKEN) {
+  console.warn(
+    "NEXT_PUBLIC_API_TOKEN is set but is ignored: it would be bundled into " +
+      "client-side JavaScript and readable by any visitor. Remove it. " +
+      "Server-side requests should use the MAPENCROACH_API_TOKEN " +
+      "environment variable (see src/lib/server-api.ts); client-side " +
+      "requests authenticate with the mapencroach_token session cookie."
+  );
+}
 
 function getApiBase(): string | undefined {
   const base = process.env.NEXT_PUBLIC_API_URL;
@@ -86,11 +103,13 @@ function featureToParcel(feature: ParcelFeature): Parcel {
  * Backend event artifacts may arrive as a dict (e.g.
  * `{"notice_document": "notice-001.pdf"}`) or as a string[]. UI components
  * expect string[]; normalize dicts to `"key: value"` entries and pass
- * arrays through unchanged.
+ * arrays through, dropping any element that isn't actually a string (a
+ * malformed backend response used to be cast through unchecked, which could
+ * hand a non-string into a `key={artifact}` React list downstream).
  */
 function normalizeArtifacts(artifacts: unknown): string[] {
   if (Array.isArray(artifacts)) {
-    return artifacts as string[];
+    return artifacts.filter((item): item is string => typeof item === "string");
   }
   if (artifacts && typeof artifacts === "object") {
     return Object.entries(artifacts as Record<string, string>).map(
@@ -113,29 +132,38 @@ function normalizeCase(raw: Case): Case {
   };
 }
 
-function cookieValue(name: string): string | undefined {
-  if (typeof document === "undefined") return undefined;
-  const prefix = `${name}=`;
-  const match = document.cookie
-    .split(";")
-    .map((part) => part.trim())
-    .find((part) => part.startsWith(prefix));
-  if (!match) return undefined;
-  return decodeURIComponent(match.slice(prefix.length));
+function authHeaders(tokenOverride?: string): HeadersInit | undefined {
+  // Precedence: an explicit override (e.g. the server-only token threaded in
+  // by server-api.ts) beats the browser session cookie. There is no
+  // client-exposed env var fallback — see the NEXT_PUBLIC_API_TOKEN warning
+  // above.
+  const token = tokenOverride ?? readCookie(TOKEN_COOKIE);
+  return token ? { Authorization: `Bearer ${token}` } : undefined;
 }
 
-function authHeaders(tokenOverride?: string): HeadersInit | undefined {
-  const token =
-    tokenOverride ??
-    (typeof document !== "undefined" ? cookieValue(TOKEN_COOKIE) : undefined) ??
-    process.env.NEXT_PUBLIC_API_TOKEN;
-  return token ? { Authorization: `Bearer ${token}` } : undefined;
+/**
+ * A failed HTTP response, carrying the status code so callers can
+ * distinguish "genuinely missing" (404) from every other failure (5xx,
+ * 401/403, etc). Collapsing all of these into a single "not found" made a
+ * backend restart or an auth lapse render an existing record as absent.
+ */
+export class ApiError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
 }
 
 async function fetchJson<T>(url: string, token?: string): Promise<T> {
   const res = await fetch(url, { headers: authHeaders(token) });
   if (!res.ok) {
-    throw new Error(`Request failed: ${res.status} ${res.statusText} (${url})`);
+    throw new ApiError(
+      res.status,
+      `Request failed: ${res.status} ${res.statusText} (${url})`
+    );
   }
   return (await res.json()) as T;
 }
@@ -179,8 +207,12 @@ export async function getParcel(
       token
     );
     return featureToParcel(feature);
-  } catch {
-    return undefined;
+  } catch (error) {
+    // Only a genuine 404 means "this parcel does not exist" — any other
+    // failure (5xx, an auth lapse, a network error) must propagate so the
+    // page renders the error boundary instead of a misleading "not found".
+    if (error instanceof ApiError && error.status === 404) return undefined;
+    throw error;
   }
 }
 
@@ -231,33 +263,30 @@ export async function getParcelContext(
       `${base}/parcels/${id}/context`,
       token
     );
-  } catch {
-    return undefined;
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return undefined;
+    throw error;
   }
 }
 
-export async function getAlerts(
-  filters?: AlertFilters,
-  token?: string
-): Promise<Alert[]> {
+// Tier/status filtering happens entirely client-side, in AlertsTable's own
+// component state — it filters the full `alerts` prop it's already been
+// given, independent of this function. getAlerts() used to accept an
+// AlertFilters argument that filtered its return value the same way, but
+// nothing ever called it with one: no caller threads real filter values in,
+// so the full alert set is always fetched (and always was) either way. That
+// made the parameter dead weight that looked like server-side filtering
+// without doing any — removed rather than wired up, since nothing here talks
+// to a backend endpoint that accepts tier/status query params to filter on.
+export async function getAlerts(token?: string): Promise<Alert[]> {
   const base = getApiBase();
-  let alerts: Alert[];
-  if (!base) {
-    alerts = FIXTURE_ALERTS;
-  } else {
-    // Backend enums are uppercase (RED/OPEN); UI keys off lowercase.
-    alerts = (await fetchJson<Alert[]>(`${base}/alerts`, token)).map((a) => ({
-      ...a,
-      tier: a.tier.toLowerCase() as Alert["tier"],
-      status: a.status.toLowerCase() as Alert["status"],
-    }));
-  }
-
-  return alerts.filter((a) => {
-    if (filters?.tier && a.tier !== filters.tier) return false;
-    if (filters?.status && a.status !== filters.status) return false;
-    return true;
-  });
+  if (!base) return FIXTURE_ALERTS;
+  // Backend enums are uppercase (RED/OPEN); UI keys off lowercase.
+  return (await fetchJson<Alert[]>(`${base}/alerts`, token)).map((a) => ({
+    ...a,
+    tier: a.tier.toLowerCase() as Alert["tier"],
+    status: a.status.toLowerCase() as Alert["status"],
+  }));
 }
 
 export async function getCases(token?: string): Promise<Case[]> {
@@ -278,8 +307,9 @@ export async function getCase(
   try {
     const raw = await fetchJson<Case>(`${base}/cases/${id}`, token);
     return normalizeCase(raw);
-  } catch {
-    return undefined;
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return undefined;
+    throw error;
   }
 }
 

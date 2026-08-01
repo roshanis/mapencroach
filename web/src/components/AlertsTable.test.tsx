@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { AlertsTable } from "./AlertsTable";
 import {
@@ -7,13 +7,23 @@ import {
 } from "@/lib/explanations";
 import type { Alert } from "@/lib/types";
 
+// Kept in the next/navigation mock (though unused by AlertsTable now) so a
+// regression back to router.replace — the per-keystroke RSC re-fetch this
+// suite guards against — would be caught below.
 const replaceMock = vi.fn();
+let currentSearchParams = new URLSearchParams();
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/alerts",
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => currentSearchParams,
   useRouter: () => ({ replace: replaceMock }),
 }));
+
+afterEach(() => {
+  replaceMock.mockReset();
+  currentSearchParams = new URLSearchParams();
+  vi.restoreAllMocks();
+});
 
 const ALERTS: Alert[] = [
   {
@@ -79,6 +89,7 @@ describe("AlertsTable — explainability (WP6)", () => {
   });
 
   it("shows filter counts and persists filters in the URL", () => {
+    const replaceStateSpy = vi.spyOn(window.history, "replaceState");
     render(<AlertsTable alerts={ALERTS} />);
 
     expect(screen.getByRole("option", { name: "Open (1)" })).toBeInTheDocument();
@@ -86,10 +97,27 @@ describe("AlertsTable — explainability (WP6)", () => {
       target: { value: "escalated" },
     });
 
-    expect(replaceMock).toHaveBeenCalledWith(
-      "/alerts?status=escalated",
-      { scroll: false }
+    expect(replaceStateSpy).toHaveBeenCalledWith(
+      null,
+      "",
+      "/alerts?status=escalated"
     );
+    // No RSC navigation — that would force a full server re-fetch.
+    expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it("persists every keystroke in the search box via history.replaceState, never a router navigation (avoids refetching the list per keystroke)", () => {
+    const replaceStateSpy = vi.spyOn(window.history, "replaceState");
+    render(<AlertsTable alerts={ALERTS} />);
+
+    const input = screen.getByRole("searchbox", { name: "Search alerts" });
+    fireEvent.change(input, { target: { value: "P" } });
+    fireEvent.change(input, { target: { value: "PC" } });
+    fireEvent.change(input, { target: { value: "PCL" } });
+
+    expect(replaceStateSpy).toHaveBeenCalledTimes(3);
+    expect(replaceStateSpy).toHaveBeenLastCalledWith(null, "", "/alerts?q=PCL");
+    expect(replaceMock).not.toHaveBeenCalled();
   });
 
   it("uses real parcel links instead of pointer-only table rows", () => {
@@ -99,5 +127,32 @@ describe("AlertsTable — explainability (WP6)", () => {
       "href",
       "/parcels/PCL-1"
     );
+  });
+
+  it("falls back to 'all' for an unrecognized ?tier= value instead of a blank select and a silently empty table", () => {
+    currentSearchParams = new URLSearchParams("tier=bogus");
+    render(<AlertsTable alerts={ALERTS} />);
+
+    expect(screen.getByTestId("tier-filter")).toHaveValue("all");
+    expect(screen.getAllByTestId("alert-row")).toHaveLength(ALERTS.length);
+    expect(
+      screen.getByText(`Showing ${ALERTS.length} of ${ALERTS.length} alerts`)
+    ).toBeInTheDocument();
+  });
+
+  it("falls back to 'all' for an unrecognized ?status= value", () => {
+    currentSearchParams = new URLSearchParams("status=bogus");
+    render(<AlertsTable alerts={ALERTS} />);
+
+    expect(screen.getByTestId("status-filter")).toHaveValue("all");
+    expect(screen.getAllByTestId("alert-row")).toHaveLength(ALERTS.length);
+  });
+
+  it("still honors a valid ?tier= value", () => {
+    currentSearchParams = new URLSearchParams("tier=red");
+    render(<AlertsTable alerts={ALERTS} />);
+
+    expect(screen.getByTestId("tier-filter")).toHaveValue("red");
+    expect(screen.getAllByTestId("alert-row")).toHaveLength(1);
   });
 });

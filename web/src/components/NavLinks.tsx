@@ -60,6 +60,7 @@ export function NavLinks() {
       <button
         type="button"
         data-testid="nav-hamburger"
+        aria-label="Toggle navigation menu"
         aria-expanded={open}
         className="sm:hidden rounded px-2 py-1 text-white/90 hover:bg-white/10"
         onClick={() => setOpen((prev) => !prev)}

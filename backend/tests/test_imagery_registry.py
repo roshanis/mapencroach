@@ -144,3 +144,39 @@ class TestStacItemShape:
         record = register_scene(registry, scene_id="frozen-check")
         with pytest.raises(Exception):  # noqa: B017 - dataclass frozen error type
             record.scene_id = "changed"
+
+    def test_stac_item_cannot_be_mutated_through_the_returned_record(self):
+        registry = make_registry()
+        record = register_scene(registry, scene_id="immutable-check")
+        with pytest.raises(TypeError):
+            record.stac_item["id"] = "TAMPERED"
+
+    def test_stac_item_nested_dicts_cannot_be_mutated_either(self):
+        registry = make_registry()
+        record = register_scene(registry, scene_id="nested-immutable-check")
+        with pytest.raises(TypeError):
+            record.stac_item["properties"]["eo:cloud_cover"] = 0.0
+        with pytest.raises(TypeError):
+            record.stac_item["assets"]["data"]["href"] = "https://tampered.example/"
+
+    def test_registered_stac_item_is_unchanged_after_a_mutation_attempt(self):
+        registry = make_registry()
+        record = register_scene(registry, scene_id="unchanged-check")
+        try:
+            record.stac_item["id"] = "TAMPERED"
+        except TypeError:
+            pass
+        assert registry.get("unchanged-check").stac_item["id"] == "unchanged-check"
+
+
+class TestRegistryStateIsNotInjectable:
+    def test_lookup_dicts_are_not_constructor_arguments(self):
+        with pytest.raises(TypeError):
+            SceneRegistry(_by_id={"fake": object()})  # type: ignore[call-arg]
+
+    def test_lookup_dicts_are_not_in_repr(self):
+        registry = make_registry()
+        register_scene(registry, scene_id="repr-check")
+        rendered = repr(registry)
+        assert "_by_id" not in rendered
+        assert "_by_hash" not in rendered

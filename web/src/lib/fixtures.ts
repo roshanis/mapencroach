@@ -351,6 +351,10 @@ export const FIXTURE_CASES: Case[] = [
     alert_id: "ALT-5001",
     parcel_id: "PCL-1001",
     state: "SHOW_CAUSE_ISSUED",
+    // Matches the occurred_at of the SHOW_CAUSE_ISSUED event below — the
+    // "Time in stage" column and days-in-stage sort need this to work in
+    // demo mode (no backend).
+    state_since: "2026-06-29T14:00:00Z",
     allowed_transitions: [
       "RESPONSE_WINDOW",
       "DISMISSED_FALSE_POSITIVE",
@@ -358,6 +362,16 @@ export const FIXTURE_CASES: Case[] = [
       "SURVEY_REQUESTED",
       "STAYED_BY_COURT",
     ],
+    // Exercises TransitionPanel's evidence-gating UI in demo mode: opening
+    // the response window needs no evidence, but every other legal step
+    // does, and submit stays disabled until it is supplied.
+    required_artifacts: {
+      RESPONSE_WINDOW: [],
+      DISMISSED_FALSE_POSITIVE: ["dismissal_reason"],
+      LEGACY_REFERRED: ["legacy_reference"],
+      SURVEY_REQUESTED: ["survey_request_reference"],
+      STAYED_BY_COURT: ["court_order_reference"],
+    },
     events: [
       {
         from_state: null,
@@ -404,6 +418,7 @@ export const FIXTURE_CASES: Case[] = [
     alert_id: "ALT-5004",
     parcel_id: "PCL-1006",
     state: "CLOSED",
+    state_since: "2026-06-22T09:00:00Z",
     events: [
       {
         from_state: null,
@@ -484,6 +499,125 @@ export const FIXTURE_CASES: Case[] = [
         actor: "Deputy Collector S. Iyer",
         occurred_at: "2026-06-22T09:00:00Z",
         artifacts: ["closure_summary_9002.pdf"],
+      },
+    ],
+  },
+  {
+    // A second in-due-process case with an older state_since than
+    // CASE-9001, so the "In due process" section has more than one row and
+    // the days-in-stage sort has something to actually order.
+    id: "CASE-9003",
+    alert_id: "ALT-5005",
+    parcel_id: "PCL-1003",
+    state: "INSPECTED",
+    state_since: "2026-06-08T08:30:00Z",
+    allowed_transitions: [
+      "SHOW_CAUSE_ISSUED",
+      "DISMISSED_FALSE_POSITIVE",
+      "LEGACY_REFERRED",
+    ],
+    required_artifacts: {
+      SHOW_CAUSE_ISSUED: ["show_cause_notice"],
+      DISMISSED_FALSE_POSITIVE: ["dismissal_reason"],
+      LEGACY_REFERRED: ["legacy_reference"],
+    },
+    events: [
+      {
+        from_state: null,
+        to_state: "NEW",
+        actor: "system:detector",
+        occurred_at: "2026-05-02T02:20:00Z",
+        artifacts: [],
+        note: "Case auto-opened from ALT-5005 (legacy tier, forest).",
+      },
+      {
+        from_state: "NEW",
+        to_state: "TRIAGED",
+        actor: "Deputy Collector R. Sharma",
+        occurred_at: "2026-05-05T09:00:00Z",
+        artifacts: ["triage_note_9003.pdf"],
+      },
+      {
+        from_state: "TRIAGED",
+        to_state: "INSPECTION_ASSIGNED",
+        actor: "Deputy Collector R. Sharma",
+        occurred_at: "2026-05-20T10:00:00Z",
+        artifacts: [],
+        note: "Legacy-occupation queue; assigned to field inspector: A. Verma.",
+      },
+      {
+        from_state: "INSPECTION_ASSIGNED",
+        to_state: "INSPECTED",
+        actor: "Inspector A. Verma",
+        occurred_at: "2026-06-08T08:30:00Z",
+        artifacts: ["site_inspection_9003.pdf"],
+      },
+    ],
+  },
+  {
+    // Demonstrates StateRail's paused-progress display: the case is paused
+    // at STAYED_BY_COURT (off-chain), but its event history reached
+    // RESPONSE_WINDOW before the stay — the rail should show NEW through
+    // RESPONSE_WINDOW as done, not reset every step to not-done.
+    id: "CASE-9004",
+    alert_id: "ALT-5003",
+    parcel_id: "PCL-1004",
+    state: "STAYED_BY_COURT",
+    state_since: "2026-07-06T09:00:00Z",
+    allowed_transitions: [
+      "RESPONSE_WINDOW",
+      "DISMISSED_FALSE_POSITIVE",
+      "LEGACY_REFERRED",
+    ],
+    required_artifacts: {
+      RESPONSE_WINDOW: [],
+      DISMISSED_FALSE_POSITIVE: ["dismissal_reason"],
+      LEGACY_REFERRED: ["legacy_reference"],
+    },
+    events: [
+      {
+        from_state: null,
+        to_state: "NEW",
+        actor: "system:detector",
+        occurred_at: "2026-07-01T04:10:00Z",
+        artifacts: [],
+        note: "Case auto-opened from ALT-5003 (amber tier, revenue).",
+      },
+      {
+        from_state: "NEW",
+        to_state: "TRIAGED",
+        actor: "Deputy Collector S. Iyer",
+        occurred_at: "2026-07-01T14:00:00Z",
+        artifacts: [],
+      },
+      {
+        from_state: "TRIAGED",
+        to_state: "INSPECTION_ASSIGNED",
+        actor: "Deputy Collector S. Iyer",
+        occurred_at: "2026-07-02T09:00:00Z",
+        artifacts: [],
+      },
+      {
+        from_state: "INSPECTION_ASSIGNED",
+        to_state: "INSPECTED",
+        actor: "Inspector P. Rao",
+        occurred_at: "2026-07-03T11:00:00Z",
+        artifacts: ["site_inspection_9004.pdf"],
+      },
+      {
+        from_state: "INSPECTED",
+        to_state: "SHOW_CAUSE_ISSUED",
+        actor: "Deputy Collector S. Iyer",
+        occurred_at: "2026-07-04T10:00:00Z",
+        artifacts: ["show_cause_notice_9004.pdf"],
+      },
+      {
+        from_state: "SHOW_CAUSE_ISSUED",
+        to_state: "RESPONSE_WINDOW",
+        actor: "system:workflow",
+        occurred_at: "2026-07-06T09:00:00Z",
+        artifacts: [],
+        note: "Occupant obtained a High Court stay before the response window closed; case paused pending the court's order.",
       },
     ],
   },

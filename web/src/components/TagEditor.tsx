@@ -27,6 +27,8 @@ export function TagEditor({ parcelId, initialTags }: TagEditorProps) {
       } else {
         setError(`Refused (HTTP ${result.status}): ${result.detail}`);
       }
+    } catch {
+      setError("Tag service could not be reached. The tag was not saved — try again.");
     } finally {
       setSubmitting(false);
     }
@@ -42,6 +44,8 @@ export function TagEditor({ parcelId, initialTags }: TagEditorProps) {
       } else {
         setError(`Refused (HTTP ${result.status}): ${result.detail}`);
       }
+    } catch {
+      setError("Tag service could not be reached. The tag was not removed — try again.");
     } finally {
       setSubmitting(false);
     }

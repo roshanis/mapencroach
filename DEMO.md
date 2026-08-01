@@ -18,7 +18,7 @@ from mapencroach.api.auth import create_token
 print(create_token('officer-1', 'case_officer', 'state', 'dev-secret-do-not-deploy', datetime.now(UTC)+timedelta(hours=8)))"
 
 # 3. Start the console (from web/, third terminal)
-NEXT_PUBLIC_API_URL=http://localhost:8000 NEXT_PUBLIC_API_TOKEN=<token> npm run dev
+NEXT_PUBLIC_API_URL=http://localhost:8000 MAPENCROACH_API_TOKEN=<token> npm run dev
 ```
 
 Sanity check: open http://localhost:3000/console — the map should show parcels and colored
@@ -157,9 +157,11 @@ curl -s -X POST http://localhost:8000/cases/case-1/transitions \
 # → 409 "missing required artifact(s): dismissal_reason"
 ```
 
-Worth mentioning: 230+ backend tests at ~100% coverage; every mutation lands in a
-tamper-evident hash-chained audit log (any edit to history is detectable — built for
-evidence-integrity requirements under BSA 2023 §63); role-based access with
+Worth mentioning: 329 backend tests at ~99% coverage; every mutation lands in a
+tamper-evident hash-chained audit log (editing or reordering any entry breaks
+verification; dropping entries off the end is caught by verifying against a
+retained head anchor — built for evidence-integrity requirements under BSA 2023
+§63); role-based access with
 jurisdiction scoping — an officer literally cannot see, or even confirm the existence
 of, parcels outside their jurisdiction.
 

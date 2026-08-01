@@ -8,8 +8,17 @@ PostGIS-backed implementation (SQLAlchemy models already exist in
 mapencroach.db.models) is meant to replace this class behind the same
 interface later; callers should depend only on the attributes/methods
 documented here, not on dict internals.
+
+Concurrency: FastAPI runs sync `def` endpoints in a threadpool, so one
+Store instance is shared across concurrently-executing requests.
+`record_audit`, `next_alert_id`, and `next_case_id` serialize themselves on
+`self.lock` (a re-entrant `threading.RLock`); callers doing a
+read-modify-write across a mutation and its audit entry should hold
+`store.lock` for the whole critical section rather than relying on the
+individual methods alone.
 """
 
+import threading
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
@@ -91,6 +100,12 @@ class Store:
         self._tree: JurisdictionTree | None = None
         if self.jurisdiction_rows:
             self._tree = JurisdictionTree(self.jurisdiction_rows)
+        # Sync endpoints run in FastAPI's threadpool, so every mutating
+        # operation on this shared instance must be serialized. Re-entrant
+        # because record_audit is itself called from within other locked
+        # store methods (and from app.py handlers that hold the lock across
+        # a read-modify-write).
+        self.lock = threading.RLock()
 
     @property
     def tree(self) -> JurisdictionTree:
@@ -107,23 +122,36 @@ class Store:
         return self.tree.scope_ids(self.district_b_id)
 
     def record_audit(self, *, actor: str, action: str, object_type: str, object_id: str) -> None:
-        append_entry(
-            self.audit_chain,
-            {
-                "actor": actor,
-                "action": action,
-                "object_type": object_type,
-                "object_id": object_id,
-            },
-        )
+        """Append a hash-chained audit entry.
+
+        Locked so concurrent requests can't both read the same
+        `audit_chain[-1]` and append with the same prev_hash, which would
+        fork the chain instead of extending it.
+        """
+        with self.lock:
+            append_entry(
+                self.audit_chain,
+                {
+                    "actor": actor,
+                    "action": action,
+                    "object_type": object_type,
+                    "object_id": object_id,
+                },
+            )
 
     def next_alert_id(self) -> str:
-        self._next_alert_seq += 1
-        return f"alert-{self._next_alert_seq}"
+        """Allocate the next alert id. Locked so concurrent callers can't
+        read-then-increment the same sequence value and collide."""
+        with self.lock:
+            self._next_alert_seq += 1
+            return f"alert-{self._next_alert_seq}"
 
     def next_case_id(self) -> str:
-        self._next_case_seq += 1
-        return f"case-{self._next_case_seq}"
+        """Allocate the next case id. Locked for the same reason as
+        `next_alert_id`."""
+        with self.lock:
+            self._next_case_seq += 1
+            return f"case-{self._next_case_seq}"
 
     def context_for_parcel(self, parcel_id: str) -> ParcelContext:
         """Return canonical identifiers plus any linked context for a parcel."""

@@ -7,7 +7,18 @@ portable between PostGIS and test databases.
 import datetime
 
 from geoalchemy2 import Geometry
-from sqlalchemy import Boolean, Date, DateTime, Enum, Float, ForeignKey, String, Text, func
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Date,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -69,9 +80,20 @@ class ParcelIdentifier(Base):
 
 
 class ParcelLineage(Base):
-    """Directed parcel history across cadastral splits, merges, and renumbering."""
+    """Directed parcel history across cadastral splits, merges, and renumbering.
+
+    `relation` mirrors `domain.geography.LineageRelation` value-for-value
+    (split_from/merged_from/renumbered_from) so a `LineageRelation.value`
+    can be persisted directly without violating this CHECK constraint.
+    """
 
     __tablename__ = "parcel_lineage"
+    __table_args__ = (
+        CheckConstraint(
+            "predecessor_parcel_id != successor_parcel_id",
+            name="ck_parcel_lineage_no_self_link",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     predecessor_parcel_id: Mapped[str] = mapped_column(
@@ -79,7 +101,13 @@ class ParcelLineage(Base):
     )
     successor_parcel_id: Mapped[str] = mapped_column(ForeignKey("parcel.id"), nullable=False)
     relation: Mapped[str] = mapped_column(
-        Enum("split", "merge", "renumber", name="parcel_lineage_relation", native_enum=False),
+        Enum(
+            "split_from",
+            "merged_from",
+            "renumbered_from",
+            name="parcel_lineage_relation",
+            native_enum=False,
+        ),
         nullable=False,
     )
     effective_on: Mapped[datetime.date | None] = mapped_column(Date)
@@ -157,6 +185,17 @@ class ContextObservation(Base):
 
 
 class AuditLog(Base):
+    """Persisted mirror of `audit.chain`'s hash-linked entries.
+
+    `prev_hash` and `row_hash` are each UNIQUE at the DB level: two rows
+    claiming the same predecessor would fork the chain undetectably (both
+    branches individually verify), and a repeated row_hash would mean two
+    rows are indistinguishable to anything anchored on that hash. Neither
+    can happen if a single writer only ever appends via `audit.chain`, but
+    the constraint means a forking write fails loudly at the DB instead of
+    silently succeeding.
+    """
+
     __tablename__ = "audit_log"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -165,8 +204,8 @@ class AuditLog(Base):
     object_type: Mapped[str] = mapped_column(String(64), nullable=False)
     object_id: Mapped[str] = mapped_column(String(64), nullable=False)
     payload: Mapped[str | None] = mapped_column(Text)  # canonical JSON, hashed by chain
-    prev_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    row_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    prev_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    row_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

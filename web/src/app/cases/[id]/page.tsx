@@ -55,7 +55,7 @@ export default async function CaseDetailPage({
           <h2 className="mb-6 text-base font-semibold text-gray-900">
             Due-Process Progress
           </h2>
-          <StateRail currentState={caseRecord.state} />
+          <StateRail currentState={caseRecord.state} events={caseRecord.events} />
           <details className="mt-4 text-xs text-gray-500">
             <summary className="cursor-pointer text-gov">
               What do these steps mean?

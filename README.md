@@ -28,8 +28,14 @@ print(create_token('officer-1', 'case_officer', 'state', 'dev-secret-do-not-depl
 ```bash
 cd web
 npm install                                # first time only
-NEXT_PUBLIC_API_URL=http://localhost:8000 NEXT_PUBLIC_API_TOKEN=<token-from-step-2> npm run dev
+NEXT_PUBLIC_API_URL=http://localhost:8000 MAPENCROACH_API_TOKEN=<token-from-step-2> npm run dev
 ```
+
+`MAPENCROACH_API_TOKEN` is read only on the server. Do not use
+`NEXT_PUBLIC_API_TOKEN`: any `NEXT_PUBLIC_*` value is inlined into the browser
+bundle, so a bearer token set there is readable by every visitor. The console
+warns and ignores it if set. In the browser the console authenticates with the
+token cookie set at sign-in.
 
 Open http://localhost:3000 for the product landing page, then enter the command
 map at http://localhost:3000/console. Alert queue, parcel profiles, and case
@@ -45,15 +51,21 @@ the Maps JavaScript API.
 ## Tests
 
 ```bash
-cd backend && .venv/bin/pytest --cov && .venv/bin/ruff check .   # 200 tests
-cd web && npm test && npm run build                              # 24 tests
+cd backend && .venv/bin/pytest --cov && .venv/bin/ruff check .   # 329 tests
+cd web && npm test && npm run build                              # 240 tests
 ```
 
-## Full dev stack (PostGIS, Keycloak, MinIO, TiTiler)
+## Backing services (PostGIS, Keycloak, MinIO, TiTiler)
 
 ```bash
 docker compose up -d
 ```
+
+These are the services the platform is being built toward, not a running
+integration: the API still keeps everything in memory, and `db/models.py`
+defines the schema without an engine bound to it. Bring the stack up when
+working on persistence, object storage, or tiling — the demo above and both
+test suites need none of it.
 
 ## Deploy a shareable demo
 

@@ -5,11 +5,12 @@ import { CasesTable } from "./CasesTable";
 import type { Case } from "@/lib/types";
 
 const replaceMock = vi.fn();
+let currentSearchParams = new URLSearchParams();
 
 vi.mock("next/navigation", () => ({
   useRouter: vi.fn(),
   usePathname: () => "/cases",
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => currentSearchParams,
 }));
 
 function daysAgoIso(days: number): string {
@@ -38,6 +39,8 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   replaceMock.mockReset();
+  currentSearchParams = new URLSearchParams();
+  vi.restoreAllMocks();
 });
 
 describe("CasesTable", () => {
@@ -240,6 +243,7 @@ describe("CasesTable", () => {
   });
 
   it("filters by workflow bucket with visible counts", () => {
+    const replaceStateSpy = vi.spyOn(window.history, "replaceState");
     const cases: Case[] = [
       makeCase({ id: "1", state: "NEW" }),
       makeCase({ id: "2", state: "STAYED_BY_COURT" }),
@@ -250,8 +254,58 @@ describe("CasesTable", () => {
     fireEvent.click(screen.getByRole("button", { name: "Paused (1)" }));
 
     expect(screen.getAllByTestId("case-row")).toHaveLength(1);
-    expect(replaceMock).toHaveBeenCalledWith("/cases?view=paused", {
-      scroll: false,
-    });
+    expect(replaceStateSpy).toHaveBeenCalledWith(null, "", "/cases?view=paused");
+    // No RSC navigation — that would force a full server re-fetch.
+    expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it("persists every keystroke in the search box via history.replaceState, never a router navigation (avoids refetching the list per keystroke)", () => {
+    const replaceStateSpy = vi.spyOn(window.history, "replaceState");
+    const cases: Case[] = [
+      makeCase({ id: "CASE-1", parcel_id: "PCL-ALPHA" }),
+      makeCase({ id: "CASE-2", parcel_id: "PCL-BETA" }),
+    ];
+
+    render(<CasesTable cases={cases} />);
+    const input = screen.getByRole("searchbox", { name: "Search cases" });
+    fireEvent.change(input, { target: { value: "B" } });
+    fireEvent.change(input, { target: { value: "BE" } });
+    fireEvent.change(input, { target: { value: "BET" } });
+
+    expect(replaceStateSpy).toHaveBeenCalledTimes(3);
+    expect(replaceStateSpy).toHaveBeenLastCalledWith(null, "", "/cases?q=BET");
+    expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it("falls back to 'all' for an unrecognized ?view= value instead of an unusable filtered-to-zero table", () => {
+    currentSearchParams = new URLSearchParams("view=bogus");
+    const cases: Case[] = [
+      makeCase({ id: "1", state: "NEW" }),
+      makeCase({ id: "2", state: "STAYED_BY_COURT" }),
+    ];
+
+    render(<CasesTable cases={cases} />);
+
+    expect(screen.getByRole("button", { name: "All (2)" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+    expect(screen.getAllByTestId("case-row")).toHaveLength(2);
+  });
+
+  it("still honors a valid ?view= value", () => {
+    currentSearchParams = new URLSearchParams("view=paused");
+    const cases: Case[] = [
+      makeCase({ id: "1", state: "NEW" }),
+      makeCase({ id: "2", state: "STAYED_BY_COURT" }),
+    ];
+
+    render(<CasesTable cases={cases} />);
+
+    expect(screen.getByRole("button", { name: "Paused (1)" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+    expect(screen.getAllByTestId("case-row")).toHaveLength(1);
   });
 });

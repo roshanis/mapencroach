@@ -10,13 +10,31 @@ bytes) so a scene identifier always resolves to exactly one payload.
 """
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
+from types import MappingProxyType
 from typing import Any
 
 
 class DuplicateScene(Exception):
     """Raised when a scene's content hash or scene_id is already registered."""
+
+
+def _deep_freeze(value: Any) -> Any:
+    """Recursively replace dicts/lists with read-only Mapping/tuple views.
+
+    `SceneRecord` is frozen, but a frozen dataclass only stops attribute
+    *reassignment* -- a plain dict stored in one of its fields is still
+    mutable in place. Freezing the whole structure means evidence
+    provenance (the stac_item) can't be silently altered after
+    registration by mutating it through the returned record.
+    """
+    if isinstance(value, dict):
+        return MappingProxyType({k: _deep_freeze(v) for k, v in value.items()})
+    if isinstance(value, list):
+        return tuple(_deep_freeze(v) for v in value)
+    return value
 
 
 @dataclass(frozen=True)
@@ -28,7 +46,7 @@ class SceneRecord:
     resolution_m: float
     cloud_pct: float
     source: str
-    stac_item: dict[str, Any]
+    stac_item: Mapping[str, Any]
 
 
 def _build_stac_item(
@@ -37,26 +55,39 @@ def _build_stac_item(
     cloud_pct: float,
     resolution_m: float,
     href: str,
-) -> dict[str, Any]:
-    return {
-        "id": scene_id,
-        "properties": {
-            "datetime": captured_at.isoformat(),
-            "eo:cloud_cover": cloud_pct,
-            "gsd": resolution_m,
-        },
-        "assets": {
-            "data": {"href": href},
-        },
-    }
+) -> Mapping[str, Any]:
+    return _deep_freeze(
+        {
+            "id": scene_id,
+            "properties": {
+                "datetime": captured_at.isoformat(),
+                "eo:cloud_cover": cloud_pct,
+                "gsd": resolution_m,
+            },
+            "assets": {
+                "data": {"href": href},
+            },
+        }
+    )
 
 
 @dataclass
 class SceneRegistry:
-    """In-memory scene registry, keyed by scene_id and content hash."""
+    """In-memory scene registry, keyed by scene_id and content hash.
 
-    _by_id: dict[str, SceneRecord] = field(default_factory=dict)
-    _by_hash: dict[str, SceneRecord] = field(default_factory=dict)
+    The lookup dicts are internal state, not part of the public API: they
+    are excluded from `__init__`/`__repr__`/`__eq__` (`init=False,
+    repr=False, compare=False`) so a caller can't construct or compare a
+    registry by injecting arbitrary entries into them directly -- the only
+    way in is `register`.
+    """
+
+    _by_id: dict[str, SceneRecord] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
+    _by_hash: dict[str, SceneRecord] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
 
     def register(
         self,

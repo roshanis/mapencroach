@@ -23,6 +23,23 @@ function lineageLabel(edge: ParcelLineageEdge): string {
   return edge.relation.replaceAll("_", " ");
 }
 
+/**
+ * `source_url` is backend-supplied data, not app-controlled config. Rendered
+ * as-is it would let a `javascript:`/`data:` URL execute as an href click.
+ * Allow-list http(s) only; anything else renders as plain (non-clickable)
+ * text instead of a link.
+ */
+function safeSourceUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:"
+      ? url
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export function ParcelContextPanel({ context }: ParcelContextPanelProps) {
   return (
     <div className="flex flex-col gap-6">
@@ -215,14 +232,23 @@ export function ParcelContextPanel({ context }: ParcelContextPanelProps) {
                         </h3>
                         <p className="text-sm text-slate-600">{source.provider}</p>
                       </div>
-                      <a
-                        href={source.source_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-xs font-medium text-gov hover:underline"
-                      >
-                        Source documentation
-                      </a>
+                      {safeSourceUrl(source.source_url) ? (
+                        <a
+                          href={source.source_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs font-medium text-gov hover:underline"
+                        >
+                          Source documentation
+                        </a>
+                      ) : (
+                        <span
+                          className="text-xs font-medium text-slate-400"
+                          title="Source link omitted: not a valid http(s) URL"
+                        >
+                          Source documentation unavailable
+                        </span>
+                      )}
                     </div>
                     <dl className="mt-3 grid gap-2 text-xs text-slate-600 sm:grid-cols-3">
                       <div>

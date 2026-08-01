@@ -86,6 +86,16 @@ describe("NavLinks", () => {
       expect(hamburger).toHaveAttribute("aria-expanded", "false");
     });
 
+    it("gives the hamburger button an accessible name for assistive tech (not just the ☰ glyph)", () => {
+      vi.mocked(usePathname).mockReturnValue("/console");
+
+      render(<NavLinks />);
+
+      expect(
+        screen.getByRole("button", { name: "Toggle navigation menu" })
+      ).toBe(screen.getByTestId("nav-hamburger"));
+    });
+
     it("expands the dropdown when clicked, and collapses again when clicking a link inside", () => {
       vi.mocked(usePathname).mockReturnValue("/console");
 

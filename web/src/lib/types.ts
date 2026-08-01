@@ -35,6 +35,12 @@ export const LAND_CATEGORY_COLORS: Record<LandCategory, string> = {
   grazing: "#a3903c",
 };
 
+// Single source of truth for land-category display labels — previously
+// ParcelAttributesCard kept its own diverging copy ("Revenue Land",
+// "Grazing (Gauchar)") while the map legend used the plainer wording below,
+// so the two panels disagreed about the same parcel's category. The more
+// specific, locally-meaningful wording won (it names the vernacular term
+// "Gauchar" used for grazing land in this jurisdiction).
 export const LAND_CATEGORY_LABELS: Record<LandCategory, string> = {
   waterbody: "Waterbody",
   forest: "Forest",
@@ -42,9 +48,9 @@ export const LAND_CATEGORY_LABELS: Record<LandCategory, string> = {
   municipal: "Municipal",
   housing: "Housing",
   industrial: "Industrial",
-  revenue: "Revenue",
+  revenue: "Revenue Land",
   agricultural: "Agricultural",
-  grazing: "Grazing",
+  grazing: "Grazing (Gauchar)",
 };
 
 export interface Parcel {
@@ -196,6 +202,16 @@ export const SPECIAL_STATE_LABELS: Record<SpecialCaseState, string> = {
   STAYED_BY_COURT: "Paused — Stayed by Court",
 };
 
+/** Verb-phrase labels for the special-state transition actions, shared by
+ * TransitionPanel (action buttons) and ParcelWorkSummary ("next action"). */
+export const TRANSITION_ACTION_LABELS: Record<string, string> = {
+  RESPONSE_WINDOW: "Open response window",
+  DISMISSED_FALSE_POSITIVE: "Dismiss false positive",
+  LEGACY_REFERRED: "Refer to legacy process",
+  SURVEY_REQUESTED: "Request boundary survey",
+  STAYED_BY_COURT: "Record court stay",
+};
+
 /** Special states where the forward chain is frozen but resumable. */
 export const PAUSED_STATES: ReadonlySet<string> = new Set([
   "SURVEY_REQUESTED",
@@ -251,9 +267,4 @@ export interface BBox {
   south: number;
   east: number;
   north: number;
-}
-
-export interface AlertFilters {
-  tier?: AlertTier;
-  status?: AlertStatus;
 }

@@ -98,6 +98,7 @@ export function HistoricalImageryTimeline({ parcel }: { parcel: Parcel }) {
           </p>
         </div>
         <div
+          role="group"
           aria-label="Historical imagery year"
           className="grid grid-cols-4 gap-1 rounded-lg bg-gray-100 p-1"
         >

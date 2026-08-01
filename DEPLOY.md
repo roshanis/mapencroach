@@ -67,11 +67,16 @@ In the Vercel project → **Settings → Environment Variables**:
 | Key | Value |
 |-----|-------|
 | `NEXT_PUBLIC_API_URL` | `https://<your-api>.onrender.com` |
-| `NEXT_PUBLIC_API_TOKEN` | the token from step 3 |
+| `MAPENCROACH_API_TOKEN` | the token from step 3 (server-only — **not** `NEXT_PUBLIC_`) |
 | `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | restricted Maps JavaScript API browser key |
 | `NEXT_PUBLIC_GOOGLE_MAP_ID` | JavaScript vector map ID |
 
 Then **Deployments → Redeploy** (env vars are baked in at build time).
+
+`MAPENCROACH_API_TOKEN` is deliberately not a `NEXT_PUBLIC_*` var: those are
+inlined into the browser bundle, so a bearer token set there would be readable
+by every visitor and usable to drive case transitions. Only server-rendered
+requests use it; the browser authenticates with the sign-in cookie.
 
 Restrict the Google browser key to the production Vercel hostname (and only
 the preview/local hostnames that need it) plus the Maps JavaScript API. The map

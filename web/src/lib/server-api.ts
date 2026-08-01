@@ -13,14 +13,26 @@ import {
   getParcelContext,
   TOKEN_COOKIE,
 } from "./api";
-import type { Alert, AlertFilters, Case, Parcel, ParcelContext } from "./types";
+import type { Alert, Case, Parcel, ParcelContext } from "./types";
+
+// Server-only fallback credential. Unlike NEXT_PUBLIC_API_TOKEN this is never
+// inlined into client JavaScript — only read here, in a module that must
+// never be imported from a "use client" file. Used when a request has no
+// session cookie (e.g. server-rendered pages hit before persona login).
+function serverOnlyToken(): string | undefined {
+  const token = process.env.MAPENCROACH_API_TOKEN;
+  return token && token.length > 0 ? token : undefined;
+}
 
 export async function serverToken(): Promise<string | undefined> {
   try {
-    return (await cookies()).get(TOKEN_COOKIE)?.value;
+    const cookieToken = (await cookies()).get(TOKEN_COOKIE)?.value;
+    if (cookieToken) return cookieToken;
   } catch {
-    return undefined;
+    // No request context (e.g. static generation) — fall through to the
+    // server-only token below.
   }
+  return serverOnlyToken();
 }
 
 export async function getParcelForRequest(
@@ -37,11 +49,9 @@ export async function getParcelContextForRequest(
   return getParcelContext(id, token);
 }
 
-export async function getAlertsForRequest(
-  filters?: AlertFilters
-): Promise<Alert[]> {
+export async function getAlertsForRequest(): Promise<Alert[]> {
   const token = await serverToken();
-  return getAlerts(filters, token);
+  return getAlerts(token);
 }
 
 export async function getCaseForRequest(

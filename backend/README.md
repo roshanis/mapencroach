@@ -18,16 +18,23 @@ uv pip install -q -p .venv/bin/python -e ".[dev]"
 
 ## Run the API
 
-Start the server with demo seed data (jurisdiction tree, 8 parcels around Bhopal,
-4 alerts, 2 cases):
+Start the server with demo seed data (jurisdiction tree, 30 parcels across six
+taluks of the Haridwar–Roorkee Development Authority, 10 alerts, 5 cases):
 
 ```bash
 MAPENCROACH_DEMO=1 .venv/bin/uvicorn "mapencroach.api.app:create_app" --factory
 ```
 
+Demo mode signs tokens with a published dev secret and exposes `POST
+/demo/login`, which mints a scoped token for any persona with no credentials.
+It warns loudly at startup and refuses to run alongside a custom
+`MAPENCROACH_JWT_SECRET`. Never expose a demo-mode server to untrusted traffic.
+
 Without `MAPENCROACH_DEMO=1` the app boots with an empty store — wire in a real
 `Store` (or a future PostGIS-backed implementation behind the same interface)
-before serving production traffic.
+before serving production traffic. Outside demo mode the app fails closed unless
+`MAPENCROACH_JWT_SECRET` is set to something other than the dev default, and
+`MAPENCROACH_CORS_ORIGINS` may not contain `*` while credentials are allowed.
 
 ### Minting a dev token
 

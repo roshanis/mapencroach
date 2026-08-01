@@ -2,25 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { LAND_CATEGORY_COLORS } from "@/lib/types";
-import type { AlertTier } from "@/lib/types";
+import { createAlertMarkerElement, styleAlertMarker } from "./alertMarker";
 import { BasemapToggle, type BasemapMode } from "./BasemapToggle";
-import { loadGoogleMapLibraries } from "./googleMapsLoader";
+import { loadGoogleMapLibraries, onGoogleMapsAuthFailure } from "./googleMapsLoader";
 import type { OperationalMapProps } from "./map-types";
-
-const TIER_COLORS: Record<AlertTier, string> = {
-  green: "#1e8f4e",
-  amber: "#c98a12",
-  red: "#c4321f",
-  legacy: "#7b3fa0",
-};
-
-function styleAlertMarker(element: HTMLButtonElement, selected: boolean) {
-  element.dataset.selected = String(selected);
-  element.style.transform = selected ? "scale(1.45)" : "scale(1)";
-  element.style.boxShadow = selected
-    ? "0 0 0 4px rgba(255,255,255,0.9), 0 0 0 7px rgba(28,79,140,0.65)"
-    : "0 0 0 1px rgba(0,0,0,0.25)";
-}
 
 export interface GoogleMapProps extends OperationalMapProps {
   apiKey: string;
@@ -69,11 +54,37 @@ export default function GoogleMap({
     });
   }, [selectedAlertId]);
 
+  // CONSTRAINT: `parcels`, `alerts`, `center`, and `zoom` are read once, at
+  // mount, by the effect below (empty dep array) — they are a snapshot, not
+  // a live binding. A parent that re-renders this component with new
+  // parcels/alerts/center/zoom after the initial mount will NOT see the map
+  // update; the Google Data layer and AdvancedMarkerElements created here
+  // are never rebuilt. This is currently safe only because MapView mounts
+  // this component once data is already loaded and fully remounts it (fresh
+  // key) on retry — so in practice the values never change under a mounted
+  // instance today. `selectedAlertId`, `onAlertClick`, and `onProviderError`
+  // are the only props that ARE live, via the ref pattern below.
+  //
+  // Before adding any feature that streams updated parcels/alerts/center/
+  // zoom into an already-mounted map, this effect needs real sync, not a
+  // fresh mount: parcels via clearing + re-adding map.data (or diffing
+  // features), alerts via reconciling AdvancedMarkerElements (add new,
+  // remove stale, matching MapLibreMap's marker Map<id, element> pattern),
+  // and center/zoom via explicit map.panTo/map.setZoom calls in their own
+  // effect. Do not silently assume props are live without doing this.
   useEffect(() => {
     let cancelled = false;
     const markers: google.maps.marker.AdvancedMarkerElement[] = [];
     const markerClickCleanups: Array<() => void> = [];
     const markerElements = markerElementsRef.current;
+
+    // An invalid key, referrer restriction, or disabled billing all resolve
+    // importLibrary() successfully — the catch block below never fires.
+    // Google instead reports these through the gm_authFailure global; wire
+    // it to the same fallback path so a permanently gray map still recovers.
+    const unsubscribeAuthFailure = onGoogleMapsAuthFailure(() => {
+      if (!cancelled) onProviderErrorRef.current();
+    });
 
     async function init() {
       try {
@@ -126,20 +137,10 @@ export default function GoogleMap({
           const parcel = parcels.find((candidate) => candidate.id === alert.parcel_id);
           if (!parcel) continue;
 
-          const element = document.createElement("button");
-          element.type = "button";
-          element.style.width = "14px";
-          element.style.height = "14px";
-          element.style.borderRadius = "50%";
-          element.style.border = "2px solid white";
-          element.style.backgroundColor = TIER_COLORS[alert.tier];
-          element.style.cursor = "pointer";
-          element.style.padding = "0";
-          element.style.transition = "transform 150ms ease, box-shadow 150ms ease";
-          element.setAttribute("data-testid", "alert-marker");
-          element.setAttribute("data-alert-id", alert.id);
-          element.setAttribute("aria-label", `Select alert ${alert.id}`);
-          styleAlertMarker(element, alert.id === selectedAlertIdRef.current);
+          const element = createAlertMarkerElement(
+            alert,
+            alert.id === selectedAlertIdRef.current
+          );
           markerElements.set(alert.id, element);
 
           const clickHandler = () => onAlertClickRef.current?.(alert.id);
@@ -173,6 +174,7 @@ export default function GoogleMap({
 
     return () => {
       cancelled = true;
+      unsubscribeAuthFailure();
       markerClickCleanups.forEach((cleanup) => cleanup());
       markers.forEach((marker) => {
         marker.map = null;
@@ -180,8 +182,8 @@ export default function GoogleMap({
       markerElements.clear();
       mapRef.current = null;
     };
-    // The provider owns one immutable map instance; selection and callbacks are
-    // kept current through refs above.
+    // Intentionally mount-only — see the CONSTRAINT comment above this
+    // effect. Selection and callbacks are kept current through refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

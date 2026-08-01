@@ -118,6 +118,80 @@ describe("TransitionPanel", () => {
     );
   });
 
+  it("resyncs the selected step and evidence gate when allowedTransitions changes after a submit (router.refresh)", () => {
+    const { rerender } = render(
+      <TransitionPanel
+        caseId="CASE-1"
+        allowedTransitions={["RESPONSE_WINDOW"]}
+        requiredArtifacts={{}}
+      />
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Record response window" })
+    ).toBeInTheDocument();
+
+    // Simulate the server delivering fresh props after router.refresh(): the
+    // case moved on, RESPONSE_WINDOW is no longer legal, and the new legal
+    // step requires evidence the panel has never collected.
+    rerender(
+      <TransitionPanel
+        caseId="CASE-1"
+        allowedTransitions={["HEARING_SCHEDULED"]}
+        requiredArtifacts={{ HEARING_SCHEDULED: ["hearing_notice"] }}
+      />
+    );
+
+    const hearingButton = screen.getByRole("button", {
+      name: "Advance to Hearing Scheduled",
+    });
+    // The new legal step is selected/highlighted...
+    expect(hearingButton).toHaveAttribute("aria-pressed", "true");
+    // ...its evidence field is shown...
+    expect(screen.getByLabelText("Hearing notice")).toBeInTheDocument();
+    // ...and the now-illegal RESPONSE_WINDOW step is gone, not left stale.
+    expect(
+      screen.queryByRole("button", { name: "Record response window" })
+    ).not.toBeInTheDocument();
+    // Evidence is empty, so the gate must not silently pass (the stale-props
+    // bug made requiredArtifacts[stale] undefined, which vacuously enabled
+    // submit).
+    expect(
+      screen.getByRole("button", { name: "Record Hearing Scheduled" })
+    ).toBeDisabled();
+  });
+
+  it("resyncs the demo policy-guard select when the blocked-state set changes", () => {
+    const { rerender } = render(
+      <TransitionPanel
+        caseId="CASE-1"
+        allowedTransitions={["RESPONSE_WINDOW"]}
+        requiredArtifacts={{}}
+      />
+    );
+
+    const initialGuardSelect = screen.getByTestId(
+      "guard-transition-select"
+    ) as HTMLSelectElement;
+    const initialValue = initialGuardSelect.value;
+    expect(initialValue).not.toBe("");
+
+    // RESPONSE_WINDOW becomes legal (moves out of the blocked set); if it was
+    // the guard selection it must no longer be selectable as a "blocked" demo.
+    rerender(
+      <TransitionPanel
+        caseId="CASE-1"
+        allowedTransitions={["RESPONSE_WINDOW", initialValue]}
+        requiredArtifacts={{}}
+      />
+    );
+
+    const guardSelect = screen.getByTestId(
+      "guard-transition-select"
+    ) as HTMLSelectElement;
+    expect(guardSelect.value).not.toBe(initialValue);
+  });
+
   it("shows a retryable error when the transition service cannot be reached", async () => {
     vi.mocked(transitionCase).mockRejectedValue(new Error("offline"));
 

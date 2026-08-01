@@ -2,8 +2,9 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { CaseStateChip } from "./CaseStateChip";
+import { parseFilterParam } from "@/lib/searchParams";
 import {
   CASE_STATE_CHAIN,
   TERMINAL_STATES,
@@ -14,6 +15,10 @@ import {
 export interface CasesTableProps {
   cases: Case[];
 }
+
+type Bucket = "active" | "paused" | "concluded";
+
+const BUCKET_OPTIONS: (Bucket | "all")[] = ["all", "active", "paused", "concluded"];
 
 function daysInStage(stateSince: string | null | undefined): number | null {
   if (!stateSince) return null;
@@ -26,8 +31,6 @@ function daysInStage(stateSince: string | null | undefined): number | null {
 function isChainState(state: Case["state"]): state is (typeof CASE_STATE_CHAIN)[number] {
   return (CASE_STATE_CHAIN as string[]).includes(state);
 }
-
-type Bucket = "active" | "paused" | "concluded";
 
 /**
  * Classifies a case into exactly one of the three table sections. Checked in
@@ -122,12 +125,11 @@ function StageProgress({ state }: { state: Case["state"] }) {
 }
 
 export function CasesTable({ cases }: CasesTableProps) {
-  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [query, setQuery] = useState(searchParams.get("q") ?? "");
   const [bucketFilter, setBucketFilter] = useState<Bucket | "all">(
-    (searchParams.get("view") as Bucket | null) ?? "all"
+    parseFilterParam(searchParams.get("view"), BUCKET_OPTIONS)
   );
 
   const bucketCounts = useMemo(() => {
@@ -152,9 +154,12 @@ export function CasesTable({ cases }: CasesTableProps) {
     if (nextBucket !== "all") params.set("view", nextBucket);
     else params.delete("view");
     const suffix = params.toString();
-    router.replace(`${pathname}${suffix ? `?${suffix}` : ""}`, {
-      scroll: false,
-    });
+    // See AlertsTable.persistFilters: history.replaceState avoids the
+    // full server re-fetch that router.replace triggers on a force-dynamic
+    // page for every keystroke in the search box.
+    if (typeof window !== "undefined") {
+      window.history.replaceState(null, "", `${pathname}${suffix ? `?${suffix}` : ""}`);
+    }
   }
 
   const filteredCases = useMemo(() => {
