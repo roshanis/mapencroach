@@ -16,13 +16,20 @@ Store instance is shared across concurrently-executing requests.
 read-modify-write across a mutation and its audit entry should hold
 `store.lock` for the whole critical section rather than relying on the
 individual methods alone.
+
+Durability: this class has no opinion of its own about surviving a
+restart -- `state_persister` (see its docstring below) is `None` by
+default, so a bare `Store()`/`Store.seed_demo()` is exactly as ephemeral
+as it always was. `mapencroach.persistence` is where an actual
+`StatePersister` gets built and wired in for a real deployment; see that
+module for what is (and, just as importantly, is not) persisted.
 """
 
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, Protocol
 
 from mapencroach.audit.chain import AuditEntry, append_entry
 from mapencroach.context.shrug import ShrugImportManifest
@@ -42,6 +49,20 @@ from mapencroach.imagery.registry import SceneRegistry
 from mapencroach.imagery.schedule import due_weeks
 
 _PARCEL_SIZE_DEG = 0.001  # ~110m square at this latitude
+
+
+class StatePersister(Protocol):
+    """Structural interface for whatever persists a `Store`'s
+    evidence-bearing state to disk (see `mapencroach.persistence`).
+
+    Defined here rather than imported from `mapencroach.persistence` so
+    this module -- and `Store` itself -- has no dependency on how (or
+    whether) persistence is implemented; persistence is opt-in wiring
+    layered on top of `Store`, never a thing `Store` needs to know about
+    beyond "something with a `save` method, or nothing at all".
+    """
+
+    def save(self, store: "Store") -> None: ...
 
 
 def _utc_now() -> datetime:
@@ -186,6 +207,15 @@ class Store:
     imagery_provider: ImageryProvider = field(default_factory=build_provider)
     clock: Callable[[], datetime] = field(default_factory=lambda: _utc_now)
 
+    # Durability is opt-in and OFF by default: plain `Store()` /
+    # `Store.seed_demo()` construction (every existing test, every
+    # ephemeral demo) never touches disk, exactly as before this field
+    # existed. Something external (see `mapencroach.persistence.build_store`,
+    # wired in automatically by `create_app()`'s no-store "real deploy"
+    # path) opts a given store into persistence by setting this field --
+    # at that point `persist_now()` below stops being a no-op.
+    state_persister: StatePersister | None = field(default=None, repr=False, compare=False)
+
     def __post_init__(self) -> None:
         self._tree: JurisdictionTree | None = None
         if self.jurisdiction_rows:
@@ -228,6 +258,23 @@ class Store:
                     "object_id": object_id,
                 },
             )
+
+    def persist_now(self) -> None:
+        """Flush the evidence-bearing state (watchlist, scene registry
+        index, audit chain) to disk via `state_persister`, if one is
+        configured. A no-op otherwise -- see the `state_persister` field
+        docstring for why plain `Store()` construction never reaches this.
+
+        Callers (the watch-list/imagery HTTP handlers in `api/app.py`) are
+        expected to call this *after* releasing `store.lock`, not from
+        within a locked block: `state_persister.save` takes the lock
+        itself only long enough to snapshot the state to serialize, then
+        releases it before doing any file I/O, matching the same
+        never-hold-the-lock-across-I/O discipline the capture endpoints
+        use for provider calls.
+        """
+        if self.state_persister is not None:
+            self.state_persister.save(self)
 
     def next_alert_id(self) -> str:
         """Allocate the next alert id. Locked so concurrent callers can't

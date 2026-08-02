@@ -25,6 +25,15 @@ entry / case) and there is no scene->alert reverse index. Both routes
 never hold store.lock while streaming bytes, audit every read via
 store.record_audit, and answer conditional GETs (If-None-Match) with 304
 since content-addressed bytes can never go stale.
+
+Durability: when `create_app()` is called with no explicit `store` (the
+real-deployment path -- every test passes one), the store it builds via
+`mapencroach.persistence.build_store` hydrates prior watchlist/scene-
+registry/audit state from disk (if any) and persists it on every
+watch-list/imagery mutation and every scene read, via `store.persist_now()`
+called after the relevant `store.lock` block has already been released
+(never while the lock is held). See `mapencroach.persistence` for what is
+and is not persisted, and its cross-process concurrency caveats.
 """
 
 import os
@@ -58,6 +67,7 @@ from mapencroach.domain.case_engine import (
 from mapencroach.imagery.capture import CaptureAttempt, CaptureStatus, capture_week
 from mapencroach.imagery.registry import SceneRecord
 from mapencroach.imagery.schedule import WeekRef, due_weeks, weeks_from
+from mapencroach.persistence import build_store
 
 _VALID_GRADES = {"A", "B", "C"}
 
@@ -365,6 +375,7 @@ def _scene_image_response(
     store.record_audit(
         actor=user.sub, action="scene.read", object_type="scene", object_id=record.scene_id
     )
+    store.persist_now()
     if request.headers.get("if-none-match") == etag:
         return Response(
             status_code=status.HTTP_304_NOT_MODIFIED,
@@ -403,7 +414,12 @@ def create_app(store: Store | None = None) -> FastAPI:
     """
     demo_mode = os.environ.get("MAPENCROACH_DEMO") == "1"
     if store is None:
-        store = Store.seed_demo() if demo_mode else Store()
+        # Real-deployment path only -- every test passes an explicit
+        # `store`, so this is the one place persistence gets wired in.
+        # `build_store` hydrates prior watchlist/scene-registry/audit
+        # state (if any) and raises loudly on a corrupt state file rather
+        # than silently booting empty; see `mapencroach.persistence`.
+        store = build_store(demo=demo_mode)
 
     jwt_secret = validate_secret_config(demo_mode)
 
@@ -848,7 +864,9 @@ def create_app(store: Store | None = None) -> FastAPI:
             store.record_audit(
                 actor=user.sub, action="watch.create", object_type="watch", object_id=alert_id
             )
-            return entry.to_dict(started_on)
+            result = entry.to_dict(started_on)
+        store.persist_now()
+        return result
 
     @app.delete("/alerts/{alert_id}/watch", status_code=status.HTTP_204_NO_CONTENT)
     def delete_watch(
@@ -862,6 +880,7 @@ def create_app(store: Store | None = None) -> FastAPI:
             store.record_audit(
                 actor=user.sub, action="watch.delete", object_type="watch", object_id=alert_id
             )
+        store.persist_now()
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.get("/watchlist")
@@ -948,6 +967,7 @@ def create_app(store: Store | None = None) -> FastAPI:
                 object_id=alert_id,
             )
 
+        store.persist_now()
         return [result.to_dict() for result in results]
 
     @app.get("/watchlist/{alert_id}/weeks/{week}/image")
@@ -1101,48 +1121,56 @@ def create_app(store: Store | None = None) -> FastAPI:
                 with store.lock:
                     entry.in_flight.difference_update(week.key for week in this_round)
 
-        # Phase 3 (locked): persist results, move started_on back to cover
-        # the newly-attempted weeks, and audit the run. Guard against the
-        # entry having been unwatched while phase 2 was in-flight -- if so,
-        # there is nothing left to record against.
+        # Phase 3 (locked): apply results in memory, move started_on back
+        # to cover the newly-attempted weeks, and audit the run. Guard
+        # against the entry having been unwatched while phase 2 was
+        # in-flight -- if so, there is nothing left to record against.
+        # Persisting to disk (if configured) happens after this block
+        # exits, never while `store.lock` is held.
         with store.lock:
             if store.watchlist.get(record.alert_id) is not entry:
-                return {
+                mutated = False
+                response_body = {
                     "attempted": [],
                     "started_on": entry.started_on.isoformat(),
                     "remaining_backfill_weeks": remaining_after,
                 }
+            else:
+                if results:
+                    entry.captures = sorted(entry.captures + results, key=lambda c: c.week)
+                    # started_on is a plain calendar date (see WatchEntryRecord),
+                    # not week-aligned -- when this round reached all the way
+                    # back to `effective_from` (remaining_after == 0), snap to
+                    # that exact requested date rather than the Monday of its
+                    # ISO week, so a full backfill to the floor reports
+                    # started_on == the floor exactly, as the contract shows.
+                    # A partial round (more weeks still owed) instead advances
+                    # started_on to the Monday of the earliest week actually
+                    # attempted this round. Either way, `min` keeps the update
+                    # monotonically backward-only, which is what makes two
+                    # concurrent backfills converge on the correct final value
+                    # regardless of which one's phase 3 runs last.
+                    candidate = effective_from if remaining_after == 0 else this_round[0].start
+                    entry.started_on = min(entry.started_on, candidate)
 
-            if results:
-                entry.captures = sorted(entry.captures + results, key=lambda c: c.week)
-                # started_on is a plain calendar date (see WatchEntryRecord),
-                # not week-aligned -- when this round reached all the way
-                # back to `effective_from` (remaining_after == 0), snap to
-                # that exact requested date rather than the Monday of its
-                # ISO week, so a full backfill to the floor reports
-                # started_on == the floor exactly, as the contract shows.
-                # A partial round (more weeks still owed) instead advances
-                # started_on to the Monday of the earliest week actually
-                # attempted this round. Either way, `min` keeps the update
-                # monotonically backward-only, which is what makes two
-                # concurrent backfills converge on the correct final value
-                # regardless of which one's phase 3 runs last.
-                candidate = effective_from if remaining_after == 0 else this_round[0].start
-                entry.started_on = min(entry.started_on, candidate)
+                mutated = created_entry or bool(results)
+                if mutated:
+                    store.record_audit(
+                        actor=user.sub,
+                        action="watch.backfill",
+                        object_type="watch",
+                        object_id=record.alert_id,
+                    )
 
-            if created_entry or results:
-                store.record_audit(
-                    actor=user.sub,
-                    action="watch.backfill",
-                    object_type="watch",
-                    object_id=record.alert_id,
-                )
+                response_body = {
+                    "attempted": [result.to_dict() for result in results],
+                    "started_on": entry.started_on.isoformat(),
+                    "remaining_backfill_weeks": remaining_after,
+                }
 
-            return {
-                "attempted": [result.to_dict() for result in results],
-                "started_on": entry.started_on.isoformat(),
-                "remaining_backfill_weeks": remaining_after,
-            }
+        if mutated:
+            store.persist_now()
+        return response_body
 
     @app.get("/cases/{case_id}/imagery/{week}/image")
     def get_case_scene_image(
