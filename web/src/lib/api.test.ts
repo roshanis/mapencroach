@@ -8,15 +8,21 @@ import {
   getParcelContext,
   getParcels,
   getPersonas,
+  getWatchEntry,
+  getWatchlist,
   loginPersona,
   removeParcelTag,
+  runCaptures,
   transitionCase,
+  unwatchAlert,
+  watchAlert,
 } from "./api";
 import {
   FIXTURE_ALERTS,
   FIXTURE_CASES,
   FIXTURE_PARCELS,
   FIXTURE_PARCEL_CONTEXTS,
+  FIXTURE_WATCH_ENTRIES,
 } from "./fixtures";
 
 const ORIGINAL_ENV = process.env.NEXT_PUBLIC_API_URL;
@@ -799,5 +805,238 @@ describe("parcel tag endpoints", () => {
     const result = await removeParcelTag("PCL-1001", "nope");
 
     expect(result).toEqual({ ok: false, status: 404, detail: "tag not present" });
+  });
+});
+
+describe("weekly-snapshot watchlist endpoints", () => {
+  describe("without NEXT_PUBLIC_API_URL (fixture mode)", () => {
+    it("getWatchlist falls back to the fixture watch entries", async () => {
+      delete process.env.NEXT_PUBLIC_API_URL;
+      const entries = await getWatchlist();
+      expect(entries).toEqual(FIXTURE_WATCH_ENTRIES);
+    });
+
+    it("getWatchEntry falls back to a single fixture entry by alert id", async () => {
+      delete process.env.NEXT_PUBLIC_API_URL;
+      const entry = await getWatchEntry("ALT-5001");
+      expect(entry).toEqual(FIXTURE_WATCH_ENTRIES[0]);
+    });
+
+    it("getWatchEntry returns undefined for an alert with no fixture watch entry", async () => {
+      delete process.env.NEXT_PUBLIC_API_URL;
+      const entry = await getWatchEntry("ALT-9999-NOT-WATCHED");
+      expect(entry).toBeUndefined();
+    });
+
+    it("watchAlert, unwatchAlert and runCaptures all refuse as read-only without calling fetch", async () => {
+      delete process.env.NEXT_PUBLIC_API_URL;
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      await expect(watchAlert("ALT-5001")).resolves.toEqual({
+        ok: false,
+        status: 0,
+        detail: "No backend configured — fixture mode is read-only.",
+      });
+      await expect(unwatchAlert("ALT-5001")).resolves.toEqual({
+        ok: false,
+        status: 0,
+        detail: "No backend configured — fixture mode is read-only.",
+      });
+      await expect(runCaptures("ALT-5001")).resolves.toEqual({
+        ok: false,
+        status: 0,
+        detail: "No backend configured — fixture mode is read-only.",
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("with NEXT_PUBLIC_API_URL set", () => {
+    it("getWatchlist fetches the watchlist from the REST backend", async () => {
+      process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => FIXTURE_WATCH_ENTRIES,
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const entries = await getWatchlist();
+
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        "https://api.example.test/watchlist"
+      );
+      expect(entries).toEqual(FIXTURE_WATCH_ENTRIES);
+    });
+
+    it("getWatchEntry returns undefined on a genuine 404 but propagates a 500", async () => {
+      process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        json: async () => ({}),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      await expect(getWatchEntry("ALT-MISSING")).resolves.toBeUndefined();
+
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 500,
+        statusText: "Internal Server Error",
+        json: async () => ({}),
+      });
+      await expect(getWatchEntry("ALT-5001")).rejects.toMatchObject({
+        status: 500,
+      });
+    });
+
+    it("watchAlert posts to /alerts/{id}/watch with auth and returns the created entry on 201", async () => {
+      process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+      document.cookie = "mapencroach_token=test-token-123; path=/";
+      const entry = FIXTURE_WATCH_ENTRIES[0];
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 201,
+        statusText: "Created",
+        json: async () => entry,
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await watchAlert("ALT-5001");
+
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        "https://api.example.test/alerts/ALT-5001/watch"
+      );
+      const [, init] = fetchMock.mock.calls[0];
+      expect(init.method).toBe("POST");
+      expect(init.headers).toMatchObject({
+        Authorization: "Bearer test-token-123",
+      });
+      expect(result).toEqual({ ok: true, status: 201, entry });
+      document.cookie = "mapencroach_token=; path=/; max-age=0";
+    });
+
+    it("watchAlert returns the refusal detail on a 422 (alert tier is not RED)", async () => {
+      process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 422,
+        statusText: "Unprocessable Entity",
+        json: async () => ({ detail: "alert tier must be RED" }),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await watchAlert("ALT-5003");
+
+      expect(result).toEqual({
+        ok: false,
+        status: 422,
+        detail: "alert tier must be RED",
+      });
+    });
+
+    it("watchAlert returns the refusal detail on a 409 (already watched)", async () => {
+      process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        statusText: "Conflict",
+        json: async () => ({ detail: "already watched" }),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await watchAlert("ALT-5001");
+
+      expect(result).toEqual({ ok: false, status: 409, detail: "already watched" });
+    });
+
+    it("unwatchAlert deletes /alerts/{id}/watch and returns ok:true on 204", async () => {
+      process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 204,
+        statusText: "No Content",
+        json: async () => {
+          throw new Error("no body");
+        },
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await unwatchAlert("ALT-5001");
+
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        "https://api.example.test/alerts/ALT-5001/watch"
+      );
+      const [, init] = fetchMock.mock.calls[0];
+      expect(init.method).toBe("DELETE");
+      expect(result).toEqual({ ok: true, status: 204 });
+    });
+
+    it("unwatchAlert falls back to statusText when the 404 body has no detail", async () => {
+      process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        json: async () => {
+          throw new Error("not json");
+        },
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await unwatchAlert("ALT-9999");
+
+      expect(result).toEqual({ ok: false, status: 404, detail: "Not Found" });
+    });
+
+    it("runCaptures posts to /watchlist/{id}/captures and returns only the newly attempted weeks", async () => {
+      process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+      const newAttempts = [
+        {
+          week: "2026-W31",
+          status: "captured",
+          attempted_at: "2026-08-01T06:00:00Z",
+          scene_id: "S2A_SCENE_NEW",
+          sha256: "abc123",
+          cloud_pct: 10.0,
+          reason: null,
+        },
+      ];
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 201,
+        statusText: "Created",
+        json: async () => newAttempts,
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await runCaptures("ALT-5001");
+
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        "https://api.example.test/watchlist/ALT-5001/captures"
+      );
+      const [, init] = fetchMock.mock.calls[0];
+      expect(init.method).toBe("POST");
+      expect(result).toEqual({ ok: true, status: 201, attempts: newAttempts });
+    });
+
+    it("runCaptures propagates a non-2xx failure with its detail", async () => {
+      process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        json: async () => ({ detail: "not watched" }),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await runCaptures("ALT-9999");
+
+      expect(result).toEqual({ ok: false, status: 404, detail: "not watched" });
+    });
   });
 });

@@ -10,16 +10,19 @@ import {
   FIXTURE_CASES,
   FIXTURE_PARCELS,
   FIXTURE_PARCEL_CONTEXTS,
+  FIXTURE_WATCH_ENTRIES,
 } from "./fixtures";
 import type {
   Alert,
   BBox,
   Case,
   CaseEvent,
+  CaptureAttempt,
   LandCategory,
   BoundaryGrade,
   Parcel,
   ParcelContext,
+  WatchEntry,
 } from "./types";
 
 export const TOKEN_COOKIE = "mapencroach_token";
@@ -504,4 +507,156 @@ export async function removeParcelTag(
     undefined,
     token
   );
+}
+
+// Weekly-snapshot watchlist ---------------------------------------------
+//
+// POST/DELETE /alerts/{id}/watch and POST /watchlist/{id}/captures are
+// mutations; like transitionCase/tagRequest above, fixture mode (no
+// NEXT_PUBLIC_API_URL) refuses them with a read-only detail rather than
+// pretending to succeed. GET /watchlist and GET /watchlist/{id} are reads,
+// so they fall back to FIXTURE_WATCH_ENTRIES the same way getAlerts/getCases
+// fall back to their fixtures.
+
+/** Extracts a `detail` string from a failed JSON response body, falling
+ * back to statusText when the body is missing or not JSON. */
+async function readErrorDetail(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as { detail?: string };
+    if (typeof body?.detail === "string") return body.detail;
+  } catch {
+    // fall back to statusText
+  }
+  return res.statusText;
+}
+
+export async function getWatchlist(token?: string): Promise<WatchEntry[]> {
+  const base = getApiBase();
+  if (!base) return FIXTURE_WATCH_ENTRIES;
+  return fetchJson<WatchEntry[]>(`${base}/watchlist`, token);
+}
+
+export async function getWatchEntry(
+  alertId: string,
+  token?: string
+): Promise<WatchEntry | undefined> {
+  const base = getApiBase();
+  if (!base) {
+    return FIXTURE_WATCH_ENTRIES.find((entry) => entry.alert_id === alertId);
+  }
+  try {
+    return await fetchJson<WatchEntry>(`${base}/watchlist/${alertId}`, token);
+  } catch (error) {
+    // A watch entry that genuinely does not exist (never watched, or out of
+    // jurisdiction scope — the backend never distinguishes the two) is a
+    // 404. Any other failure must propagate rather than read as "not
+    // watched".
+    if (error instanceof ApiError && error.status === 404) return undefined;
+    throw error;
+  }
+}
+
+export interface WatchResult {
+  ok: boolean;
+  status: number;
+  detail?: string;
+  entry?: WatchEntry;
+}
+
+/**
+ * Starts watching a RED-tier alert. The backend enforces the tier rule
+ * (422 for anything not RED) and the "already watched" rule (409) — callers
+ * should still gate the control on tier client-side so officers aren't
+ * invited to click into a 422.
+ */
+export async function watchAlert(
+  alertId: string,
+  token?: string
+): Promise<WatchResult> {
+  const base = getApiBase();
+  if (!base) {
+    return {
+      ok: false,
+      status: 0,
+      detail: "No backend configured — fixture mode is read-only.",
+    };
+  }
+
+  const res = await fetch(`${base}/alerts/${alertId}/watch`, {
+    method: "POST",
+    headers: { ...authHeaders(token) },
+  });
+
+  if (res.ok) {
+    const entry = (await res.json()) as WatchEntry;
+    return { ok: true, status: res.status, entry };
+  }
+  return { ok: false, status: res.status, detail: await readErrorDetail(res) };
+}
+
+export interface UnwatchResult {
+  ok: boolean;
+  status: number;
+  detail?: string;
+}
+
+export async function unwatchAlert(
+  alertId: string,
+  token?: string
+): Promise<UnwatchResult> {
+  const base = getApiBase();
+  if (!base) {
+    return {
+      ok: false,
+      status: 0,
+      detail: "No backend configured — fixture mode is read-only.",
+    };
+  }
+
+  const res = await fetch(`${base}/alerts/${alertId}/watch`, {
+    method: "DELETE",
+    headers: { ...authHeaders(token) },
+  });
+
+  if (res.ok) return { ok: true, status: res.status };
+  return { ok: false, status: res.status, detail: await readErrorDetail(res) };
+}
+
+export interface RunCapturesResult {
+  ok: boolean;
+  status: number;
+  detail?: string;
+  /** Only the newly attempted weeks (ascending), per the contract — not the
+   * full capture history. */
+  attempts?: CaptureAttempt[];
+}
+
+/**
+ * Runs every currently-due week for a watched alert. There is no
+ * scheduler behind this — it is an explicit, officer-triggered action, and
+ * UI copy calling it must say so rather than implying automatic capture.
+ */
+export async function runCaptures(
+  alertId: string,
+  token?: string
+): Promise<RunCapturesResult> {
+  const base = getApiBase();
+  if (!base) {
+    return {
+      ok: false,
+      status: 0,
+      detail: "No backend configured — fixture mode is read-only.",
+    };
+  }
+
+  const res = await fetch(`${base}/watchlist/${alertId}/captures`, {
+    method: "POST",
+    headers: { ...authHeaders(token) },
+  });
+
+  if (res.ok) {
+    const attempts = (await res.json()) as CaptureAttempt[];
+    return { ok: true, status: res.status, attempts };
+  }
+  return { ok: false, status: res.status, detail: await readErrorDetail(res) };
 }

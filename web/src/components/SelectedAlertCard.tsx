@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { BoundaryGradeBadge } from "./BoundaryGradeBadge";
 import { TierChip } from "./TierChip";
+import { WatchToggle } from "./WatchToggle";
 import type { Alert, Parcel } from "@/lib/types";
 
 export interface SelectedAlertCardProps {
@@ -54,6 +55,9 @@ export function SelectedAlertCard({
         <span className="text-xs text-slate-500">
           Severity {alert.severity_score}
         </span>
+      </div>
+      <div className="mt-3">
+        <WatchToggle alert={alert} />
       </div>
       <Link
         href={`/parcels/${parcel.id}`}

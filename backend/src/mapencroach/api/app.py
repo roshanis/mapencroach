@@ -13,7 +13,11 @@ FeatureCollection) so existing clients don't need an envelope migration.
 Case transitions into a state the domain reserves for legal authority
 (hearing held, order issued, or the case ending) require Role.LEGAL_OFFICER
 or Role.SYSTEM_ADMIN; ordinary triage/survey/notice transitions stay with
-Role.CASE_OFFICER.
+Role.CASE_OFFICER. Weekly-snapshot watch entries (/alerts/{id}/watch,
+/watchlist*) follow the same jurisdiction-scoping and 404-not-403 rule as
+alerts, and can only be created for RED-tier alerts; capture runs are
+idempotent per ISO week (mapencroach.imagery.schedule.due_weeks) and never
+hold store.lock across imagery provider I/O.
 """
 
 import os
@@ -33,7 +37,7 @@ from mapencroach.api.auth import (
     require_roles,
     validate_secret_config,
 )
-from mapencroach.api.store import JURISDICTION_NAMES, Store
+from mapencroach.api.store import JURISDICTION_NAMES, Store, WatchEntryRecord
 from mapencroach.domain.alerts import AlertTier, severity_score
 from mapencroach.domain.case_engine import (
     Case,
@@ -44,6 +48,8 @@ from mapencroach.domain.case_engine import (
     required_artifacts_for,
     transition,
 )
+from mapencroach.imagery.capture import capture_week
+from mapencroach.imagery.schedule import due_weeks
 
 _VALID_GRADES = {"A", "B", "C"}
 
@@ -210,6 +216,28 @@ def _parcel_to_feature(parcel: dict[str, Any]) -> dict[str, Any]:
 
 def _user_scope(store: Store, user: User) -> set[str]:
     return store.tree.scope_ids(user.jurisdiction_id)
+
+
+# Weekly-snapshot watch mutations (watch/unwatch/capture-run): case-officer
+# tier or above, the same "case officer or higher" tier as ordinary case
+# transitions (routine transitions use this exact role set in
+# transition_case below).
+_WATCH_ROLES = (Role.CASE_OFFICER, Role.LEGAL_OFFICER, Role.SYSTEM_ADMIN)
+
+
+def _resolve_watch_entry(store: Store, user: User, alert_id: str) -> WatchEntryRecord:
+    """Look up a watch entry, 404ing (never 403) if it doesn't exist or the
+    caller's jurisdiction scope doesn't cover its parcel -- watch entries
+    are scoped exactly like alerts, so out-of-scope must not leak that the
+    entry exists."""
+    entry = store.watchlist.get(alert_id)
+    scope = _user_scope(store, user)
+    if entry is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="watch entry not found")
+    parcel = store.parcels.get(entry.parcel_id)
+    if parcel is None or parcel["jurisdiction_id"] not in scope:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="watch entry not found")
+    return entry
 
 
 def _transition_options(case: Case) -> tuple[list[str], dict[str, list[str]]]:
@@ -640,5 +668,148 @@ def create_app(store: Store | None = None) -> FastAPI:
             "allowed_transitions": allowed,
             "required_artifacts": required,
         }
+
+    # ------------------------------------------------------------------
+    # Weekly-snapshot watch-list
+    # ------------------------------------------------------------------
+
+    @app.post("/alerts/{alert_id}/watch", status_code=status.HTTP_201_CREATED)
+    def create_watch(
+        alert_id: str,
+        store: StoreDep,
+        user: Annotated[User, Depends(require_roles(*_WATCH_ROLES))],
+    ) -> dict[str, Any]:
+        scope = _user_scope(store, user)
+        with store.lock:
+            alert = store.alerts.get(alert_id)
+            parcel = store.parcels.get(alert["parcel_id"]) if alert is not None else None
+            if alert is None or parcel is None or parcel["jurisdiction_id"] not in scope:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="alert not found"
+                )
+
+            if alert_id in store.watchlist:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT, detail="alert is already watched"
+                )
+
+            if AlertTier(alert["tier"]) != AlertTier.RED:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail="only RED-tier alerts can be watched",
+                )
+
+            started_on = store.clock().date()
+            entry = WatchEntryRecord(
+                alert_id=alert_id,
+                parcel_id=alert["parcel_id"],
+                started_on=started_on,
+                watched_by=user.sub,
+            )
+            store.watchlist[alert_id] = entry
+            store.record_audit(
+                actor=user.sub, action="watch.create", object_type="watch", object_id=alert_id
+            )
+            return entry.to_dict(started_on)
+
+    @app.delete("/alerts/{alert_id}/watch", status_code=status.HTTP_204_NO_CONTENT)
+    def delete_watch(
+        alert_id: str,
+        store: StoreDep,
+        user: Annotated[User, Depends(require_roles(*_WATCH_ROLES))],
+    ) -> Response:
+        with store.lock:
+            _resolve_watch_entry(store, user, alert_id)
+            del store.watchlist[alert_id]
+            store.record_audit(
+                actor=user.sub, action="watch.delete", object_type="watch", object_id=alert_id
+            )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.get("/watchlist")
+    def list_watchlist(
+        store: StoreDep,
+        user: CurrentUser,
+        response: Response,
+        limit: LimitQuery = _DEFAULT_PAGE_SIZE,
+        offset: OffsetQuery = 0,
+    ) -> list[dict[str, Any]]:
+        scope = _user_scope(store, user)
+        today = store.clock().date()
+        matched = []
+        for entry in store.watchlist.values():
+            parcel = store.parcels.get(entry.parcel_id)
+            if parcel is None or parcel["jurisdiction_id"] not in scope:
+                continue
+            matched.append(entry)
+        response.headers["X-Total-Count"] = str(len(matched))
+        page = matched[offset : offset + limit]
+        return [entry.to_dict(today) for entry in page]
+
+    @app.get("/watchlist/{alert_id}")
+    def get_watchlist_entry(alert_id: str, store: StoreDep, user: CurrentUser) -> dict[str, Any]:
+        entry = _resolve_watch_entry(store, user, alert_id)
+        return entry.to_dict(store.clock().date())
+
+    @app.post("/watchlist/{alert_id}/captures", status_code=status.HTTP_201_CREATED)
+    def run_watchlist_captures(
+        alert_id: str,
+        store: StoreDep,
+        user: Annotated[User, Depends(require_roles(*_WATCH_ROLES))],
+    ) -> list[dict[str, Any]]:
+        # Phase 1 (locked): resolve scope, decide which weeks are due, and
+        # reserve them in `entry.in_flight` so a concurrent capture run for
+        # the same alert can't also pick them up. This is the only part
+        # that touches shared store state before provider I/O runs.
+        with store.lock:
+            entry = _resolve_watch_entry(store, user, alert_id)
+            attempted_at = store.clock()
+            already = {c.week for c in entry.captures} | entry.in_flight
+            due = due_weeks(entry.started_on, attempted_at.date(), already)
+            if not due:
+                return []
+            entry.in_flight.update(week.key for week in due)
+            provider = store.imagery_provider
+            registry = store.scene_registry
+            geometry = store.parcels[entry.parcel_id]["geometry"]
+
+        # Phase 2 (unlocked): the actual provider fetches. Deliberately
+        # outside the lock -- these may be real network calls (Copernicus)
+        # and holding a process-wide lock across network I/O would stall
+        # every other request for as long as the slowest fetch takes. The
+        # `in_flight` reservation taken above is what keeps this safe: no
+        # other request can have claimed the same (alert, week) pair while
+        # this runs, so there's nothing to interleave destructively even
+        # though the lock is released.
+        try:
+            results = [
+                capture_week(
+                    provider,
+                    registry,
+                    geometry=geometry,
+                    week=week,
+                    attempted_at=attempted_at,
+                )
+                for week in due
+            ]
+        finally:
+            with store.lock:
+                entry.in_flight.difference_update(week.key for week in due)
+
+        # Phase 3 (locked): persist results and audit the run. Guard
+        # against the entry having been unwatched while phase 2 was
+        # in-flight -- if so, there is nothing left to record against.
+        with store.lock:
+            if store.watchlist.get(alert_id) is not entry:
+                return []
+            entry.captures.extend(results)
+            store.record_audit(
+                actor=user.sub,
+                action="watch.capture_run",
+                object_type="watch",
+                object_id=alert_id,
+            )
+
+        return [result.to_dict() for result in results]
 
     return app

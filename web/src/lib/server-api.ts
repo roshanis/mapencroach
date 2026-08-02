@@ -11,9 +11,11 @@ import {
   getCases,
   getParcel,
   getParcelContext,
+  getWatchEntry,
+  getWatchlist,
   TOKEN_COOKIE,
 } from "./api";
-import type { Alert, Case, Parcel, ParcelContext } from "./types";
+import type { Alert, Case, Parcel, ParcelContext, WatchEntry } from "./types";
 
 // Server-only fallback credential. Unlike NEXT_PUBLIC_API_TOKEN this is never
 // inlined into client JavaScript — only read here, in a module that must
@@ -64,4 +66,16 @@ export async function getCaseForRequest(
 export async function getCasesForRequest(): Promise<Case[]> {
   const token = await serverToken();
   return getCases(token);
+}
+
+export async function getWatchlistForRequest(): Promise<WatchEntry[]> {
+  const token = await serverToken();
+  return getWatchlist(token);
+}
+
+export async function getWatchEntryForRequest(
+  alertId: string
+): Promise<WatchEntry | undefined> {
+  const token = await serverToken();
+  return getWatchEntry(alertId, token);
 }

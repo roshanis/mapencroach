@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import CommandMapPage from "./page";
-import { getAlerts, getCases, getParcels } from "@/lib/api";
+import { getAlerts, getCases, getParcels, getWatchEntry } from "@/lib/api";
 import {
   FIXTURE_ALERTS,
   FIXTURE_CASES,
@@ -12,6 +12,9 @@ vi.mock("@/lib/api", () => ({
   getAlerts: vi.fn(),
   getCases: vi.fn(),
   getParcels: vi.fn(),
+  getWatchEntry: vi.fn(),
+  watchAlert: vi.fn(),
+  unwatchAlert: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -52,6 +55,7 @@ beforeEach(() => {
   vi.mocked(getParcels).mockResolvedValue(FIXTURE_PARCELS);
   vi.mocked(getAlerts).mockResolvedValue(FIXTURE_ALERTS);
   vi.mocked(getCases).mockResolvedValue(FIXTURE_CASES);
+  vi.mocked(getWatchEntry).mockResolvedValue(undefined);
 });
 
 describe("CommandMapPage", () => {

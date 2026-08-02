@@ -268,3 +268,32 @@ export interface BBox {
   east: number;
   north: number;
 }
+
+// Weekly-snapshot watchlist (mapencroach/imagery/capture.py + the
+// /watchlist HTTP API). CaptureAttempt/WatchEntry mirror the backend
+// dataclasses field-for-field — see the interface contract.
+
+export type CaptureStatus = "captured" | "no_usable_scene" | "provider_error";
+
+export interface CaptureAttempt {
+  /** WeekRef.key, e.g. "2026-W31". */
+  week: string;
+  status: CaptureStatus;
+  attempted_at: string;
+  scene_id: string | null;
+  sha256: string | null;
+  cloud_pct: number | null;
+  /** Human-readable; always set unless status is "captured". */
+  reason: string | null;
+}
+
+export interface WatchEntry {
+  alert_id: string;
+  parcel_id: string;
+  started_on: string;
+  cadence: "weekly";
+  watched_by: string;
+  captures: CaptureAttempt[];
+  /** Weeks from started_on through today that have not yet been attempted. */
+  due_weeks: string[];
+}

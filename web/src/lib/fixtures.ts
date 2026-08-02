@@ -4,7 +4,7 @@
 // the waterbody-encroachment storyline.
 
 import type { Persona } from "./api";
-import type { Alert, Case, Parcel, ParcelContext } from "./types";
+import type { Alert, Case, Parcel, ParcelContext, WatchEntry } from "./types";
 
 function square(
   centerLng: number,
@@ -620,6 +620,124 @@ export const FIXTURE_CASES: Case[] = [
         note: "Occupant obtained a High Court stay before the response window closed; case paused pending the court's order.",
       },
     ],
+  },
+];
+
+// Weekly-snapshot watchlist fixtures. Both watched alerts are RED tier
+// (ALT-5001/PCL-1001, ALT-5002/PCL-1008 — see FIXTURE_ALERTS), matching the
+// "only RED alerts are watchable" rule. ALT-5001's capture history is the
+// illustrative one: it deliberately includes every week state the timeline
+// must render distinctly — captured (varying cloud %), a too-cloudy
+// no_usable_scene week, a no-coverage no_usable_scene week, a
+// provider_error week, and a due-but-not-yet-attempted current week. The
+// gaps are not blank; each carries a real reason, because an unexplained
+// hole in the evidence record is worse than a stated one.
+export const FIXTURE_WATCH_ENTRIES: WatchEntry[] = [
+  {
+    alert_id: "ALT-5001",
+    parcel_id: "PCL-1001",
+    started_on: "2026-06-01",
+    cadence: "weekly",
+    watched_by: "Enforcement Officer, Haridwar",
+    captures: [
+      {
+        week: "2026-W23",
+        status: "captured",
+        attempted_at: "2026-06-01T06:15:00Z",
+        scene_id: "S2A_MSIL2A_20260601T051651_R000_T44RNA",
+        sha256: "e57738c57fbbf69c54a29e1f16142c3d44b54990cd3ec625158fd01c63a973d",
+        cloud_pct: 8.5,
+        reason: null,
+      },
+      {
+        week: "2026-W24",
+        status: "captured",
+        attempted_at: "2026-06-08T06:10:00Z",
+        scene_id: "S2B_MSIL2A_20260608T051649_R000_T44RNA",
+        sha256: "6f8194b1d3adfcb6f8d2542e43d5b5f019e14b142903d90a89da0a192d7e567",
+        cloud_pct: 22.0,
+        reason: null,
+      },
+      {
+        week: "2026-W25",
+        status: "no_usable_scene",
+        attempted_at: "2026-06-15T06:20:00Z",
+        scene_id: null,
+        sha256: null,
+        cloud_pct: 78.0,
+        reason:
+          "Cloud cover 78.0% exceeds the 40.0% usability threshold for this week's pass.",
+      },
+      {
+        week: "2026-W26",
+        status: "captured",
+        attempted_at: "2026-06-22T06:05:00Z",
+        scene_id: "S2A_MSIL2A_20260622T051651_R000_T44RNA",
+        sha256: "464be070d5771986b44f4629c3f9174532d054affdd3b2cb734c19b6ab93476",
+        cloud_pct: 15.0,
+        reason: null,
+      },
+      {
+        week: "2026-W27",
+        status: "provider_error",
+        attempted_at: "2026-06-29T06:12:00Z",
+        scene_id: null,
+        sha256: null,
+        cloud_pct: null,
+        reason:
+          "Provider request failed: Copernicus Data Space token endpoint returned 503 Service Unavailable.",
+      },
+      {
+        week: "2026-W28",
+        status: "captured",
+        attempted_at: "2026-07-06T06:08:00Z",
+        scene_id: "S2B_MSIL2A_20260706T051649_R000_T44RNA",
+        sha256: "140f480f450cd43892c9c16689555907834d71961e5f8c1ff4759547696ed3",
+        cloud_pct: 30.0,
+        reason: null,
+      },
+      {
+        week: "2026-W29",
+        status: "captured",
+        attempted_at: "2026-07-13T06:14:00Z",
+        scene_id: "S2A_MSIL2A_20260713T051651_R000_T44RNA",
+        sha256: "c9d42a6749a9bd7ce0e04d09f48742666767874f81ae10ccabf0a9921575b03",
+        cloud_pct: 12.0,
+        reason: null,
+      },
+      {
+        week: "2026-W30",
+        status: "no_usable_scene",
+        attempted_at: "2026-07-20T06:18:00Z",
+        scene_id: null,
+        sha256: null,
+        cloud_pct: null,
+        reason:
+          "No Sentinel-2 scene intersects this parcel's footprint within the 2026-07-20–2026-07-26 catalog window.",
+      },
+    ],
+    due_weeks: ["2026-W31"],
+  },
+  {
+    // A watch that only just started: one clean capture, one week due. Shows
+    // the timeline's early state, not just a long-running one.
+    alert_id: "ALT-5002",
+    parcel_id: "PCL-1008",
+    started_on: "2026-07-20",
+    cadence: "weekly",
+    watched_by: "Enforcement Officer, Haridwar",
+    captures: [
+      {
+        week: "2026-W30",
+        status: "captured",
+        attempted_at: "2026-07-20T06:05:00Z",
+        scene_id: "S2A_MSIL2A_20260720T051651_R000_T44RNA",
+        sha256: "773f8f6cabd790f4e5a48d5112c9fc91c89af553109db8213daff1932733d7c",
+        cloud_pct: 5.0,
+        reason: null,
+      },
+    ],
+    due_weeks: ["2026-W31"],
   },
 ];
 

@@ -26,6 +26,11 @@ const NAV_ITEMS: NavItem[] = [
     label: "Cases",
     match: (path) => path === "/cases" || path.startsWith("/cases/"),
   },
+  {
+    href: "/watchlist",
+    label: "Watchlist",
+    match: (path) => path === "/watchlist" || path.startsWith("/watchlist/"),
+  },
 ];
 
 const ACTIVE_CLASSES =

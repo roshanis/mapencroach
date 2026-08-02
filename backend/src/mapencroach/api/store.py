@@ -19,8 +19,9 @@ individual methods alone.
 """
 
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from mapencroach.audit.chain import AuditEntry, append_entry
@@ -34,8 +35,24 @@ from mapencroach.domain.geography import (
     ParcelContext,
 )
 from mapencroach.domain.jurisdiction import JurisdictionTree
+from mapencroach.imagery.capture import CaptureAttempt, ImageryProvider
+from mapencroach.imagery.providers import build_provider
+from mapencroach.imagery.registry import SceneRegistry
+from mapencroach.imagery.schedule import due_weeks
 
 _PARCEL_SIZE_DEG = 0.001  # ~110m square at this latitude
+
+
+def _utc_now() -> datetime:
+    """Default `Store.clock`: real wall-clock time, UTC.
+
+    Centralizing "now" behind a store attribute (rather than reading
+    `datetime.now()` inline in the watchlist handlers) is what lets tests
+    pin "today" deterministically -- swap `store.clock` for a fixed
+    callable and every started_on/due_weeks computation in the request
+    follows it, including across a week boundary.
+    """
+    return datetime.now(UTC)
 
 
 def _square_polygon(center_lon: float, center_lat: float, half_size: float) -> dict[str, Any]:
@@ -79,6 +96,47 @@ class CaseRecord:
 
 
 @dataclass
+class WatchEntryRecord:
+    """A RED alert under weekly-snapshot watch, plus its capture history.
+
+    `in_flight` records weeks a capture run has claimed but not yet
+    written a `CaptureAttempt` for. It exists so `POST
+    /watchlist/{id}/captures` can release `store.lock` while it does
+    provider I/O (never holding the lock across network calls) without a
+    second concurrent run re-selecting and double-attempting the same
+    week -- see that handler in `api/app.py`. It is bookkeeping only, not
+    part of the public WatchEntry JSON shape, so like the store's other
+    internal-only fields it is excluded from repr/compare.
+    """
+
+    alert_id: str
+    parcel_id: str
+    started_on: date
+    watched_by: str
+    captures: list[CaptureAttempt] = field(default_factory=list)
+    in_flight: set[str] = field(default_factory=set, repr=False, compare=False)
+
+    def to_dict(self, today: date) -> dict[str, Any]:
+        """Render the WatchEntry JSON shape (see the HTTP API contract).
+
+        `due_weeks` is derived fresh from `started_on`/`captures` against
+        the caller-supplied `today` rather than cached, so it's always
+        consistent with whatever the store's clock currently says.
+        """
+        attempted = {c.week for c in self.captures}
+        due = due_weeks(self.started_on, today, attempted)
+        return {
+            "alert_id": self.alert_id,
+            "parcel_id": self.parcel_id,
+            "started_on": self.started_on.isoformat(),
+            "cadence": "weekly",
+            "watched_by": self.watched_by,
+            "captures": [c.to_dict() for c in self.captures],
+            "due_weeks": [week.key for week in due],
+        }
+
+
+@dataclass
 class Store:
     """Mutable in-memory data store shared across a single app instance."""
 
@@ -88,6 +146,7 @@ class Store:
     cases: dict[str, CaseRecord] = field(default_factory=dict)
     parcel_contexts: dict[str, ParcelContext] = field(default_factory=dict)
     audit_chain: list[AuditEntry] = field(default_factory=list)
+    watchlist: dict[str, WatchEntryRecord] = field(default_factory=dict)
 
     root_jurisdiction_id: str = "state"
     district_a_id: str = "dist-a"
@@ -95,6 +154,20 @@ class Store:
 
     _next_alert_seq: int = 0
     _next_case_seq: int = 0
+
+    # Weekly-snapshot watch state. `scene_registry` is the hash-on-ingest
+    # evidence anchor and must stay a single shared instance for the life
+    # of the store -- a per-request registry would defeat both dedup and
+    # hash-chain continuity. `imagery_provider` is env-selected via
+    # `build_provider()` (falls back to the deterministic demo provider
+    # with no credentials configured) and can be swapped for a fake in
+    # tests that need to force provider_error/no_usable_scene outcomes
+    # without touching the network. `clock` centralizes "now" so watch
+    # start dates and due-week math are deterministic under test control
+    # (see `_utc_now`).
+    scene_registry: SceneRegistry = field(default_factory=SceneRegistry)
+    imagery_provider: ImageryProvider = field(default_factory=build_provider)
+    clock: Callable[[], datetime] = field(default_factory=lambda: _utc_now)
 
     def __post_init__(self) -> None:
         self._tree: JurisdictionTree | None = None
