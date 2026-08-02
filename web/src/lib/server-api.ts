@@ -14,6 +14,7 @@ import {
   getParcels,
   TOKEN_COOKIE,
 } from "./api";
+import { PERSONA_META_COOKIE } from "./cookies";
 import type {
   Alert,
   AlertFilters,
@@ -26,6 +27,24 @@ import type {
 export async function serverToken(): Promise<string | undefined> {
   try {
     return (await cookies()).get(TOKEN_COOKIE)?.value;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Reads the active demo persona's role from PERSONA_META_COOKIE, server-side
+ * (mirrors the client-side parsing done by ViewingAsBanner/TopBar via
+ * `readCookie`). Returns undefined when the cookie is absent, malformed, or
+ * carries a non-string role — callers must treat undefined as the demo's
+ * default case-officer session, not as "no access".
+ */
+export async function getPersonaRoleForRequest(): Promise<string | undefined> {
+  try {
+    const raw = (await cookies()).get(PERSONA_META_COOKIE)?.value;
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as { role?: unknown };
+    return typeof parsed?.role === "string" ? parsed.role : undefined;
   } catch {
     return undefined;
   }

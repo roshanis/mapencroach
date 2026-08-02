@@ -131,6 +131,21 @@ class TestSecretGuard:
         with pytest.raises(RuntimeError, match="MAPENCROACH_JWT_SECRET"):
             create_app(store)
 
+    def test_raises_when_secret_is_empty_string(self, store: Store, monkeypatch):
+        # An operator's deploy config that sets MAPENCROACH_JWT_SECRET="" must
+        # be treated the same as unset -- otherwise the app boots signing
+        # tokens with an empty secret instead of failing closed.
+        monkeypatch.setenv("MAPENCROACH_JWT_SECRET", "")
+        monkeypatch.delenv("MAPENCROACH_DEMO", raising=False)
+        with pytest.raises(RuntimeError, match="MAPENCROACH_JWT_SECRET"):
+            create_app(store)
+
+    def test_raises_when_secret_is_whitespace_only(self, store: Store, monkeypatch):
+        monkeypatch.setenv("MAPENCROACH_JWT_SECRET", "   ")
+        monkeypatch.delenv("MAPENCROACH_DEMO", raising=False)
+        with pytest.raises(RuntimeError, match="MAPENCROACH_JWT_SECRET"):
+            create_app(store)
+
     def test_does_not_raise_in_demo_mode_with_default_secret(
         self, store: Store, monkeypatch
     ):
@@ -299,6 +314,20 @@ class TestBoundaryGradePatch:
             f"/parcels/{parcel_id}/boundary-grade",
             headers=auth_headers(survey_officer_dist_a_token),
             json={"grade": "Z", "survey_reference": "SR-2026-004"},
+        )
+        assert resp.status_code == 422
+
+    def test_blank_survey_reference_is_422(
+        self, client: TestClient, survey_officer_dist_a_token: str, store: Store
+    ):
+        # The boundary-grade audit trail must record a real survey reference
+        # -- a whitespace-only value is functionally missing evidence and
+        # must not validate.
+        parcel_id = next(iter(store.parcels))
+        resp = client.patch(
+            f"/parcels/{parcel_id}/boundary-grade",
+            headers=auth_headers(survey_officer_dist_a_token),
+            json={"grade": "A", "survey_reference": "   "},
         )
         assert resp.status_code == 422
 
@@ -531,6 +560,51 @@ class TestAlertTierValidation:
             },
         )
         assert resp.status_code == 422
+
+    def test_infinite_area_is_422(self, client: TestClient, state_token: str, store: Store):
+        # `Field(ge=0)` alone lets Infinity through (inf >= 0 is True); it then
+        # JSON-serializes as null downstream, poisoning the store. httpx's
+        # json= encoder rejects non-finite floats outright, so the raw body
+        # is sent via content= to exercise pydantic's own JSON parsing.
+        parcel_id = next(iter(store.parcels))
+        headers = auth_headers(state_token)
+        headers["Content-Type"] = "application/json"
+        detected_at = datetime.now(UTC).isoformat()
+        body = (
+            f'{{"parcel_id": "{parcel_id}", "tier": "RED", "area_m2": Infinity, '
+            f'"detected_at": "{detected_at}"}}'
+        )
+        resp = client.post("/alerts", headers=headers, content=body)
+        assert resp.status_code == 422
+
+    def test_nan_area_is_422(self, client: TestClient, state_token: str, store: Store):
+        parcel_id = next(iter(store.parcels))
+        headers = auth_headers(state_token)
+        headers["Content-Type"] = "application/json"
+        detected_at = datetime.now(UTC).isoformat()
+        body = (
+            f'{{"parcel_id": "{parcel_id}", "tier": "RED", "area_m2": NaN, '
+            f'"detected_at": "{detected_at}"}}'
+        )
+        resp = client.post("/alerts", headers=headers, content=body)
+        assert resp.status_code == 422
+
+    def test_normal_area_still_succeeds(
+        self, client: TestClient, state_token: str, store: Store
+    ):
+        parcel_id = next(iter(store.parcels))
+        resp = client.post(
+            "/alerts",
+            headers=auth_headers(state_token),
+            json={
+                "parcel_id": parcel_id,
+                "tier": "RED",
+                "area_m2": 4321.5,
+                "detected_at": datetime.now(UTC).isoformat(),
+            },
+        )
+        assert resp.status_code == 201
+        assert resp.json()["area_m2"] == 4321.5
 
 
 class TestCases:

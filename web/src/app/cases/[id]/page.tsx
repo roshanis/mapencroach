@@ -4,9 +4,11 @@ import {
   getAlertForRequest,
   getCaseForRequest,
   getParcelForRequest,
+  getPersonaRoleForRequest,
 } from "@/lib/server-api";
 import { STATE_DESCRIPTIONS } from "@/lib/explanations";
 import { formatDuration } from "@/lib/format";
+import { canDraftNotice } from "@/lib/notice-gate";
 import { CASE_STATE_CHAIN, LAND_CATEGORY_LABELS, STATE_LABELS } from "@/lib/types";
 import { EventTimeline } from "@/components/EventTimeline";
 import { EvidenceManifest } from "@/components/EvidenceManifest";
@@ -45,10 +47,12 @@ export default async function CaseDetailPage({
     notFound();
   }
 
-  const [alert, parcel] = await Promise.all([
+  const [alert, parcel, personaRole] = await Promise.all([
     getAlertForRequest(caseRecord.alert_id),
     getParcelForRequest(caseRecord.parcel_id),
+    getPersonaRoleForRequest(),
   ]);
+  const canDraft = canDraftNotice({ role: personaRole, state: caseRecord.state });
 
   // The detail endpoint omits state_since (the list endpoint has it); the
   // last event's timestamp is the same instant by construction.
@@ -184,7 +188,7 @@ export default async function CaseDetailPage({
           />
         </section>
 
-        {parcel && (
+        {parcel && canDraft && (
           <NoticeDraftWorkspace
             caseRecord={caseRecord}
             parcel={parcel}
