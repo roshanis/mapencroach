@@ -22,12 +22,12 @@ hold store.lock across imagery provider I/O.
 
 import os
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from mapencroach.api.auth import (
     Role,
@@ -48,8 +48,8 @@ from mapencroach.domain.case_engine import (
     required_artifacts_for,
     transition,
 )
-from mapencroach.imagery.capture import capture_week
-from mapencroach.imagery.schedule import due_weeks
+from mapencroach.imagery.capture import CaptureAttempt, capture_week
+from mapencroach.imagery.schedule import WeekRef, due_weeks, weeks_from
 
 _VALID_GRADES = {"A", "B", "C"}
 
@@ -223,6 +223,48 @@ def _user_scope(store: Store, user: User) -> set[str]:
 # transitions (routine transitions use this exact role set in
 # transition_case below).
 _WATCH_ROLES = (Role.CASE_OFFICER, Role.LEGAL_OFFICER, Role.SYSTEM_ADMIN)
+
+# Case-imagery backfill is scoped to Jan 2026 forward by default: Sentinel-2
+# resolves 10m from 2017 on, but the product scope for this feature starts
+# 2026-01-01. Read from the environment on every call (not cached at app
+# start) so tests can set it via monkeypatch same as MAPENCROACH_JWT_SECRET.
+_DEFAULT_IMAGERY_BACKFILL_FLOOR = date(2026, 1, 1)
+
+
+def _imagery_backfill_floor() -> date:
+    raw = os.environ.get("MAPENCROACH_IMAGERY_BACKFILL_FLOOR")
+    if not raw:
+        return _DEFAULT_IMAGERY_BACKFILL_FLOOR
+    return date.fromisoformat(raw)
+
+
+def _weeks_needing_backfill(
+    lower_bound: date, started_on: date, attempted: set[str]
+) -> list[WeekRef]:
+    """Weeks strictly earlier than `started_on`'s week, back to `lower_bound`,
+    that have no CaptureAttempt yet -- ascending, closest-to-floor first.
+
+    Mirrors `due_weeks` (weeks_from minus already-attempted) but for the
+    backward-looking range a case-imagery backfill still owes, rather than
+    the forward range a watch entry's regular capture run owes.
+    """
+    if started_on <= lower_bound:
+        return []
+    last_day_before_coverage = started_on - timedelta(days=1)
+    return [
+        week
+        for week in weeks_from(lower_bound, last_day_before_coverage)
+        if week.key not in attempted
+    ]
+
+
+class CaseImageryBackfillRequest(BaseModel):
+    """Body for POST /cases/{case_id}/imagery/backfill -- both fields optional."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    from_date: date | None = Field(default=None, alias="from")
+    max_weeks: int = Field(default=26, ge=1, le=52)
 
 
 def _resolve_watch_entry(store: Store, user: User, alert_id: str) -> WatchEntryRecord:
@@ -811,5 +853,186 @@ def create_app(store: Store | None = None) -> FastAPI:
             )
 
         return [result.to_dict() for result in results]
+
+    # ------------------------------------------------------------------
+    # Case-level imagery backfill
+    # ------------------------------------------------------------------
+    #
+    # There is one imagery timeline per alert, stored as the same
+    # WatchEntryRecord the watch-list endpoints above use (keyed by
+    # alert_id). A case reaches its timeline via CaseRecord.alert_id.
+    # Backfill extends that record backwards by moving `started_on`
+    # earlier and capturing the newly-in-scope earlier weeks; it never
+    # creates a second, case_id-keyed record. If no record exists yet,
+    # backfilling one creates it (started_on = today), so the alert then
+    # also appears in GET /watchlist -- one timeline, one registry.
+
+    @app.get("/cases/{case_id}/imagery")
+    def get_case_imagery(case_id: str, store: StoreDep, user: CurrentUser) -> dict[str, Any]:
+        record = store.cases.get(case_id)
+        scope = _user_scope(store, user)
+        if record is None or record.jurisdiction_id not in scope:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case not found")
+
+        alert = store.alerts.get(record.alert_id)
+        alert_tier = alert["tier"] if alert is not None else None
+        watchable = alert_tier == AlertTier.RED.value
+
+        floor = _imagery_backfill_floor()
+        today = store.clock().date()
+        entry = store.watchlist.get(record.alert_id)
+
+        if entry is not None:
+            captures = sorted(entry.captures, key=lambda c: c.week)
+            attempted = {c.week for c in captures}
+            started_on: date | None = entry.started_on
+            due = due_weeks(entry.started_on, today, attempted)
+            remaining = _weeks_needing_backfill(floor, entry.started_on, attempted)
+        else:
+            captures = []
+            started_on = None
+            due = []
+            remaining = _weeks_needing_backfill(floor, today, set())
+
+        return {
+            "case_id": record.case.case_id,
+            "alert_id": record.alert_id,
+            "parcel_id": record.parcel_id,
+            "alert_tier": alert_tier,
+            "watchable": watchable,
+            "started_on": started_on.isoformat() if started_on is not None else None,
+            "cadence": "weekly",
+            "captures": [c.to_dict() for c in captures],
+            "due_weeks": [week.key for week in due],
+            "backfill_floor": floor.isoformat(),
+            "remaining_backfill_weeks": len(remaining),
+        }
+
+    @app.post("/cases/{case_id}/imagery/backfill", status_code=status.HTTP_201_CREATED)
+    def backfill_case_imagery(
+        case_id: str,
+        store: StoreDep,
+        user: Annotated[User, Depends(require_roles(*_WATCH_ROLES))],
+        body: Annotated[
+            CaseImageryBackfillRequest, Body(default_factory=CaseImageryBackfillRequest)
+        ],
+    ) -> dict[str, Any]:
+        floor = _imagery_backfill_floor()
+        scope = _user_scope(store, user)
+
+        # Phase 1 (locked): resolve+scope the case, validate the request,
+        # get-or-create the alert's WatchEntryRecord, and reserve the
+        # weeks this call will attempt in `entry.in_flight` -- reusing the
+        # exact same reservation field POST /watchlist/{id}/captures uses,
+        # so a backfill and a forward capture run (or two concurrent
+        # backfills) for the same alert can never double-attempt a week.
+        with store.lock:
+            record = store.cases.get(case_id)
+            if record is None or record.jurisdiction_id not in scope:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="case not found"
+                )
+
+            alert = store.alerts.get(record.alert_id)
+            if alert is None or AlertTier(alert["tier"]) != AlertTier.RED:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail="only RED-tier alerts can be backfilled",
+                )
+
+            effective_from = body.from_date if body.from_date is not None else floor
+            if effective_from < floor:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=(
+                        f"from date {effective_from.isoformat()} is earlier than the "
+                        f"imagery backfill floor {floor.isoformat()}"
+                    ),
+                )
+
+            entry = store.watchlist.get(record.alert_id)
+            created_entry = False
+            if entry is None:
+                entry = WatchEntryRecord(
+                    alert_id=record.alert_id,
+                    parcel_id=record.parcel_id,
+                    started_on=store.clock().date(),
+                    watched_by=user.sub,
+                )
+                store.watchlist[record.alert_id] = entry
+                created_entry = True
+
+            already = {c.week for c in entry.captures} | entry.in_flight
+            needed = _weeks_needing_backfill(effective_from, entry.started_on, already)
+            this_round = needed[-body.max_weeks :] if needed else []
+            remaining_after = len(needed) - len(this_round)
+
+            entry.in_flight.update(week.key for week in this_round)
+            attempted_at = store.clock()
+            provider = store.imagery_provider
+            registry = store.scene_registry
+            geometry = store.parcels[entry.parcel_id]["geometry"]
+
+        # Phase 2 (unlocked): the actual provider fetches, released for the
+        # same reason as POST /watchlist/{id}/captures -- never hold
+        # store.lock across provider I/O.
+        try:
+            results: list[CaptureAttempt] = [
+                capture_week(
+                    provider,
+                    registry,
+                    geometry=geometry,
+                    week=week,
+                    attempted_at=attempted_at,
+                )
+                for week in this_round
+            ]
+        finally:
+            if this_round:
+                with store.lock:
+                    entry.in_flight.difference_update(week.key for week in this_round)
+
+        # Phase 3 (locked): persist results, move started_on back to cover
+        # the newly-attempted weeks, and audit the run. Guard against the
+        # entry having been unwatched while phase 2 was in-flight -- if so,
+        # there is nothing left to record against.
+        with store.lock:
+            if store.watchlist.get(record.alert_id) is not entry:
+                return {
+                    "attempted": [],
+                    "started_on": entry.started_on.isoformat(),
+                    "remaining_backfill_weeks": remaining_after,
+                }
+
+            if results:
+                entry.captures = sorted(entry.captures + results, key=lambda c: c.week)
+                # started_on is a plain calendar date (see WatchEntryRecord),
+                # not week-aligned -- when this round reached all the way
+                # back to `effective_from` (remaining_after == 0), snap to
+                # that exact requested date rather than the Monday of its
+                # ISO week, so a full backfill to the floor reports
+                # started_on == the floor exactly, as the contract shows.
+                # A partial round (more weeks still owed) instead advances
+                # started_on to the Monday of the earliest week actually
+                # attempted this round. Either way, `min` keeps the update
+                # monotonically backward-only, which is what makes two
+                # concurrent backfills converge on the correct final value
+                # regardless of which one's phase 3 runs last.
+                candidate = effective_from if remaining_after == 0 else this_round[0].start
+                entry.started_on = min(entry.started_on, candidate)
+
+            if created_entry or results:
+                store.record_audit(
+                    actor=user.sub,
+                    action="watch.backfill",
+                    object_type="watch",
+                    object_id=record.alert_id,
+                )
+
+            return {
+                "attempted": [result.to_dict() for result in results],
+                "started_on": entry.started_on.isoformat(),
+                "remaining_backfill_weeks": remaining_after,
+            }
 
     return app
