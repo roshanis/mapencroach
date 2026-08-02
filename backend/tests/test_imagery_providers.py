@@ -55,6 +55,12 @@ class TestDemoImageryProviderDeterminism:
         provider = DemoImageryProvider()
         provider.fetch(geometry=GEOMETRY, week=WEEK)  # must not raise
 
+    def test_media_type_defaults_to_png(self):
+        provider = DemoImageryProvider()
+        scene = provider.fetch(geometry=GEOMETRY, week=WEEK)
+        assert scene is not None
+        assert scene.media_type == "image/png"
+
     def test_captured_at_derives_only_from_week_not_wall_clock(self):
         provider = DemoImageryProvider()
         scene = provider.fetch(geometry=GEOMETRY, week=WeekRef(2026, 40))
@@ -239,6 +245,7 @@ class TestCopernicusFetchSuccess:
         assert scene.data == b"fake-raster-bytes"
         assert scene.href == "https://example.com/scene.tif"
         assert scene.captured_at.isoformat() == "2026-08-05T05:30:00+00:00"
+        assert scene.media_type == "image/tiff"
 
     def test_catalog_request_is_scoped_to_week_and_geometry(self):
         requests: list[httpx.Request] = []

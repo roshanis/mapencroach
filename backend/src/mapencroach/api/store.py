@@ -35,6 +35,7 @@ from mapencroach.domain.geography import (
     ParcelContext,
 )
 from mapencroach.domain.jurisdiction import JurisdictionTree
+from mapencroach.imagery.blobstore import build_blob_store
 from mapencroach.imagery.capture import CaptureAttempt, ImageryProvider
 from mapencroach.imagery.providers import build_provider
 from mapencroach.imagery.registry import SceneRegistry
@@ -53,6 +54,18 @@ def _utc_now() -> datetime:
     follows it, including across a week boundary.
     """
     return datetime.now(UTC)
+
+
+def _default_scene_registry() -> SceneRegistry:
+    """Build the store's shared `SceneRegistry`, wired to retain bytes.
+
+    This is the one place in the app that opts a registry into blob
+    storage -- `SceneRegistry()` on its own still defaults to
+    `blob_store=None` (hash-on-ingest bookkeeping only, nothing
+    retrievable later), which is what every other constructor call
+    (including most of the registry's own test suite) continues to get.
+    """
+    return SceneRegistry(blob_store=build_blob_store())
 
 
 def _square_polygon(center_lon: float, center_lat: float, half_size: float) -> dict[str, Any]:
@@ -158,14 +171,18 @@ class Store:
     # Weekly-snapshot watch state. `scene_registry` is the hash-on-ingest
     # evidence anchor and must stay a single shared instance for the life
     # of the store -- a per-request registry would defeat both dedup and
-    # hash-chain continuity. `imagery_provider` is env-selected via
+    # hash-chain continuity. It is built (via `_default_scene_registry`)
+    # with a real `BlobStore` attached, so captures made through this
+    # store actually retain their bytes and can be served back later --
+    # `SceneRegistry()` on its own still defaults to no retention.
+    # `imagery_provider` is env-selected via
     # `build_provider()` (falls back to the deterministic demo provider
     # with no credentials configured) and can be swapped for a fake in
     # tests that need to force provider_error/no_usable_scene outcomes
     # without touching the network. `clock` centralizes "now" so watch
     # start dates and due-week math are deterministic under test control
     # (see `_utc_now`).
-    scene_registry: SceneRegistry = field(default_factory=SceneRegistry)
+    scene_registry: SceneRegistry = field(default_factory=_default_scene_registry)
     imagery_provider: ImageryProvider = field(default_factory=build_provider)
     clock: Callable[[], datetime] = field(default_factory=lambda: _utc_now)
 

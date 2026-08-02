@@ -41,6 +41,7 @@ class ProviderScene:
     cloud_pct: float
     source: str
     href: str
+    media_type: str = "image/png"
 
 
 class ImageryProvider(Protocol):
@@ -163,6 +164,7 @@ def capture_week(
             cloud_pct=scene.cloud_pct,
             source=scene.source,
             href=scene.href,
+            media_type=scene.media_type,
         )
     except DuplicateScene:
         sha256 = hashlib.sha256(scene.data).hexdigest()

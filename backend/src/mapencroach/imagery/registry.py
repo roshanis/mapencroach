@@ -7,6 +7,15 @@ to prove a scene hasn't been altered after the fact. Dedup is enforced
 on both the content hash (identical bytes re-uploaded under any id)
 and the scene_id (an id can't be silently re-pointed at different
 bytes) so a scene identifier always resolves to exactly one payload.
+
+A hash with no payload behind it can't be checked against anything,
+which defeats the point of hashing on ingest -- so when a `BlobStore` is
+supplied, `register` also writes the bytes through it and the resulting
+`SceneRecord.retained` is True. Without one, behaviour is exactly what it
+was before blob storage existed: the hash is recorded, no bytes are
+persisted, `retained` is False. That backward-compatible default matters
+because most callers (including most of this module's own test suite)
+construct `SceneRegistry()` with no store at all.
 """
 
 import hashlib
@@ -16,9 +25,19 @@ from datetime import datetime
 from types import MappingProxyType
 from typing import Any
 
+from mapencroach.imagery.blobstore import BlobStore
+
+_DEFAULT_MEDIA_TYPE = "image/png"
+
 
 class DuplicateScene(Exception):
     """Raised when a scene's content hash or scene_id is already registered."""
+
+
+class SceneNotRetained(Exception):
+    """Raised by `SceneRegistry.load` when a registered scene's bytes were
+    never persisted to a blob store (the registry was built without one,
+    or without one at the time this particular scene was registered)."""
 
 
 def _deep_freeze(value: Any) -> Any:
@@ -47,6 +66,8 @@ class SceneRecord:
     cloud_pct: float
     source: str
     stac_item: Mapping[str, Any]
+    media_type: str = _DEFAULT_MEDIA_TYPE
+    retained: bool = False
 
 
 def _build_stac_item(
@@ -75,12 +96,21 @@ def _build_stac_item(
 class SceneRegistry:
     """In-memory scene registry, keyed by scene_id and content hash.
 
+    `blob_store` is the only constructor argument: pass one and `register`
+    persists each scene's bytes through it (`SceneRecord.retained` is then
+    True and `load` can hand the bytes back later); leave it `None` (the
+    default) and the registry behaves exactly as it did before blob
+    storage existed -- hash-on-ingest bookkeeping only, no bytes retained,
+    `load` always raises `SceneNotRetained`.
+
     The lookup dicts are internal state, not part of the public API: they
     are excluded from `__init__`/`__repr__`/`__eq__` (`init=False,
     repr=False, compare=False`) so a caller can't construct or compare a
     registry by injecting arbitrary entries into them directly -- the only
     way in is `register`.
     """
+
+    blob_store: BlobStore | None = None
 
     _by_id: dict[str, SceneRecord] = field(
         default_factory=dict, init=False, repr=False, compare=False
@@ -100,6 +130,7 @@ class SceneRegistry:
         cloud_pct: float,
         source: str,
         href: str,
+        media_type: str = _DEFAULT_MEDIA_TYPE,
     ) -> SceneRecord:
         sha256 = hashlib.sha256(data).hexdigest()
 
@@ -107,6 +138,14 @@ class SceneRegistry:
             raise DuplicateScene(
                 f"scene already registered (scene_id={scene_id!r}, sha256={sha256!r})"
             )
+
+        retained = False
+        if self.blob_store is not None:
+            # `put` is itself keyed by (and verifies against) this same
+            # sha256, so storage can never disagree with the registry
+            # about which bytes a scene_id/hash resolves to.
+            self.blob_store.put(data)
+            retained = True
 
         record = SceneRecord(
             scene_id=scene_id,
@@ -117,6 +156,8 @@ class SceneRegistry:
             cloud_pct=cloud_pct,
             source=source,
             stac_item=_build_stac_item(scene_id, captured_at, cloud_pct, resolution_m, href),
+            media_type=media_type,
+            retained=retained,
         )
         self._by_id[scene_id] = record
         self._by_hash[sha256] = record
@@ -124,6 +165,24 @@ class SceneRegistry:
 
     def get(self, scene_id: str) -> SceneRecord:
         return self._by_id[scene_id]
+
+    def load(self, scene_id: str) -> bytes:
+        """Return the retained bytes for `scene_id`.
+
+        Raises `KeyError` if `scene_id` was never registered (same as
+        `get`), or `SceneNotRetained` if it was registered but its bytes
+        were never persisted (no blob store was configured at the time).
+        A `BlobNotFound`/`BlobIntegrityError` from the underlying store is
+        let through unchanged -- both indicate the retained-bytes
+        invariant has been violated at the storage layer, which callers
+        must not paper over.
+        """
+        record = self.get(scene_id)
+        if not record.retained:
+            raise SceneNotRetained(f"scene {scene_id!r} bytes were not retained")
+        if self.blob_store is None:  # pragma: no cover - retained implies a store was set
+            raise SceneNotRetained(f"scene {scene_id!r} has no blob store to load from")
+        return self.blob_store.get(record.sha256)
 
     def by_hash(self, sha256: str) -> SceneRecord:
         return self._by_hash[sha256]

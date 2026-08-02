@@ -36,6 +36,7 @@ def make_scene(
     scene_id: str = "scene-1",
     cloud_pct: float = 5.0,
     captured_at: datetime | None = None,
+    media_type: str = "image/png",
 ) -> ProviderScene:
     return ProviderScene(
         data=data,
@@ -46,6 +47,7 @@ def make_scene(
         cloud_pct=cloud_pct,
         source="copernicus",
         href="https://example.com/scene-1.tif",
+        media_type=media_type,
     )
 
 
@@ -122,6 +124,36 @@ class TestCaptureWeekSuccess:
         capture_week(provider, registry, geometry=GEOMETRY, week=WEEK, attempted_at=ATTEMPTED_AT)
 
         assert provider.calls == [(GEOMETRY, WEEK)]
+
+    def test_media_type_is_passed_through_to_the_registered_record(self):
+        registry = SceneRegistry()
+        provider = FakeProvider(
+            result=make_scene(scene_id="s4", media_type="image/tiff")
+        )
+
+        capture_week(provider, registry, geometry=GEOMETRY, week=WEEK, attempted_at=ATTEMPTED_AT)
+
+        assert registry.get("s4").media_type == "image/tiff"
+
+    def test_default_media_type_is_image_png(self):
+        registry = SceneRegistry()
+        provider = FakeProvider(result=make_scene(scene_id="s5"))
+
+        capture_week(provider, registry, geometry=GEOMETRY, week=WEEK, attempted_at=ATTEMPTED_AT)
+
+        assert registry.get("s5").media_type == "image/png"
+
+    def test_scene_is_retained_when_registry_has_a_blob_store(self):
+        from mapencroach.imagery.blobstore import MemoryBlobStore
+
+        registry = SceneRegistry(blob_store=MemoryBlobStore())
+        provider = FakeProvider(result=make_scene(data=b"retain-me", scene_id="s6"))
+
+        capture_week(provider, registry, geometry=GEOMETRY, week=WEEK, attempted_at=ATTEMPTED_AT)
+
+        record = registry.get("s6")
+        assert record.retained is True
+        assert registry.load("s6") == b"retain-me"
 
 
 class TestCaptureWeekNoScene:

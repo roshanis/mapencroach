@@ -216,6 +216,9 @@ class CopernicusSentinel2Provider:
             cloud_pct=float(properties.get("eo:cloud_cover", 0.0)),
             source="copernicus",
             href=_asset_href(item, fallback=self._process_url),
+            # Matches the Process API request below, which always asks
+            # for `output.format = "image/tiff"`.
+            media_type="image/tiff",
         )
 
     def _ensure_token(self) -> str:

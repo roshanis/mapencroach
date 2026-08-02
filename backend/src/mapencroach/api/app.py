@@ -17,7 +17,14 @@ Role.CASE_OFFICER. Weekly-snapshot watch entries (/alerts/{id}/watch,
 /watchlist*) follow the same jurisdiction-scoping and 404-not-403 rule as
 alerts, and can only be created for RED-tier alerts; capture runs are
 idempotent per ISO week (mapencroach.imagery.schedule.due_weeks) and never
-hold store.lock across imagery provider I/O.
+hold store.lock across imagery provider I/O. Retained scene bytes are
+served back through /watchlist/{alert_id}/weeks/{week}/image and
+/cases/{case_id}/imagery/{week}/image -- week-keyed rather than
+scene-keyed, since serving is scoped through the parent resource (watch
+entry / case) and there is no scene->alert reverse index. Both routes
+never hold store.lock while streaming bytes, audit every read via
+store.record_audit, and answer conditional GETs (If-None-Match) with 304
+since content-addressed bytes can never go stale.
 """
 
 import os
@@ -25,7 +32,7 @@ import re
 from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Any
 
-from fastapi import Body, Depends, FastAPI, HTTPException, Query, Response, status
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -48,7 +55,8 @@ from mapencroach.domain.case_engine import (
     required_artifacts_for,
     transition,
 )
-from mapencroach.imagery.capture import CaptureAttempt, capture_week
+from mapencroach.imagery.capture import CaptureAttempt, CaptureStatus, capture_week
+from mapencroach.imagery.registry import SceneRecord
 from mapencroach.imagery.schedule import WeekRef, due_weeks, weeks_from
 
 _VALID_GRADES = {"A", "B", "C"}
@@ -280,6 +288,94 @@ def _resolve_watch_entry(store: Store, user: User, alert_id: str) -> WatchEntryR
     if parcel is None or parcel["jurisdiction_id"] not in scope:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="watch entry not found")
     return entry
+
+
+# Scene image serving: content-addressed bytes can never go stale, so a
+# successful response is cacheable forever. `private` because these are
+# jurisdiction-scoped evidence images, not something a shared/public cache
+# should hold.
+_SCENE_IMAGE_CACHE_CONTROL = "private, max-age=31536000, immutable"
+
+
+def _parse_week_or_422(week: str) -> WeekRef:
+    """Parse a `WeekRef.key`-format path segment, 422ing on anything that
+    isn't a well-formed, existing ISO week."""
+    try:
+        return WeekRef.parse(week)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"malformed week key {week!r}: {exc}",
+        ) from exc
+
+
+def _find_capture(captures: list[CaptureAttempt], week_key: str) -> CaptureAttempt:
+    for attempt in captures:
+        if attempt.week == week_key:
+            return attempt
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"no capture attempt recorded for week {week_key!r}",
+    )
+
+
+def _require_captured_scene(
+    store: Store, captures: list[CaptureAttempt], week_key: str
+) -> SceneRecord:
+    """Resolve `week_key` to a retained `SceneRecord`, or 404 with a detail
+    naming exactly which of the (non-scoping) 404 causes applied: no
+    capture attempt for the week, the week's status isn't CAPTURED, the
+    scene isn't on record after all, or its bytes were never retained.
+    None of these leak anything about resources outside the caller's
+    scope -- that check has already happened by the time this runs."""
+    attempt = _find_capture(captures, week_key)
+    if attempt.status != CaptureStatus.CAPTURED or attempt.scene_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"week {week_key!r} capture status is {attempt.status.value!r}, not captured",
+        )
+    try:
+        record = store.scene_registry.get(attempt.scene_id)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"scene {attempt.scene_id!r} is not on record",
+        ) from exc
+    if not record.retained:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"week {week_key!r} has a hash on record but the image was not retained",
+        )
+    return record
+
+
+def _scene_image_response(
+    store: Store, user: User, request: Request, record: SceneRecord
+) -> Response:
+    """Render the 200/304 response for a retained scene, auditing the read.
+
+    Reading evidence is an auditable act regardless of whether it lands as
+    a full 200 or a conditional 304 -- either way the caller accessed the
+    scene. The audit write happens before the (possibly slow) blob read,
+    and neither holds `store.lock`: `record_audit` only takes it for the
+    brief hash-chain append, and streaming the bytes back happens outside
+    any lock entirely.
+    """
+    etag = f'"{record.sha256}"'
+    store.record_audit(
+        actor=user.sub, action="scene.read", object_type="scene", object_id=record.scene_id
+    )
+    if request.headers.get("if-none-match") == etag:
+        return Response(
+            status_code=status.HTTP_304_NOT_MODIFIED,
+            headers={"ETag": etag, "Cache-Control": _SCENE_IMAGE_CACHE_CONTROL},
+        )
+    data = store.scene_registry.load(record.scene_id)
+    return Response(
+        content=data,
+        media_type=record.media_type,
+        headers={"ETag": etag, "Cache-Control": _SCENE_IMAGE_CACHE_CONTROL},
+    )
 
 
 def _transition_options(case: Case) -> tuple[list[str], dict[str, list[str]]]:
@@ -854,6 +950,19 @@ def create_app(store: Store | None = None) -> FastAPI:
 
         return [result.to_dict() for result in results]
 
+    @app.get("/watchlist/{alert_id}/weeks/{week}/image")
+    def get_watchlist_scene_image(
+        alert_id: str,
+        week: str,
+        request: Request,
+        store: StoreDep,
+        user: CurrentUser,
+    ) -> Response:
+        week_ref = _parse_week_or_422(week)
+        entry = _resolve_watch_entry(store, user, alert_id)
+        record = _require_captured_scene(store, entry.captures, week_ref.key)
+        return _scene_image_response(store, user, request, record)
+
     # ------------------------------------------------------------------
     # Case-level imagery backfill
     # ------------------------------------------------------------------
@@ -1034,5 +1143,33 @@ def create_app(store: Store | None = None) -> FastAPI:
                 "started_on": entry.started_on.isoformat(),
                 "remaining_backfill_weeks": remaining_after,
             }
+
+    @app.get("/cases/{case_id}/imagery/{week}/image")
+    def get_case_scene_image(
+        case_id: str,
+        week: str,
+        request: Request,
+        store: StoreDep,
+        user: CurrentUser,
+    ) -> Response:
+        # Scoped through the case exactly like GET /cases/{case_id}/imagery
+        # above: out-of-scope must stay indistinguishable from missing, so
+        # this reuses that same check and that same 404 detail rather than
+        # anything week-specific.
+        week_ref = _parse_week_or_422(week)
+        record_case = store.cases.get(case_id)
+        scope = _user_scope(store, user)
+        if record_case is None or record_case.jurisdiction_id not in scope:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case not found")
+
+        entry = store.watchlist.get(record_case.alert_id)
+        if entry is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"no capture attempt recorded for week {week_ref.key!r}",
+            )
+
+        record = _require_captured_scene(store, entry.captures, week_ref.key)
+        return _scene_image_response(store, user, request, record)
 
     return app
