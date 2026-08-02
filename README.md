@@ -105,6 +105,31 @@ Two limits worth knowing before relying on this:
 a backfill may reach. A request for an earlier date is refused rather than
 quietly clamped, so returned coverage always matches what was asked for.
 
+### Running captures on a schedule
+
+There is no in-process scheduler. `mapencroach-capture` is the entry point a
+cron or systemd timer drives:
+
+```bash
+mapencroach-capture --api-url https://<your-api> --max-weeks 4   # weekly, via the API
+mapencroach-capture --dry-run                                    # report only, change nothing
+```
+
+Exit status is non-zero when any entry hit a provider error, so a failed run
+surfaces instead of passing silently.
+
+Prefer the `--api-url` form. Watch entries, capture history, the scene index and
+the audit chain persist to `MAPENCROACH_STATE_PATH` (default `data/state.json`)
+as a whole document, and the in-process lock does not reach across processes —
+so running the CLI in direct mode beside a live API makes two writers, and the
+last one to save wins. A week captured by one can disappear from the record kept
+by the other, even though the bytes are safely in the blob store. Driving the
+API keeps a single writer.
+
+State loading fails closed: a corrupt, truncated, or tampered state file (one
+whose audit chain no longer verifies) stops startup rather than continuing with
+an empty timeline.
+
 ## Backing services (PostGIS, Keycloak, MinIO, TiTiler)
 
 ```bash
