@@ -75,6 +75,22 @@ because an evidence timeline with unexplained holes is worse than one that
 documents them. Monsoon weeks over Haridwar–Roorkee routinely have no usable
 optical scene.
 
+Captured scenes are retained and can be fetched back:
+
+```
+GET /watchlist/{alert_id}/weeks/{week}/image
+GET /cases/{case_id}/imagery/{week}/image
+```
+
+Bytes go to a blob store keyed by their own sha256, so storage cannot disagree
+with the registry about which bytes are which. Writes and reads both re-hash and
+refuse on mismatch, so a scene corrupted on disk fails the read rather than
+being served as evidence. `MAPENCROACH_BLOB_ROOT` sets the location (default
+`data/scenes`, gitignored). Retention is opt-in at the registry level, so a week
+may legitimately hold a hash with no image — the console distinguishes that from
+an image it simply could not load, and only says "not retained" when the server
+actually reports the bytes are absent.
+
 Two limits worth knowing before relying on this:
 
 - **Nothing runs on a schedule.** Captures happen when the endpoint is called.
