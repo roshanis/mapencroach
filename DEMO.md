@@ -157,7 +157,7 @@ curl -s -X POST http://localhost:8000/cases/case-1/transitions \
 # → 409 "missing required artifact(s): dismissal_reason"
 ```
 
-Worth mentioning: 329 backend tests at ~99% coverage; every mutation lands in a
+Worth mentioning: 472 backend tests at ~99% coverage; every mutation lands in a
 tamper-evident hash-chained audit log (editing or reordering any entry breaks
 verification; dropping entries off the end is caught by verifying against a
 retained head anchor — built for evidence-integrity requirements under BSA 2023

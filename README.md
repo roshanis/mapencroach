@@ -51,9 +51,43 @@ the Maps JavaScript API.
 ## Tests
 
 ```bash
-cd backend && .venv/bin/pytest --cov && .venv/bin/ruff check .   # 329 tests
-cd web && npm test && npm run build                              # 240 tests
+cd backend && .venv/bin/pytest --cov && .venv/bin/ruff check .   # 472 tests
+cd web && npm test && npm run build                              # 316 tests
 ```
+
+## Weekly imagery snapshots
+
+A RED alert can be put under a weekly-snapshot watch, and a red-flagged case
+can backfill its imagery history to a floor date so the record shows *when* a
+change appeared rather than only that it exists now:
+
+```
+POST   /alerts/{id}/watch             start watching a RED alert
+POST   /watchlist/{id}/captures       run the weeks that are due
+GET    /cases/{id}/imagery            a case's weekly timeline
+POST   /cases/{id}/imagery/backfill   fill earlier weeks, chunked
+```
+
+Each week is an explicit row: captured (sha256-anchored on ingest, via the same
+registry that backs court exhibits) or empty *with the reason it is empty* —
+cloud percentage or no coverage. Gaps are recorded facts, not missing rows,
+because an evidence timeline with unexplained holes is worse than one that
+documents them. Monsoon weeks over Haridwar–Roorkee routinely have no usable
+optical scene.
+
+Two limits worth knowing before relying on this:
+
+- **Nothing runs on a schedule.** Captures happen when the endpoint is called.
+  Point a cron or external scheduler at it; the console's buttons are explicit
+  user-triggered actions and say so.
+- **Sentinel-2 retrieval is unverified against the live Copernicus service.**
+  It is written to the documented API and tested against mocked HTTP only.
+  Without `COPERNICUS_CLIENT_ID` / `COPERNICUS_CLIENT_SECRET` the app uses a
+  deterministic synthetic provider, which is what demo mode runs on.
+
+`MAPENCROACH_IMAGERY_BACKFILL_FLOOR` (default `2026-01-01`) bounds how far back
+a backfill may reach. A request for an earlier date is refused rather than
+quietly clamped, so returned coverage always matches what was asked for.
 
 ## Backing services (PostGIS, Keycloak, MinIO, TiTiler)
 
@@ -78,7 +112,7 @@ See [DEPLOY.md](DEPLOY.md) — console on Vercel, API on Render (demo data only)
 | `backend/src/mapencroach/domain/` | Jurisdiction tree (row-level scoping), case state machine (due process encoded), alert severity |
 | `backend/src/mapencroach/cadastral/` | Topology QA + file ingestion (accept / quarantine / reject) |
 | `backend/src/mapencroach/audit/` | Tamper-evident hash chain |
-| `backend/src/mapencroach/imagery/` | Hash-on-ingest scene registry (STAC) |
+| `backend/src/mapencroach/imagery/` | Hash-on-ingest scene registry (STAC), ISO-week capture scheduling, Sentinel-2 / demo providers |
 | `backend/src/mapencroach/api/` | FastAPI: JWT auth, RBAC, jurisdiction-scoped endpoints |
 | `web/` | Next.js console with Google Maps and a MapLibre fallback |
 | `PLAN.md` / `PLAN.html` | Implementation plan v2.0 (Builder's Edition) |

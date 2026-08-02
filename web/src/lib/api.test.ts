@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   addParcelTag,
+  backfillCaseImagery,
   getAlerts,
   getCase,
+  getCaseImagery,
   getCases,
   getParcel,
   getParcelContext,
@@ -18,8 +20,10 @@ import {
   watchAlert,
 } from "./api";
 import {
+  CASE_IMAGERY_BACKFILL_FLOOR,
   FIXTURE_ALERTS,
   FIXTURE_CASES,
+  FIXTURE_CASE_IMAGERY,
   FIXTURE_PARCELS,
   FIXTURE_PARCEL_CONTEXTS,
   FIXTURE_WATCH_ENTRIES,
@@ -1037,6 +1041,218 @@ describe("weekly-snapshot watchlist endpoints", () => {
       const result = await runCaptures("ALT-9999");
 
       expect(result).toEqual({ ok: false, status: 404, detail: "not watched" });
+    });
+  });
+});
+
+describe("case imagery backfill endpoints", () => {
+  describe("without NEXT_PUBLIC_API_URL (fixture mode)", () => {
+    it("getCaseImagery falls back to an explicit fixture entry when one is authored", async () => {
+      delete process.env.NEXT_PUBLIC_API_URL;
+
+      const imagery = await getCaseImagery("CASE-9001");
+
+      expect(imagery).toEqual(FIXTURE_CASE_IMAGERY["CASE-9001"]);
+      expect(imagery?.watchable).toBe(true);
+      expect(imagery?.remaining_backfill_weeks).toBeGreaterThan(0);
+    });
+
+    it("getCaseImagery falls back to an explicit non-RED fixture entry (watchable: false)", async () => {
+      delete process.env.NEXT_PUBLIC_API_URL;
+
+      const imagery = await getCaseImagery("CASE-9002");
+
+      expect(imagery).toEqual(FIXTURE_CASE_IMAGERY["CASE-9002"]);
+      expect(imagery?.watchable).toBe(false);
+    });
+
+    it("getCaseImagery falls back to an explicit fixture entry with no timeline yet", async () => {
+      delete process.env.NEXT_PUBLIC_API_URL;
+
+      const imagery = await getCaseImagery("CASE-9005");
+
+      expect(imagery).toEqual(FIXTURE_CASE_IMAGERY["CASE-9005"]);
+      expect(imagery?.started_on).toBeNull();
+      expect(imagery?.captures).toEqual([]);
+    });
+
+    it("getCaseImagery derives a 'no timeline yet' record for a fixture case with no explicit imagery entry", async () => {
+      delete process.env.NEXT_PUBLIC_API_URL;
+      // CASE-9003 exists in FIXTURE_CASES but has no FIXTURE_CASE_IMAGERY
+      // entry authored for it — the derived fallback should still resolve
+      // to something sensible rather than throwing or returning undefined.
+      expect(FIXTURE_CASE_IMAGERY["CASE-9003"]).toBeUndefined();
+      const caseRecord = FIXTURE_CASES.find((c) => c.id === "CASE-9003")!;
+      const alert = FIXTURE_ALERTS.find((a) => a.id === caseRecord.alert_id)!;
+
+      const imagery = await getCaseImagery("CASE-9003");
+
+      expect(imagery).toEqual({
+        case_id: "CASE-9003",
+        alert_id: caseRecord.alert_id,
+        parcel_id: caseRecord.parcel_id,
+        alert_tier: alert.tier.toUpperCase(),
+        watchable: alert.tier === "red",
+        started_on: null,
+        cadence: "weekly",
+        captures: [],
+        due_weeks: [],
+        backfill_floor: CASE_IMAGERY_BACKFILL_FLOOR,
+        remaining_backfill_weeks: 0, // alert.tier is "legacy", not RED
+      });
+    });
+
+    it("getCaseImagery returns undefined for a case id with no fixture case at all", async () => {
+      delete process.env.NEXT_PUBLIC_API_URL;
+
+      await expect(getCaseImagery("CASE-DOES-NOT-EXIST")).resolves.toBeUndefined();
+    });
+
+    it("backfillCaseImagery refuses as read-only without calling fetch", async () => {
+      delete process.env.NEXT_PUBLIC_API_URL;
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      await expect(backfillCaseImagery("CASE-9001")).resolves.toEqual({
+        ok: false,
+        status: 0,
+        detail: "No backend configured — fixture mode is read-only.",
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("with NEXT_PUBLIC_API_URL set", () => {
+    it("getCaseImagery fetches from the REST backend", async () => {
+      process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+      const remoteImagery = FIXTURE_CASE_IMAGERY["CASE-9001"];
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => remoteImagery,
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const imagery = await getCaseImagery("CASE-9001");
+
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        "https://api.example.test/cases/CASE-9001/imagery"
+      );
+      expect(imagery).toEqual(remoteImagery);
+    });
+
+    it("getCaseImagery returns undefined on a genuine 404 but propagates a 500", async () => {
+      process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        json: async () => ({}),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      await expect(getCaseImagery("CASE-MISSING")).resolves.toBeUndefined();
+
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 500,
+        statusText: "Internal Server Error",
+        json: async () => ({}),
+      });
+      await expect(getCaseImagery("CASE-9001")).rejects.toMatchObject({
+        status: 500,
+      });
+    });
+
+    it("backfillCaseImagery posts to /cases/{id}/imagery/backfill with auth, an empty default body, and returns the chunk result on 201", async () => {
+      process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+      document.cookie = "mapencroach_token=test-token-123; path=/";
+      const chunkResult = {
+        attempted: [
+          {
+            week: "2026-W02",
+            status: "captured",
+            attempted_at: "2026-08-01T09:00:00Z",
+            scene_id: "S2A_SCENE_BACKFILL",
+            sha256: "abc123",
+            cloud_pct: 12.0,
+            reason: null,
+          },
+        ],
+        started_on: "2025-12-29",
+        remaining_backfill_weeks: 9,
+      };
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 201,
+        statusText: "Created",
+        json: async () => chunkResult,
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await backfillCaseImagery("CASE-9001");
+
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        "https://api.example.test/cases/CASE-9001/imagery/backfill"
+      );
+      const [, init] = fetchMock.mock.calls[0];
+      expect(init.method).toBe("POST");
+      expect(init.headers).toMatchObject({
+        "Content-Type": "application/json",
+        Authorization: "Bearer test-token-123",
+      });
+      expect(JSON.parse(init.body)).toEqual({});
+      expect(result).toEqual({
+        ok: true,
+        status: 201,
+        attempted: chunkResult.attempted,
+        started_on: chunkResult.started_on,
+        remaining_backfill_weeks: chunkResult.remaining_backfill_weeks,
+      });
+      document.cookie = "mapencroach_token=; path=/; max-age=0";
+    });
+
+    it("backfillCaseImagery sends from/max_weeks only when provided", async () => {
+      process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 201,
+        statusText: "Created",
+        json: async () => ({
+          attempted: [],
+          started_on: "2026-01-01",
+          remaining_backfill_weeks: 0,
+        }),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      await backfillCaseImagery("CASE-9001", { from: "2026-01-01", maxWeeks: 5 });
+
+      const [, init] = fetchMock.mock.calls[0];
+      expect(JSON.parse(init.body)).toEqual({
+        from: "2026-01-01",
+        max_weeks: 5,
+      });
+    });
+
+    it("backfillCaseImagery propagates a 422 refusal (originating alert tier is not RED)", async () => {
+      process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 422,
+        statusText: "Unprocessable Entity",
+        json: async () => ({ detail: "originating alert tier must be RED" }),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await backfillCaseImagery("CASE-9002");
+
+      expect(result).toEqual({
+        ok: false,
+        status: 422,
+        detail: "originating alert tier must be RED",
+      });
     });
   });
 });

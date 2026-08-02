@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getCaseForRequest } from "@/lib/server-api";
+import { getCaseForRequest, getCaseImageryForRequest } from "@/lib/server-api";
 import { STATE_DESCRIPTIONS } from "@/lib/explanations";
 import { CASE_STATE_CHAIN, STATE_LABELS } from "@/lib/types";
+import { CaseImageryHistory } from "@/components/CaseImageryHistory";
 import { StateRail } from "@/components/StateRail";
 import { TopBar } from "@/components/TopBar";
 import { TransitionPanel } from "@/components/TransitionPanel";
@@ -27,6 +28,8 @@ export default async function CaseDetailPage({
   if (!caseRecord) {
     notFound();
   }
+
+  const imagery = await getCaseImageryForRequest(id);
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -128,6 +131,22 @@ export default async function CaseDetailPage({
               </li>
             ))}
           </ol>
+        </section>
+
+        <section className="overflow-x-auto rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-4 text-base font-semibold text-gray-900">
+            Imagery History
+          </h2>
+          {imagery ? (
+            <CaseImageryHistory caseId={caseRecord.id} initialImagery={imagery} />
+          ) : (
+            <p
+              data-testid="case-imagery-unavailable"
+              className="text-sm text-gray-400"
+            >
+              Imagery history could not be loaded for this case.
+            </p>
+          )}
         </section>
 
         <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">

@@ -297,3 +297,31 @@ export interface WatchEntry {
   /** Weeks from started_on through today that have not yet been attempted. */
   due_weeks: string[];
 }
+
+// Case imagery backfill (mapencroach/imagery — case-level view of the same
+// WatchEntry record, extended backwards). See the interface contract
+// addendum: there is ONE timeline per alert; a case reaches it through
+// Case.alert_id, so CaseImagery mirrors WatchEntry's shape rather than being
+// a second parallel record type.
+export interface CaseImagery {
+  case_id: string;
+  alert_id: string;
+  parcel_id: string;
+  alert_tier: string;
+  /** Whether the originating alert's tier is RED — backfill is only offered
+   * when true; it is 422 at the backend otherwise. */
+  watchable: boolean;
+  /** Earliest week covered by `captures`, or null if no timeline exists yet
+   * (never watched and never backfilled). */
+  started_on: string | null;
+  cadence: "weekly";
+  captures: CaptureAttempt[];
+  /** Weeks from started_on through today that have not yet been attempted. */
+  due_weeks: string[];
+  /** MAPENCROACH_IMAGERY_BACKFILL_FLOOR — the earliest date backfill will
+   * ever reach; a request before it is 422. */
+  backfill_floor: string;
+  /** Weeks between backfill_floor and started_on that have no attempt yet.
+   * 0 once the history reaches the floor. */
+  remaining_backfill_weeks: number;
+}

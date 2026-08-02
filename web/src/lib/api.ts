@@ -6,8 +6,10 @@
 
 import { readCookie } from "./cookies";
 import {
+  CASE_IMAGERY_BACKFILL_FLOOR,
   FIXTURE_ALERTS,
   FIXTURE_CASES,
+  FIXTURE_CASE_IMAGERY,
   FIXTURE_PARCELS,
   FIXTURE_PARCEL_CONTEXTS,
   FIXTURE_WATCH_ENTRIES,
@@ -17,6 +19,7 @@ import type {
   BBox,
   Case,
   CaseEvent,
+  CaseImagery,
   CaptureAttempt,
   LandCategory,
   BoundaryGrade,
@@ -657,6 +660,128 @@ export async function runCaptures(
   if (res.ok) {
     const attempts = (await res.json()) as CaptureAttempt[];
     return { ok: true, status: res.status, attempts };
+  }
+  return { ok: false, status: res.status, detail: await readErrorDetail(res) };
+}
+
+// Case imagery backfill --------------------------------------------------
+//
+// GET /cases/{id}/imagery is a read, so it falls back to fixtures the same
+// way getCase/getWatchEntry do. POST /cases/{id}/imagery/backfill is a
+// mutation and, like watchAlert/runCaptures above, refuses with a read-only
+// detail in fixture mode rather than pretending to succeed. There is ONE
+// imagery timeline per alert (see the contract addendum) — a case reaches
+// it through its alert_id, not a separate per-case record.
+
+/**
+ * Fetches a case's weekly imagery history. Works whether or not a timeline
+ * exists yet (`started_on: null`, empty `captures`) — `watchable` tells the
+ * caller whether backfill is offered at all (only RED-tier originating
+ * alerts). In fixture mode, falls back to an explicit fixture entry when one
+ * is authored, or otherwise derives a "no timeline yet" record from the
+ * fixture case/alert so any case id resolves to something sensible.
+ */
+export async function getCaseImagery(
+  caseId: string,
+  token?: string
+): Promise<CaseImagery | undefined> {
+  const base = getApiBase();
+  if (!base) {
+    const fixture = FIXTURE_CASE_IMAGERY[caseId];
+    if (fixture) return fixture;
+    const caseRecord = FIXTURE_CASES.find((c) => c.id === caseId);
+    if (!caseRecord) return undefined;
+    const alert = FIXTURE_ALERTS.find((a) => a.id === caseRecord.alert_id);
+    const watchable = alert?.tier === "red";
+    return {
+      case_id: caseRecord.id,
+      alert_id: caseRecord.alert_id,
+      parcel_id: caseRecord.parcel_id,
+      alert_tier: (alert?.tier ?? "legacy").toUpperCase(),
+      watchable,
+      started_on: null,
+      cadence: "weekly",
+      captures: [],
+      due_weeks: [],
+      backfill_floor: CASE_IMAGERY_BACKFILL_FLOOR,
+      // Illustrative-only: a case never touched by backfill has every week
+      // from the floor through the demo's "today" (2026-W31) outstanding.
+      remaining_backfill_weeks: watchable ? 31 : 0,
+    };
+  }
+  try {
+    return await fetchJson<CaseImagery>(`${base}/cases/${caseId}/imagery`, token);
+  } catch (error) {
+    // A genuinely missing/out-of-scope case is a 404. Any other failure
+    // must propagate rather than read as "no imagery".
+    if (error instanceof ApiError && error.status === 404) return undefined;
+    throw error;
+  }
+}
+
+export interface CaseImageryBackfillOptions {
+  /** Defaults to the backend's configured floor when omitted. */
+  from?: string;
+  /** Bounds one request's work (backend default 26, max 52, min 1). */
+  maxWeeks?: number;
+}
+
+export interface BackfillCaseImageryResult {
+  ok: boolean;
+  status: number;
+  detail?: string;
+  attempted?: CaptureAttempt[];
+  started_on?: string;
+  remaining_backfill_weeks?: number;
+}
+
+/**
+ * Runs one chunk of a case's imagery backfill. The endpoint is deliberately
+ * chunked (a full Jan-2026 backfill is ~31 sequential provider fetches, too
+ * slow for one HTTP request) — callers must repeat this until the returned
+ * `remaining_backfill_weeks` is 0. Idempotent per week, so re-running the
+ * loop after a failure never re-attempts an already-captured week.
+ */
+export async function backfillCaseImagery(
+  caseId: string,
+  options: CaseImageryBackfillOptions = {},
+  token?: string
+): Promise<BackfillCaseImageryResult> {
+  const base = getApiBase();
+  if (!base) {
+    return {
+      ok: false,
+      status: 0,
+      detail: "No backend configured — fixture mode is read-only.",
+    };
+  }
+
+  const body: Record<string, unknown> = {};
+  if (options.from) body.from = options.from;
+  if (options.maxWeeks != null) body.max_weeks = options.maxWeeks;
+
+  const res = await fetch(`${base}/cases/${caseId}/imagery/backfill`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(token),
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (res.ok) {
+    const payload = (await res.json()) as {
+      attempted: CaptureAttempt[];
+      started_on: string;
+      remaining_backfill_weeks: number;
+    };
+    return {
+      ok: true,
+      status: res.status,
+      attempted: payload.attempted,
+      started_on: payload.started_on,
+      remaining_backfill_weeks: payload.remaining_backfill_weeks,
+    };
   }
   return { ok: false, status: res.status, detail: await readErrorDetail(res) };
 }

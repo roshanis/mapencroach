@@ -1,7 +1,23 @@
-import type { CaptureAttempt, CaptureStatus, WatchEntry } from "@/lib/types";
+import type { CaptureAttempt, CaptureStatus } from "@/lib/types";
+
+/**
+ * The subset of WatchEntry (or an equivalent record, e.g. a CaseImagery
+ * whose `started_on` has been narrowed to non-null by the caller) this
+ * component actually needs to render a week-by-week history. Kept narrow
+ * rather than requiring a full WatchEntry so CaseImageryHistory can reuse
+ * this component for the case-imagery-backfill slice without a second,
+ * duplicated week-state renderer — WatchEntry itself still satisfies this
+ * shape structurally, so existing callers are unaffected.
+ */
+export interface WeekTimelineSource {
+  parcel_id: string;
+  started_on: string;
+  captures: CaptureAttempt[];
+  due_weeks: string[];
+}
 
 export interface WeeklySnapshotTimelineProps {
-  entry: WatchEntry;
+  entry: WeekTimelineSource;
   /** Defaults to the real current time; overridable so tests (and any
    * caller) can pin "now" instead of depending on the wall clock. */
   today?: Date;
@@ -68,7 +84,7 @@ function isoWeekKey(date: Date): string {
  * silently dropped from the evidence record.
  */
 export function computeWatchWeeks(
-  entry: WatchEntry,
+  entry: WeekTimelineSource,
   today: Date = new Date()
 ): WeekRow[] {
   const attemptsByWeek = new Map(entry.captures.map((c) => [c.week, c]));
@@ -150,7 +166,7 @@ export function WeeklySnapshotTimeline({
   return (
     <ol
       data-testid="weekly-snapshot-timeline"
-      aria-label={`Weekly capture history for ${entry.parcel_id}, watched since ${entry.started_on}`}
+      aria-label={`Weekly capture history for ${entry.parcel_id}, covering weeks from ${entry.started_on}`}
       className="flex flex-col gap-2"
     >
       {rows.map((row) => (

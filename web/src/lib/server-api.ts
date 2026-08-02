@@ -8,6 +8,7 @@ import { cookies } from "next/headers";
 import {
   getAlerts,
   getCase,
+  getCaseImagery,
   getCases,
   getParcel,
   getParcelContext,
@@ -15,7 +16,14 @@ import {
   getWatchlist,
   TOKEN_COOKIE,
 } from "./api";
-import type { Alert, Case, Parcel, ParcelContext, WatchEntry } from "./types";
+import type {
+  Alert,
+  Case,
+  CaseImagery,
+  Parcel,
+  ParcelContext,
+  WatchEntry,
+} from "./types";
 
 // Server-only fallback credential. Unlike NEXT_PUBLIC_API_TOKEN this is never
 // inlined into client JavaScript — only read here, in a module that must
@@ -78,4 +86,11 @@ export async function getWatchEntryForRequest(
 ): Promise<WatchEntry | undefined> {
   const token = await serverToken();
   return getWatchEntry(alertId, token);
+}
+
+export async function getCaseImageryForRequest(
+  caseId: string
+): Promise<CaseImagery | undefined> {
+  const token = await serverToken();
+  return getCaseImagery(caseId, token);
 }
