@@ -23,6 +23,7 @@ const ENTRY: WatchEntry = {
       sha256: "e57738c57fbbf69c54a29e1f16142c3d44b54990cd3ec625158fd01c63a973d",
       cloud_pct: 8.5,
       reason: null,
+      image_url: null,
     },
   ],
   due_weeks: ["2026-W24"],
@@ -72,6 +73,7 @@ describe("WatchlistEntryCard", () => {
           sha256: "6f8194b1d3adfcb6f8d2542e43d5b5f019e14b142903d90a89da0a192d7e567",
           cloud_pct: 22.0,
           reason: null,
+          image_url: null,
         },
       ],
     });

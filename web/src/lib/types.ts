@@ -285,6 +285,23 @@ export interface CaptureAttempt {
   cloud_pct: number | null;
   /** Human-readable; always set unless status is "captured". */
   reason: string | null;
+  /**
+   * Server-side path for this week's scene image, or null when there is
+   * provably nothing to serve (status is not "captured"). A non-null value
+   * is a *candidate* path, not a guarantee the bytes are actually
+   * retrievable: the backend's CaptureAttempt wire format carries no
+   * "were the bytes retained" flag (that lives only on the server's
+   * internal SceneRecord — contract-blobs.md §2), so a captured week whose
+   * bytes were never retained still gets a URL here, and that URL 404s
+   * when fetched. WeeklySnapshotTimeline treats that load failure the same
+   * as a null image_url — the explicit "hash on record, image not
+   * retained" state — so either path (never had a URL, or had one that
+   * failed to load) ends up rendering the same honest evidence state. See
+   * the blob-serving interface contract §3–§4. Populated by the API layer
+   * (api.ts/server-api.ts) from the parent resource + week key — never
+   * built by string-concatenation in a component.
+   */
+  image_url: string | null;
 }
 
 export interface WatchEntry {

@@ -36,6 +36,10 @@ function capturedWeek(week: string, cloudPct: number): CaptureAttempt {
     sha256: `${week}-fake-digest`.padEnd(64, "0"),
     cloud_pct: cloudPct,
     reason: null,
+    // These fixtures represent captured-but-not-retained bytes (no backend
+    // in these component tests to actually serve anything from), matching
+    // WeeklySnapshotTimeline's "not retained" row for a captured week.
+    image_url: null,
   };
 }
 
@@ -134,6 +138,7 @@ describe("CaseImageryHistory", () => {
           cloud_pct: 70.0,
           reason:
             "Cloud cover 70.0% exceeds the 40.0% usability threshold for this week's pass.",
+          image_url: null,
         },
         {
           week: "2026-W13",
@@ -144,6 +149,7 @@ describe("CaseImageryHistory", () => {
           cloud_pct: null,
           reason:
             "No Sentinel-2 scene intersects this parcel's footprint within the 2026-03-23–2026-03-29 catalog window.",
+          image_url: null,
         },
       ],
       due_weeks: [],

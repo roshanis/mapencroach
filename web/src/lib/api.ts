@@ -138,7 +138,14 @@ function normalizeCase(raw: Case): Case {
   };
 }
 
-function authHeaders(tokenOverride?: string): HeadersInit | undefined {
+/**
+ * Exported so components that must fetch something other than JSON through
+ * this same auth (e.g. WeeklySnapshotTimeline fetching a scene image blob
+ * with credentials, since a plain `<img src>` cannot carry an Authorization
+ * header) can reuse the exact precedence rule below instead of duplicating
+ * or drifting from it.
+ */
+export function authHeaders(tokenOverride?: string): HeadersInit | undefined {
   // Precedence: an explicit override (e.g. the server-only token threaded in
   // by server-api.ts) beats the browser session cookie. There is no
   // client-exposed env var fallback — see the NEXT_PUBLIC_API_TOKEN warning
@@ -533,10 +540,83 @@ async function readErrorDetail(res: Response): Promise<string> {
   return res.statusText;
 }
 
+// Scene bytes / image_url derivation ------------------------------------
+//
+// See the blob-serving interface contract (contract-blobs.md), especially
+// §4: CaptureAttempt gains `image_url`, populated in the API layer from the
+// parent resource + week key so no component ever builds an image URL by
+// string-concatenation itself. This is the one place that concatenation
+// happens.
+//
+// The backend's CaptureAttempt.to_dict() (mapencroach.imagery.capture) does
+// not, and per the shipped implementation will not, put a "was this week's
+// scene actually retained" flag on the wire — `retained` lives only on the
+// server's internal SceneRecord (contract-blobs.md §2), scoped to the scene
+// registry, not serialized onto watch-entry/case-imagery JSON. So this
+// layer cannot tell retained and not-retained apart in advance without an
+// extra request per week, which would defeat the point of a single list
+// fetch. Instead it emits the scoped image path (contract-blobs.md §3) for
+// every `status: "captured"` week — the only path that could ever serve it
+// — and lets the browser find out: the endpoint 404s for a week that was
+// captured but not retained, and WeeklySnapshotTimeline's <img> treats that
+// load failure as the same "hash on record, image not retained" state a
+// null `image_url` produces. `image_url` is still `null` outright for any
+// week that was never `status: "captured"` — there is provably nothing to
+// serve, so there is no reason to ever attempt that request.
+
+/** Wire shape of a capture attempt exactly as the backend's CaptureAttempt
+ * dataclass serializes it (contract.md) — no `image_url`, that is derived
+ * here. */
+type RawCaptureAttempt = Omit<CaptureAttempt, "image_url">;
+
+/**
+ * Attaches `image_url` to each raw capture attempt: the scoped image path
+ * (see module notes above) for every captured week, `null` for anything
+ * else. `imagePath` encodes which of the two scoped serving routes applies
+ * (watchlist vs. case imagery, contract-blobs.md §3), so this one function
+ * serves both call sites below.
+ */
+function withImageUrls(
+  base: string,
+  captures: RawCaptureAttempt[],
+  imagePath: (week: string) => string
+): CaptureAttempt[] {
+  return captures.map((capture) => ({
+    ...capture,
+    image_url:
+      capture.status === "captured"
+        ? `${base}${imagePath(capture.week)}`
+        : null,
+  }));
+}
+
+/** GET /watchlist/{alert_id}/weeks/{week}/image (contract-blobs.md §3). */
+function watchImagePath(alertId: string): (week: string) => string {
+  return (week) => `/watchlist/${alertId}/weeks/${week}/image`;
+}
+
+/** GET /cases/{case_id}/imagery/{week}/image (contract-blobs.md §3). */
+function caseImagePath(caseId: string): (week: string) => string {
+  return (week) => `/cases/${caseId}/imagery/${week}/image`;
+}
+
+/** Wire shape of a WatchEntry before `image_url` is derived onto its captures. */
+type RawWatchEntry = Omit<WatchEntry, "captures"> & {
+  captures: RawCaptureAttempt[];
+};
+
+function normalizeWatchEntry(base: string, raw: RawWatchEntry): WatchEntry {
+  return {
+    ...raw,
+    captures: withImageUrls(base, raw.captures, watchImagePath(raw.alert_id)),
+  };
+}
+
 export async function getWatchlist(token?: string): Promise<WatchEntry[]> {
   const base = getApiBase();
   if (!base) return FIXTURE_WATCH_ENTRIES;
-  return fetchJson<WatchEntry[]>(`${base}/watchlist`, token);
+  const entries = await fetchJson<RawWatchEntry[]>(`${base}/watchlist`, token);
+  return entries.map((entry) => normalizeWatchEntry(base, entry));
 }
 
 export async function getWatchEntry(
@@ -548,7 +628,11 @@ export async function getWatchEntry(
     return FIXTURE_WATCH_ENTRIES.find((entry) => entry.alert_id === alertId);
   }
   try {
-    return await fetchJson<WatchEntry>(`${base}/watchlist/${alertId}`, token);
+    const raw = await fetchJson<RawWatchEntry>(
+      `${base}/watchlist/${alertId}`,
+      token
+    );
+    return normalizeWatchEntry(base, raw);
   } catch (error) {
     // A watch entry that genuinely does not exist (never watched, or out of
     // jurisdiction scope — the backend never distinguishes the two) is a
@@ -591,8 +675,8 @@ export async function watchAlert(
   });
 
   if (res.ok) {
-    const entry = (await res.json()) as WatchEntry;
-    return { ok: true, status: res.status, entry };
+    const raw = (await res.json()) as RawWatchEntry;
+    return { ok: true, status: res.status, entry: normalizeWatchEntry(base, raw) };
   }
   return { ok: false, status: res.status, detail: await readErrorDetail(res) };
 }
@@ -658,7 +742,8 @@ export async function runCaptures(
   });
 
   if (res.ok) {
-    const attempts = (await res.json()) as CaptureAttempt[];
+    const raw = (await res.json()) as RawCaptureAttempt[];
+    const attempts = withImageUrls(base, raw, watchImagePath(alertId));
     return { ok: true, status: res.status, attempts };
   }
   return { ok: false, status: res.status, detail: await readErrorDetail(res) };
@@ -710,7 +795,13 @@ export async function getCaseImagery(
     };
   }
   try {
-    return await fetchJson<CaseImagery>(`${base}/cases/${caseId}/imagery`, token);
+    const raw = await fetchJson<
+      Omit<CaseImagery, "captures"> & { captures: RawCaptureAttempt[] }
+    >(`${base}/cases/${caseId}/imagery`, token);
+    return {
+      ...raw,
+      captures: withImageUrls(base, raw.captures, caseImagePath(caseId)),
+    };
   } catch (error) {
     // A genuinely missing/out-of-scope case is a 404. Any other failure
     // must propagate rather than read as "no imagery".
@@ -771,14 +862,14 @@ export async function backfillCaseImagery(
 
   if (res.ok) {
     const payload = (await res.json()) as {
-      attempted: CaptureAttempt[];
+      attempted: RawCaptureAttempt[];
       started_on: string;
       remaining_backfill_weeks: number;
     };
     return {
       ok: true,
       status: res.status,
-      attempted: payload.attempted,
+      attempted: withImageUrls(base, payload.attempted, caseImagePath(caseId)),
       started_on: payload.started_on,
       remaining_backfill_weeks: payload.remaining_backfill_weeks,
     };

@@ -47,6 +47,47 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+const TEST_API_BASE = "https://api.example.test";
+
+/**
+ * Mirrors api.ts's withImageUrls for a WatchEntry-shaped fixture: replaces
+ * `image_url` on every captured capture with the derived
+ * `/watchlist/{alert_id}/weeks/{week}/image` path, matching what
+ * getWatchlist/getWatchEntry/watchAlert compute from a real backend
+ * response. Used to build expectations in tests that mock a fixture object
+ * as the wire payload — the fixture itself always sets image_url: null
+ * (there is no server behind fixture mode), so a "real" fetch no longer
+ * round-trips it unchanged.
+ */
+function withExpectedWatchImageUrls(entries: typeof FIXTURE_WATCH_ENTRIES) {
+  return entries.map((entry) => ({
+    ...entry,
+    captures: entry.captures.map((capture) => ({
+      ...capture,
+      image_url:
+        capture.status === "captured"
+          ? `${TEST_API_BASE}/watchlist/${entry.alert_id}/weeks/${capture.week}/image`
+          : null,
+    })),
+  }));
+}
+
+/** Same as `withExpectedWatchImageUrls`, for the case-imagery serving route. */
+function withExpectedCaseImageUrls(
+  imagery: (typeof FIXTURE_CASE_IMAGERY)[string]
+) {
+  return {
+    ...imagery,
+    captures: imagery.captures.map((capture) => ({
+      ...capture,
+      image_url:
+        capture.status === "captured"
+          ? `${TEST_API_BASE}/cases/${imagery.case_id}/imagery/${capture.week}/image`
+          : null,
+    })),
+  };
+}
+
 describe("api client without NEXT_PUBLIC_API_URL", () => {
   it("falls back to fixture parcels", async () => {
     delete process.env.NEXT_PUBLIC_API_URL;
@@ -872,7 +913,81 @@ describe("weekly-snapshot watchlist endpoints", () => {
       expect(fetchMock.mock.calls[0][0]).toBe(
         "https://api.example.test/watchlist"
       );
-      expect(entries).toEqual(FIXTURE_WATCH_ENTRIES);
+      // The API layer derives image_url from the parent alert + week for
+      // every captured capture (see withImageUrls in api.ts), so a "real"
+      // fetch response no longer round-trips unchanged the way the
+      // fixture (which always sets image_url: null — there's no server
+      // behind fixture mode) does.
+      expect(entries).toEqual(
+        withExpectedWatchImageUrls(FIXTURE_WATCH_ENTRIES)
+      );
+    });
+
+    it("getWatchlist derives image_url from the parent alert + week for every captured week, and null for anything else", async () => {
+      // The backend's CaptureAttempt wire format carries no "was this
+      // retained" flag (that lives only server-side on SceneRecord) — see
+      // the module notes above withImageUrls in api.ts. So the API layer
+      // can only key off `status`: a candidate URL for every captured
+      // week (which may still 404 if not retained — WeeklySnapshotTimeline
+      // handles that at render time), null for every non-captured week.
+      process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+      const raw = [
+        {
+          alert_id: "ALT-5001",
+          parcel_id: "PCL-1001",
+          started_on: "2026-06-01",
+          cadence: "weekly",
+          watched_by: "Enforcement Officer, Haridwar",
+          captures: [
+            {
+              week: "2026-W23",
+              status: "captured",
+              attempted_at: "2026-06-01T06:15:00Z",
+              scene_id: "S2A_SCENE_001",
+              sha256: "e57738c57fbbf69c",
+              cloud_pct: 8.5,
+              reason: null,
+            },
+            {
+              week: "2026-W24",
+              status: "no_usable_scene",
+              attempted_at: "2026-06-08T06:15:00Z",
+              scene_id: null,
+              sha256: null,
+              cloud_pct: 78.0,
+              reason: "Cloud cover 78.0% exceeds the 40.0% usability threshold.",
+            },
+            {
+              week: "2026-W25",
+              status: "provider_error",
+              attempted_at: "2026-06-15T06:15:00Z",
+              scene_id: null,
+              sha256: null,
+              cloud_pct: null,
+              reason: "Provider request failed: 503 Service Unavailable.",
+            },
+          ],
+          due_weeks: [],
+        },
+      ];
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => raw,
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const [entry] = await getWatchlist();
+
+      expect(entry.captures.map((c) => [c.week, c.image_url])).toEqual([
+        [
+          "2026-W23",
+          "https://api.example.test/watchlist/ALT-5001/weeks/2026-W23/image",
+        ],
+        ["2026-W24", null],
+        ["2026-W25", null],
+      ]);
     });
 
     it("getWatchEntry returns undefined on a genuine 404 but propagates a 500", async () => {
@@ -920,7 +1035,11 @@ describe("weekly-snapshot watchlist endpoints", () => {
       expect(init.headers).toMatchObject({
         Authorization: "Bearer test-token-123",
       });
-      expect(result).toEqual({ ok: true, status: 201, entry });
+      expect(result).toEqual({
+        ok: true,
+        status: 201,
+        entry: withExpectedWatchImageUrls([entry])[0],
+      });
       document.cookie = "mapencroach_token=; path=/; max-age=0";
     });
 
@@ -997,7 +1116,7 @@ describe("weekly-snapshot watchlist endpoints", () => {
       expect(result).toEqual({ ok: false, status: 404, detail: "Not Found" });
     });
 
-    it("runCaptures posts to /watchlist/{id}/captures and returns only the newly attempted weeks", async () => {
+    it("runCaptures posts to /watchlist/{id}/captures and returns only the newly attempted weeks, with image_url derived per week", async () => {
       process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
       const newAttempts = [
         {
@@ -1025,7 +1144,23 @@ describe("weekly-snapshot watchlist endpoints", () => {
       );
       const [, init] = fetchMock.mock.calls[0];
       expect(init.method).toBe("POST");
-      expect(result).toEqual({ ok: true, status: 201, attempts: newAttempts });
+      expect(result).toEqual({
+        ok: true,
+        status: 201,
+        attempts: [
+          {
+            week: "2026-W31",
+            status: "captured",
+            attempted_at: "2026-08-01T06:00:00Z",
+            scene_id: "S2A_SCENE_NEW",
+            sha256: "abc123",
+            cloud_pct: 10.0,
+            reason: null,
+            image_url:
+              "https://api.example.test/watchlist/ALT-5001/weeks/2026-W31/image",
+          },
+        ],
+      });
     });
 
     it("runCaptures propagates a non-2xx failure with its detail", async () => {
@@ -1139,7 +1274,7 @@ describe("case imagery backfill endpoints", () => {
       expect(fetchMock.mock.calls[0][0]).toBe(
         "https://api.example.test/cases/CASE-9001/imagery"
       );
-      expect(imagery).toEqual(remoteImagery);
+      expect(imagery).toEqual(withExpectedCaseImageUrls(remoteImagery));
     });
 
     it("getCaseImagery returns undefined on a genuine 404 but propagates a 500", async () => {
@@ -1165,7 +1300,7 @@ describe("case imagery backfill endpoints", () => {
       });
     });
 
-    it("backfillCaseImagery posts to /cases/{id}/imagery/backfill with auth, an empty default body, and returns the chunk result on 201", async () => {
+    it("backfillCaseImagery posts to /cases/{id}/imagery/backfill with auth, an empty default body, and returns the chunk result on 201 with image_url derived per week", async () => {
       process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
       document.cookie = "mapencroach_token=test-token-123; path=/";
       const chunkResult = {
@@ -1206,11 +1341,57 @@ describe("case imagery backfill endpoints", () => {
       expect(result).toEqual({
         ok: true,
         status: 201,
-        attempted: chunkResult.attempted,
+        attempted: [
+          {
+            week: "2026-W02",
+            status: "captured",
+            attempted_at: "2026-08-01T09:00:00Z",
+            scene_id: "S2A_SCENE_BACKFILL",
+            sha256: "abc123",
+            cloud_pct: 12.0,
+            reason: null,
+            image_url:
+              "https://api.example.test/cases/CASE-9001/imagery/2026-W02/image",
+          },
+        ],
         started_on: chunkResult.started_on,
         remaining_backfill_weeks: chunkResult.remaining_backfill_weeks,
       });
       document.cookie = "mapencroach_token=; path=/; max-age=0";
+    });
+
+    it("backfillCaseImagery nulls image_url for a backfilled week that was not captured (there is provably nothing to serve)", async () => {
+      process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 201,
+        statusText: "Created",
+        json: async () => ({
+          attempted: [
+            {
+              week: "2026-W03",
+              status: "no_usable_scene",
+              attempted_at: "2026-08-01T09:00:00Z",
+              scene_id: null,
+              sha256: null,
+              cloud_pct: null,
+              reason:
+                "No Sentinel-2 scene intersects this parcel's footprint within the 2026-01-12–2026-01-18 catalog window.",
+            },
+          ],
+          started_on: "2025-12-29",
+          remaining_backfill_weeks: 8,
+        }),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await backfillCaseImagery("CASE-9001");
+
+      expect(result.attempted?.[0]).toMatchObject({
+        week: "2026-W03",
+        status: "no_usable_scene",
+        image_url: null,
+      });
     });
 
     it("backfillCaseImagery sends from/max_weeks only when provided", async () => {

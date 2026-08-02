@@ -677,6 +677,15 @@ export const FIXTURE_CASES: Case[] = [
 // provider_error week, and a due-but-not-yet-attempted current week. The
 // gaps are not blank; each carries a real reason, because an unexplained
 // hole in the evidence record is worse than a stated one.
+//
+// Every captured week below sets `image_url: null` deliberately, even
+// though `status: "captured"`. Fixture/demo mode has no server behind it,
+// so there is nothing that could actually serve scene bytes at any URL —
+// pointing these at a fake URL would render a broken <img> in demo mode.
+// WeeklySnapshotTimeline renders `image_url: null` on a captured week as
+// the explicit "hash on record, image not retained" state, which is also
+// literally true here: only the sha256 is fixture data, not the bytes it
+// hashes.
 export const FIXTURE_WATCH_ENTRIES: WatchEntry[] = [
   {
     alert_id: "ALT-5001",
@@ -693,6 +702,7 @@ export const FIXTURE_WATCH_ENTRIES: WatchEntry[] = [
         sha256: "e57738c57fbbf69c54a29e1f16142c3d44b54990cd3ec625158fd01c63a973d",
         cloud_pct: 8.5,
         reason: null,
+        image_url: null,
       },
       {
         week: "2026-W24",
@@ -702,6 +712,7 @@ export const FIXTURE_WATCH_ENTRIES: WatchEntry[] = [
         sha256: "6f8194b1d3adfcb6f8d2542e43d5b5f019e14b142903d90a89da0a192d7e567",
         cloud_pct: 22.0,
         reason: null,
+        image_url: null,
       },
       {
         week: "2026-W25",
@@ -712,6 +723,7 @@ export const FIXTURE_WATCH_ENTRIES: WatchEntry[] = [
         cloud_pct: 78.0,
         reason:
           "Cloud cover 78.0% exceeds the 40.0% usability threshold for this week's pass.",
+        image_url: null,
       },
       {
         week: "2026-W26",
@@ -721,6 +733,7 @@ export const FIXTURE_WATCH_ENTRIES: WatchEntry[] = [
         sha256: "464be070d5771986b44f4629c3f9174532d054affdd3b2cb734c19b6ab93476",
         cloud_pct: 15.0,
         reason: null,
+        image_url: null,
       },
       {
         week: "2026-W27",
@@ -731,6 +744,7 @@ export const FIXTURE_WATCH_ENTRIES: WatchEntry[] = [
         cloud_pct: null,
         reason:
           "Provider request failed: Copernicus Data Space token endpoint returned 503 Service Unavailable.",
+        image_url: null,
       },
       {
         week: "2026-W28",
@@ -740,6 +754,7 @@ export const FIXTURE_WATCH_ENTRIES: WatchEntry[] = [
         sha256: "140f480f450cd43892c9c16689555907834d71961e5f8c1ff4759547696ed3",
         cloud_pct: 30.0,
         reason: null,
+        image_url: null,
       },
       {
         week: "2026-W29",
@@ -749,6 +764,7 @@ export const FIXTURE_WATCH_ENTRIES: WatchEntry[] = [
         sha256: "c9d42a6749a9bd7ce0e04d09f48742666767874f81ae10ccabf0a9921575b03",
         cloud_pct: 12.0,
         reason: null,
+        image_url: null,
       },
       {
         week: "2026-W30",
@@ -759,6 +775,7 @@ export const FIXTURE_WATCH_ENTRIES: WatchEntry[] = [
         cloud_pct: null,
         reason:
           "No Sentinel-2 scene intersects this parcel's footprint within the 2026-07-20–2026-07-26 catalog window.",
+        image_url: null,
       },
     ],
     due_weeks: ["2026-W31"],
@@ -780,6 +797,7 @@ export const FIXTURE_WATCH_ENTRIES: WatchEntry[] = [
         sha256: "773f8f6cabd790f4e5a48d5112c9fc91c89af553109db8213daff1932733d7c",
         cloud_pct: 5.0,
         reason: null,
+        image_url: null,
       },
     ],
     due_weeks: ["2026-W31"],
@@ -833,6 +851,7 @@ const CASE_9001_BACKFILLED_CAPTURES: CaseImagery["captures"] = [
     sha256: demoDigest("PCL-1001-2026-W11"),
     cloud_pct: 9.0,
     reason: null,
+    image_url: null,
   },
   {
     week: "2026-W12",
@@ -842,6 +861,7 @@ const CASE_9001_BACKFILLED_CAPTURES: CaseImagery["captures"] = [
     sha256: demoDigest("PCL-1001-2026-W12"),
     cloud_pct: 14.0,
     reason: null,
+    image_url: null,
   },
   {
     week: "2026-W13",
@@ -851,6 +871,7 @@ const CASE_9001_BACKFILLED_CAPTURES: CaseImagery["captures"] = [
     sha256: demoDigest("PCL-1001-2026-W13"),
     cloud_pct: 22.0,
     reason: null,
+    image_url: null,
   },
   {
     week: "2026-W14",
@@ -860,6 +881,7 @@ const CASE_9001_BACKFILLED_CAPTURES: CaseImagery["captures"] = [
     sha256: demoDigest("PCL-1001-2026-W14"),
     cloud_pct: 18.0,
     reason: null,
+    image_url: null,
   },
   {
     week: "2026-W15",
@@ -869,6 +891,7 @@ const CASE_9001_BACKFILLED_CAPTURES: CaseImagery["captures"] = [
     sha256: demoDigest("PCL-1001-2026-W15"),
     cloud_pct: 11.0,
     reason: null,
+    image_url: null,
   },
   {
     week: "2026-W16",
@@ -879,6 +902,7 @@ const CASE_9001_BACKFILLED_CAPTURES: CaseImagery["captures"] = [
     cloud_pct: 65.0,
     reason:
       "Cloud cover 65.0% exceeds the 40.0% usability threshold for this week's pass.",
+    image_url: null,
   },
   {
     week: "2026-W17",
@@ -888,6 +912,7 @@ const CASE_9001_BACKFILLED_CAPTURES: CaseImagery["captures"] = [
     sha256: demoDigest("PCL-1001-2026-W17"),
     cloud_pct: 16.0,
     reason: null,
+    image_url: null,
   },
   {
     week: "2026-W18",
@@ -897,6 +922,7 @@ const CASE_9001_BACKFILLED_CAPTURES: CaseImagery["captures"] = [
     sha256: demoDigest("PCL-1001-2026-W18"),
     cloud_pct: 24.0,
     reason: null,
+    image_url: null,
   },
   {
     week: "2026-W19",
@@ -906,6 +932,7 @@ const CASE_9001_BACKFILLED_CAPTURES: CaseImagery["captures"] = [
     sha256: demoDigest("PCL-1001-2026-W19"),
     cloud_pct: 10.0,
     reason: null,
+    image_url: null,
   },
   {
     week: "2026-W20",
@@ -916,6 +943,7 @@ const CASE_9001_BACKFILLED_CAPTURES: CaseImagery["captures"] = [
     cloud_pct: null,
     reason:
       "No Sentinel-2 scene intersects this parcel's footprint within the 2026-05-11–2026-05-17 catalog window.",
+    image_url: null,
   },
   {
     week: "2026-W21",
@@ -925,6 +953,7 @@ const CASE_9001_BACKFILLED_CAPTURES: CaseImagery["captures"] = [
     sha256: demoDigest("PCL-1001-2026-W21"),
     cloud_pct: 13.0,
     reason: null,
+    image_url: null,
   },
   {
     week: "2026-W22",
@@ -934,6 +963,7 @@ const CASE_9001_BACKFILLED_CAPTURES: CaseImagery["captures"] = [
     sha256: demoDigest("PCL-1001-2026-W22"),
     cloud_pct: 27.0,
     reason: null,
+    image_url: null,
   },
 ];
 

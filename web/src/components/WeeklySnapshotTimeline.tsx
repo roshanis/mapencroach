@@ -1,3 +1,7 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { authHeaders } from "@/lib/api";
 import type { CaptureAttempt, CaptureStatus } from "@/lib/types";
 
 /**
@@ -130,6 +134,276 @@ function abbreviateHash(sha256: string): string {
   return sha256.length > 16 ? `${sha256.slice(0, 16)}…` : sha256;
 }
 
+/** Fixed thumbnail box size — constrained per the contract ("constrained
+ * size, lazy-loaded"), and shared by every one of CapturedWeekEvidence's
+ * image states (loading / thumbnail / not-retained / unauthorized / error)
+ * so none of them occupy a different footprint in the row (a placeholder
+ * that shrinks to nothing would itself read as an empty box, which no
+ * not-retained-shaped state may ever be). The images themselves are no
+ * longer literally browser-native-`loading="lazy"` (they must be fetched
+ * with credentials via JS — see useCapturedImage — so the browser cannot
+ * defer the request the way it can for a plain `<img src>`); each row's
+ * fetch still only starts once that row is actually mounted. */
+const THUMBNAIL_WIDTH = 160;
+const THUMBNAIL_HEIGHT = 90;
+
+/**
+ * Outcomes for fetching a captured week's scene image.
+ *
+ * "no-url" and "not-retained" both render the identical "hash on record,
+ * image not retained" placeholder (see CapturedWeekEvidence) — one is known
+ * in advance (attempt.image_url was null; there is provably nothing to
+ * fetch), the other is discovered by actually requesting the candidate URL
+ * and getting a genuine 404 back. Either way it is a true statement: the
+ * server does not hold the bytes.
+ *
+ * "unauthorized" and "error" are deliberately NOT folded into that same
+ * state. A 401/403 means the bytes ARE retained but this session could not
+ * prove it was allowed to see them — collapsing that into "not retained"
+ * would be a false statement in an evidence UI. "error" covers everything
+ * else (network failure, 5xx): also not a "not retained" claim, since the
+ * server never actually answered the question.
+ */
+type CapturedImageState =
+  | { status: "no-url" }
+  | { status: "loading" }
+  | { status: "loaded"; objectUrl: string }
+  | { status: "not-retained" }
+  | { status: "unauthorized" }
+  | { status: "error" };
+
+/**
+ * Fetches a captured week's scene image with the app's real credentials and
+ * turns the response into an object URL for the `<img>`.
+ *
+ * A plain `<img src={attempt.image_url}>` cannot carry the
+ * `Authorization: Bearer <token>` header the backend requires (HTTPBearer
+ * has no cookie fallback, and the console typically talks to a different
+ * origin than the API in real deployments — see contract-blobs.md and
+ * mapencroach.api.auth._bearer_scheme), so it always 401s/403s against a
+ * live backend. `authHeaders()` (src/lib/api.ts) is the same auth every
+ * other API call in this app uses — cookie token or an explicit override,
+ * never the removed NEXT_PUBLIC_API_TOKEN — and CORS already allows the
+ * Authorization header cross-origin, so an authenticated `fetch` here works
+ * where a bare `<img>` request cannot.
+ *
+ * Follows this codebase's established async-effect pattern (see
+ * WatchToggle, PersonaSwitcher): a `cancelled` flag guards against setting
+ * state from a stale/out-of-order response (including React StrictMode's
+ * double-invoked effects in development), and the effect's cleanup revokes
+ * whatever object URL that run created so successive fetches (a changed
+ * `imageUrl`, a retry, or unmount) never leak one.
+ */
+function useCapturedImage(imageUrl: string | null): {
+  state: CapturedImageState;
+  retry: () => void;
+} {
+  const [state, setState] = useState<CapturedImageState>(
+    imageUrl ? { status: "loading" } : { status: "no-url" }
+  );
+  const [retryNonce, setRetryNonce] = useState(0);
+
+  useEffect(() => {
+    if (!imageUrl) {
+      setState({ status: "no-url" });
+      return;
+    }
+
+    let cancelled = false;
+    let createdObjectUrl: string | null = null;
+    setState({ status: "loading" });
+
+    fetch(imageUrl, { headers: authHeaders() })
+      .then(async (res) => {
+        if (!res.ok) {
+          if (cancelled) return;
+          // Only a genuine 404 may ever claim "not retained" — the server
+          // is explicitly saying it does not hold the bytes. Every other
+          // failure must be told apart, never folded into that claim.
+          if (res.status === 404) {
+            setState({ status: "not-retained" });
+          } else if (res.status === 401 || res.status === 403) {
+            setState({ status: "unauthorized" });
+          } else {
+            setState({ status: "error" });
+          }
+          return;
+        }
+        const blob = await res.blob();
+        if (cancelled) return;
+        createdObjectUrl = URL.createObjectURL(blob);
+        setState({ status: "loaded", objectUrl: createdObjectUrl });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setState({ status: "error" });
+      });
+
+    return () => {
+      cancelled = true;
+      if (createdObjectUrl) URL.revokeObjectURL(createdObjectUrl);
+    };
+  }, [imageUrl, retryNonce]);
+
+  return { state, retry: () => setRetryNonce((n) => n + 1) };
+}
+
+/**
+ * The evidence pair for a captured week: the thumbnail (or its explicit
+ * absence, truthfully explained) alongside cloud % and the sha256. Split out
+ * of the main render so the several very different "captured" outcomes —
+ * bytes retained, bytes genuinely not retained, bytes retained but this
+ * session unauthorized to fetch them, and "could not tell" — are each a
+ * single, clearly-named branch instead of one conditional buried in a
+ * larger block. This whole feature's design principle is that a gap must
+ * state its true reason; an unexplained or wrongly-explained gap is worse
+ * than none, so these branches are kept distinguishable in both text and
+ * `data-testid`, never by colour alone.
+ */
+function CapturedWeekEvidence({
+  attempt,
+  weekKey,
+  weekStart,
+  parcelId,
+}: {
+  attempt: CaptureAttempt;
+  weekKey: string;
+  weekStart: Date;
+  parcelId: string;
+}) {
+  const dateLabel = formatWeekStart(weekStart);
+  const { state: imageState, retry } = useCapturedImage(attempt.image_url);
+
+  return (
+    <div className="mt-1.5 flex flex-wrap items-start gap-3">
+      {imageState.status === "loading" && (
+        <div
+          data-testid="snapshot-week-thumbnail-loading"
+          role="status"
+          aria-label={`Loading satellite image for week ${weekKey} (week of ${dateLabel}), parcel ${parcelId}`}
+          style={{ width: THUMBNAIL_WIDTH, height: THUMBNAIL_HEIGHT }}
+          className="flex shrink-0 items-center justify-center rounded border border-gray-200 bg-gray-50 text-[11px] text-gray-500"
+        >
+          Loading image…
+        </div>
+      )}
+
+      {imageState.status === "loaded" && (
+        // Opens the full-resolution scene in a new tab using the browser's
+        // own image viewer, via the same object URL already fetched with
+        // authenticated credentials above — an <a href={attempt.image_url}>
+        // pointing at the raw, unauthenticated API path would 401/403
+        // exactly like the bare <img> this replaces did.
+        <a
+          href={imageState.objectUrl}
+          target="_blank"
+          rel="noreferrer"
+          aria-label={`Open full-size satellite image for week ${weekKey} (week of ${dateLabel}), parcel ${parcelId}`}
+          className="block shrink-0 overflow-hidden rounded border border-gray-200 focus:outline-none focus:ring-2 focus:ring-gov focus:ring-offset-1"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element -- src is a
+              blob: object URL created from an authenticated fetch response,
+              not a static/remote path next/image can optimize or allowlist
+              via build-time `remotePatterns`. A plain <img> is the correct
+              tool here, not a workaround. See useCapturedImage above. */}
+          <img
+            data-testid="snapshot-week-thumbnail"
+            src={imageState.objectUrl}
+            alt={`Satellite image captured for week ${weekKey} (week of ${dateLabel}), parcel ${parcelId}`}
+            width={THUMBNAIL_WIDTH}
+            height={THUMBNAIL_HEIGHT}
+            style={{ width: THUMBNAIL_WIDTH, height: THUMBNAIL_HEIGHT }}
+            className="object-cover"
+          />
+        </a>
+      )}
+
+      {(imageState.status === "no-url" ||
+        imageState.status === "not-retained") && (
+        // A captured week whose bytes were not retained — either known in
+        // advance (image_url was null) or discovered just now by a genuine
+        // 404 from the server. This must read as "we hold the hash, not
+        // the image" — never as an empty box, and never mistakable for the
+        // thumbnail above at a glance (dashed border, muted fill, and its
+        // own explicit label rather than colour alone conveying the
+        // difference).
+        <div
+          data-testid="snapshot-week-not-retained"
+          role="note"
+          aria-label={`Image not retained for week ${weekKey} (week of ${dateLabel}), parcel ${parcelId} — hash on record only`}
+          style={{ width: THUMBNAIL_WIDTH, height: THUMBNAIL_HEIGHT }}
+          className="flex shrink-0 flex-col items-start justify-center gap-0.5 rounded border border-dashed border-gray-300 bg-gray-50 px-2.5 py-2"
+        >
+          <span className="text-xs font-semibold text-gray-700">
+            Image not retained
+          </span>
+          <span className="text-[11px] leading-4 text-gray-500">
+            Hash on record — scene bytes were not kept.
+          </span>
+        </div>
+      )}
+
+      {imageState.status === "unauthorized" && (
+        // The server never said the bytes are missing — it refused the
+        // request. Saying "not retained" here would be false; this state
+        // exists specifically so that false claim is never made.
+        <div
+          data-testid="snapshot-week-unauthorized"
+          role="note"
+          aria-label={`Image not authorized for week ${weekKey} (week of ${dateLabel}), parcel ${parcelId} — the scene is retained but this session could not be authorized to view it`}
+          style={{ width: THUMBNAIL_WIDTH, height: THUMBNAIL_HEIGHT }}
+          className="flex shrink-0 flex-col items-start justify-center gap-0.5 rounded border border-dashed border-amber-300 bg-amber-50 px-2.5 py-2"
+        >
+          <span className="text-xs font-semibold text-amber-800">
+            Image not authorized
+          </span>
+          <span className="text-[11px] leading-4 text-amber-700">
+            The scene is retained — this session is not authorized to view
+            it.
+          </span>
+        </div>
+      )}
+
+      {imageState.status === "error" && (
+        <div
+          data-testid="snapshot-week-load-error"
+          role="alert"
+          aria-label={`Image could not be loaded for week ${weekKey} (week of ${dateLabel}), parcel ${parcelId}`}
+          style={{ width: THUMBNAIL_WIDTH, height: THUMBNAIL_HEIGHT }}
+          className="flex shrink-0 flex-col items-start justify-center gap-1 rounded border border-dashed border-red-300 bg-red-50 px-2.5 py-2"
+        >
+          <span className="text-xs font-semibold text-red-800">
+            Image could not be loaded
+          </span>
+          <button
+            type="button"
+            data-testid="snapshot-week-retry"
+            onClick={retry}
+            className="self-start text-[11px] font-medium text-red-700 underline hover:text-red-900"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      <div className="flex flex-col gap-1 pt-0.5 text-xs text-gray-600">
+        {attempt.cloud_pct != null && (
+          <span>{formatCloudPct(attempt.cloud_pct)}</span>
+        )}
+        {attempt.sha256 && (
+          <span
+            data-testid="snapshot-week-sha256"
+            title={attempt.sha256}
+            className="font-mono"
+          >
+            sha256:{abbreviateHash(attempt.sha256)}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const STATUS_LABELS: Record<WeekRowStatus, string> = {
   captured: "Captured",
   no_usable_scene: "No usable scene",
@@ -190,20 +464,12 @@ export function WeeklySnapshotTimeline({
           </div>
 
           {row.status === "captured" && row.attempt && (
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-600">
-              {row.attempt.cloud_pct != null && (
-                <span>{formatCloudPct(row.attempt.cloud_pct)}</span>
-              )}
-              {row.attempt.sha256 && (
-                <span
-                  data-testid="snapshot-week-sha256"
-                  title={row.attempt.sha256}
-                  className="font-mono"
-                >
-                  sha256:{abbreviateHash(row.attempt.sha256)}
-                </span>
-              )}
-            </div>
+            <CapturedWeekEvidence
+              attempt={row.attempt}
+              weekKey={row.key}
+              weekStart={row.weekStart}
+              parcelId={entry.parcel_id}
+            />
           )}
 
           {(row.status === "no_usable_scene" || row.status === "provider_error") &&
