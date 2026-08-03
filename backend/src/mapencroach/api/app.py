@@ -579,6 +579,72 @@ def create_app(store: Store | None = None) -> FastAPI:
         return alert
 
     # ------------------------------------------------------------------
+    # Analytics (H3 hotspot aggregation for dashboards)
+    # ------------------------------------------------------------------
+
+    @app.get("/analytics/hotspots")
+    def alert_hotspots(
+        store: StoreDep,
+        user: CurrentUser,
+        resolution: int = Query(default=8, ge=5, le=11),
+        tier: str | None = Query(default=None),
+        status_filter: str | None = Query(default=None, alias="status"),
+    ) -> dict[str, Any]:
+        """Alerts aggregated onto Uber's H3 hexagonal grid.
+
+        One row per hexagon that contains at least one visible alert in
+        the caller's jurisdiction scope — the collector-dashboard heat
+        view and the requisition's repeat-offense hotspot picture
+        (include closed alerts via ?status=CLOSED or no filter). Shadow
+        alerts never contribute: precision-measurement data must not
+        shape enforcement attention.
+        """
+        from mapencroach.spatial.h3grid import cell_boundary_geojson, cell_for_geometry
+
+        scope = _user_scope(store, user)
+        buckets: dict[str, dict[str, Any]] = {}
+        for alert in store.alerts.values():
+            parcel = store.parcels.get(alert["parcel_id"])
+            if parcel is None or parcel["jurisdiction_id"] not in scope:
+                continue
+            if alert.get("shadow", False):
+                continue
+            if tier is not None and alert["tier"] != tier:
+                continue
+            if status_filter is not None and alert["status"] != status_filter:
+                continue
+            cell = cell_for_geometry(parcel["geometry"], resolution)
+            bucket = buckets.setdefault(
+                cell,
+                {
+                    "cell": cell,
+                    "alert_count": 0,
+                    "red_alerts": 0,
+                    "total_area_m2": 0.0,
+                    "parcel_ids": set(),
+                },
+            )
+            bucket["alert_count"] += 1
+            if alert["tier"] == "RED":
+                bucket["red_alerts"] += 1
+            bucket["total_area_m2"] += alert["area_m2"]
+            bucket["parcel_ids"].add(alert["parcel_id"])
+
+        cells = [
+            {
+                "cell": bucket["cell"],
+                "alert_count": bucket["alert_count"],
+                "red_alerts": bucket["red_alerts"],
+                "total_area_m2": round(bucket["total_area_m2"], 1),
+                "parcel_count": len(bucket["parcel_ids"]),
+                "boundary": cell_boundary_geojson(bucket["cell"]),
+            }
+            for bucket in buckets.values()
+        ]
+        cells.sort(key=lambda c: (-c["alert_count"], c["cell"]))
+        return {"resolution": resolution, "cells": cells}
+
+    # ------------------------------------------------------------------
     # Cases
     # ------------------------------------------------------------------
 
