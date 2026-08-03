@@ -1,8 +1,10 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
-import type { Parcel } from "@/lib/types";
+import { useEffect, useState } from "react";
+import { getScenes } from "@/lib/api";
+import type { Parcel, Scene } from "@/lib/types";
+import { BeforeAfterSlider } from "./BeforeAfterSlider";
 
 interface ImageryScene {
   id: string;
@@ -80,11 +82,30 @@ export function HistoricalImageryTimeline({ parcel }: { parcel: Parcel }) {
   const [selectedId, setSelectedId] = useState("2010");
   const [failedSceneIds, setFailedSceneIds] = useState<string[]>([]);
   const [loadedSceneIds, setLoadedSceneIds] = useState<string[]>([]);
+  const [registeredScenes, setRegisteredScenes] = useState<Scene[]>([]);
   const selectedScene =
     IMAGERY_SCENES.find((scene) => scene.id === selectedId) ??
     IMAGERY_SCENES[IMAGERY_SCENES.length - 1];
   const imageUrl = buildWmsImageUrl(selectedScene, parcel);
   const imageFailed = failedSceneIds.includes(selectedScene.id);
+
+  useEffect(() => {
+    let cancelled = false;
+    // getScenes never throws — most personas get [] on a 403, which is the
+    // expected outcome, not an error, so there is no error state to show
+    // here beyond simply not rendering the "registered scene captures"
+    // section below.
+    getScenes().then((scenes) => {
+      if (!cancelled) setRegisteredScenes(scenes);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const scenesByCaptureDate = [...registeredScenes].sort(
+    (a, b) => Date.parse(a.captured_at) - Date.parse(b.captured_at)
+  );
 
   return (
     <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
@@ -231,6 +252,49 @@ export function HistoricalImageryTimeline({ parcel }: { parcel: Parcel }) {
         </a>
         . Availability and cloud cover vary by date.
       </p>
+
+      {scenesByCaptureDate.length > 0 && (
+        <div className="mt-6 border-t border-gray-200 pt-5">
+          <h3 className="text-sm font-semibold text-gray-900">
+            Registered scene captures
+          </h3>
+          <p className="mt-1 text-xs text-gray-500">
+            Higher-resolution satellite scenes ingested for this area of
+            interest, listed chronologically.
+          </p>
+          <ul className="mt-3 flex flex-col gap-2 text-sm">
+            {scenesByCaptureDate.map((scene) => (
+              <li
+                key={scene.scene_id}
+                className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded border border-gray-100 px-3 py-2"
+              >
+                <span className="font-medium text-gray-900">
+                  {scene.captured_at.slice(0, 10)}
+                </span>
+                <span className="text-gray-500">{scene.sensor}</span>
+                <span className="text-gray-500">
+                  {scene.resolution_m} m resolution
+                </span>
+                <span className="text-gray-500">
+                  {scene.cloud_pct}% cloud
+                </span>
+              </li>
+            ))}
+          </ul>
+
+          {scenesByCaptureDate.length >= 2 && (
+            <div className="mt-5">
+              <h3 className="mb-3 text-sm font-semibold text-gray-900">
+                Before / after comparison
+              </h3>
+              <BeforeAfterSlider
+                beforeScene={scenesByCaptureDate[0]}
+                afterScene={scenesByCaptureDate[scenesByCaptureDate.length - 1]}
+              />
+            </div>
+          )}
+        </div>
+      )}
     </section>
   );
 }

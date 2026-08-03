@@ -253,6 +253,28 @@ export interface BBox {
   north: number;
 }
 
+export interface SceneStacItem {
+  /** [west, south, east, north] in EPSG:4326. */
+  bbox: [number, number, number, number];
+  properties: Record<string, unknown>;
+}
+
+/** A registered satellite scene, as returned by GET /scenes. */
+export interface Scene {
+  scene_id: string;
+  sha256: string;
+  cog_sha256: string;
+  /** ISO 8601 capture timestamp. */
+  captured_at: string;
+  sensor: string;
+  resolution_m: number;
+  cloud_pct: number;
+  source: string;
+  href: string;
+  stac_item: SceneStacItem;
+  sidecar_sha256: string;
+}
+
 export interface AlertFilters {
   tier?: AlertTier;
   status?: AlertStatus;

@@ -20,12 +20,19 @@ import type {
   BoundaryGrade,
   Parcel,
   ParcelContext,
+  Scene,
 } from "./types";
 
 export const TOKEN_COOKIE = "mapencroach_token";
 export const PERSONA_COOKIE = "mapencroach_persona";
 
-function getApiBase(): string | undefined {
+/**
+ * Exported (not just used internally) so client components that need to
+ * fetch non-JSON resources directly — e.g. authenticated tile images in
+ * BeforeAfterSlider — can resolve the same API base without duplicating the
+ * NEXT_PUBLIC_API_URL parsing.
+ */
+export function getApiBase(): string | undefined {
   const base = process.env.NEXT_PUBLIC_API_URL;
   return base && base.length > 0 ? base.replace(/\/$/, "") : undefined;
 }
@@ -124,7 +131,12 @@ function cookieValue(name: string): string | undefined {
   return decodeURIComponent(match.slice(prefix.length));
 }
 
-function authHeaders(tokenOverride?: string): HeadersInit | undefined {
+/**
+ * Exported for the same reason as getApiBase — components that fetch raw
+ * (non-JSON) resources, such as authenticated tile images, need the same
+ * Authorization header resolution (explicit token, then cookie, then env).
+ */
+export function authHeaders(tokenOverride?: string): HeadersInit | undefined {
   const token =
     tokenOverride ??
     (typeof document !== "undefined" ? cookieValue(TOKEN_COOKIE) : undefined) ??
@@ -280,6 +292,25 @@ export async function getCase(
     return normalizeCase(raw);
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * Lists registered satellite scenes (GET /scenes). Only data_admin /
+ * system_admin roles are authorized — a 403 here is the expected outcome for
+ * every other persona, not a failure, so this never throws: [] on
+ * 401/403/404/network failure alike, same as getPersonas. There is no
+ * fixture fallback (no backend configured also yields []) since the demo
+ * fixtures predate scene registration; imagery timeline UI must already
+ * degrade gracefully with zero scenes.
+ */
+export async function getScenes(token?: string): Promise<Scene[]> {
+  const base = getApiBase();
+  if (!base) return [];
+  try {
+    return await fetchJson<Scene[]>(`${base}/scenes`, token);
+  } catch {
+    return [];
   }
 }
 

@@ -8,6 +8,7 @@ import {
   getParcelContext,
   getParcels,
   getPersonas,
+  getScenes,
   loginPersona,
   removeParcelTag,
   transitionCase,
@@ -642,5 +643,94 @@ describe("parcel tag endpoints", () => {
     const result = await removeParcelTag("PCL-1001", "nope");
 
     expect(result).toEqual({ ok: false, status: 404, detail: "tag not present" });
+  });
+});
+
+describe("getScenes", () => {
+  const SCENE = {
+    scene_id: "scene-001",
+    sha256: "a".repeat(64),
+    cog_sha256: "b".repeat(64),
+    captured_at: "2024-03-01T00:00:00Z",
+    sensor: "Sentinel-2",
+    resolution_m: 10,
+    cloud_pct: 4,
+    source: "aws-earth-search",
+    href: "https://example.test/scene-001.tif",
+    stac_item: {
+      bbox: [77.0, 29.8, 77.1, 29.9],
+      properties: {},
+    },
+    sidecar_sha256: "c".repeat(64),
+  };
+
+  it("returns [] when no backend is configured", async () => {
+    delete process.env.NEXT_PUBLIC_API_URL;
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const scenes = await getScenes();
+
+    expect(scenes).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("parses the scene list when a backend is configured", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => [SCENE],
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const scenes = await getScenes("tok-1");
+
+    expect(fetchMock.mock.calls[0][0]).toBe("https://api.example.test/scenes");
+    expect(fetchMock.mock.calls[0][1]).toEqual({
+      headers: { Authorization: "Bearer tok-1" },
+    });
+    expect(scenes).toEqual([SCENE]);
+  });
+
+  it("returns [] on a 403 (most personas are not imagery admins)", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      statusText: "Forbidden",
+      json: async () => ({ detail: "forbidden" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const scenes = await getScenes("tok-1");
+
+    expect(scenes).toEqual([]);
+  });
+
+  it("returns [] on a 401 unauthenticated request", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      statusText: "Unauthorized",
+      json: async () => ({ detail: "unauthenticated" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const scenes = await getScenes();
+
+    expect(scenes).toEqual([]);
+  });
+
+  it("returns [] when fetch throws (network failure)", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockRejectedValue(new Error("network down"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const scenes = await getScenes();
+
+    expect(scenes).toEqual([]);
   });
 });
