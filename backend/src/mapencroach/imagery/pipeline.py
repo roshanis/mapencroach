@@ -125,6 +125,7 @@ def ingest_scene(
     source: str,
     output_dir: str | Path,
     sidecar_path: str | Path | None = None,
+    object_store: Any | None = None,
 ) -> IngestedScene:
     """Hash the delivered files, convert to COG, and build the STAC item.
 
@@ -155,6 +156,18 @@ def ingest_scene(
     with rasterio.open(cog_path) as dataset:
         bbox, geometry = _footprint_wgs84(dataset)
 
+    # With an object store, the durable copies (original + COG + sidecar)
+    # live there and the catalog points at them; hashes were computed
+    # first, so integrity is provable wherever the bytes end up.
+    cog_href = str(cog_path)
+    if object_store is not None:
+        object_store.put_file(tif_path, f"scenes/{scene_id}/original.tif")
+        cog_href = object_store.put_file(cog_path, f"scenes/{scene_id}/cog.tif")
+        if sidecar is not None:
+            object_store.put_bytes(
+                sidecar.raw.encode(), f"scenes/{scene_id}/sidecar.txt"
+            )
+
     stac_item = _build_stac_item(
         scene_id=scene_id,
         captured_at=captured_at,
@@ -163,7 +176,7 @@ def ingest_scene(
         cloud_pct=cloud_pct,
         bbox=bbox,
         geometry=geometry,
-        cog_path=str(cog_path),
+        cog_path=cog_href,
         original_sha256=original_sha256,
         cog_sha256=cog_sha256,
         sidecar=sidecar,
@@ -172,7 +185,7 @@ def ingest_scene(
         scene_id=scene_id,
         original_sha256=original_sha256,
         cog_sha256=cog_sha256,
-        cog_path=str(cog_path),
+        cog_path=cog_href,
         captured_at=captured_at,
         sensor=sensor,
         resolution_m=resolution_m,

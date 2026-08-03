@@ -166,6 +166,20 @@ class RorImportRequest(BaseModel):
     source: str
 
 
+class GcpCreate(BaseModel):
+    id: str
+    lat: float
+    lon: float
+    accuracy_m: float
+    surveyed_on: str  # ISO date
+    source: str
+    elevation_m: float | None = None
+
+
+class OrthoRmsePatch(BaseModel):
+    rmse_m: float
+
+
 class SurveyCreate(BaseModel):
     survey_ref: str
     method: str  # DGPS | ETS | drone_rtk
@@ -471,6 +485,65 @@ def create_app(store: Store | None = None) -> FastAPI:
             object_id=f"{parcel_id}:{body.survey_ref}",
         )
         return _parcel_to_feature(parcel)
+
+    # ------------------------------------------------------------------
+    # Ground control points & ortho accuracy (requisition §3.3)
+    # ------------------------------------------------------------------
+
+    @app.post("/gcps", status_code=status.HTTP_201_CREATED)
+    def register_gcp(
+        body: GcpCreate,
+        store: StoreDep,
+        user: Annotated[User, Depends(require_roles(Role.SURVEY_OFFICER, Role.DATA_ADMIN))],
+    ) -> dict[str, Any]:
+        gcp = {
+            "id": body.id,
+            "geometry": {"type": "Point", "coordinates": [body.lon, body.lat]},
+            "elevation_m": body.elevation_m,
+            "accuracy_m": body.accuracy_m,
+            "surveyed_on": body.surveyed_on,
+            "source": body.source,
+        }
+        try:
+            store.save_gcp(gcp)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+            ) from exc
+        store.record_audit(
+            actor=user.sub, action="gcp.register", object_type="gcp", object_id=body.id
+        )
+        return gcp
+
+    @app.get("/gcps")
+    def list_gcps(
+        store: StoreDep,
+        user: Annotated[User, Depends(require_roles(Role.SURVEY_OFFICER, Role.DATA_ADMIN))],
+    ) -> list[dict[str, Any]]:
+        return sorted(store.gcps.values(), key=lambda g: g["id"])
+
+    @app.patch("/scenes/{scene_id}/ortho-rmse")
+    def set_ortho_rmse(
+        scene_id: str,
+        body: OrthoRmsePatch,
+        store: StoreDep,
+        user: Annotated[User, Depends(require_roles(Role.DATA_ADMIN))],
+    ) -> dict[str, Any]:
+        # Accuracy is measured against GCPs, never asserted: this records
+        # the measurement so exhibits can state a per-scene error bound.
+        try:
+            scene = store.set_scene_ortho_rmse(scene_id, body.rmse_m)
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="scene not found"
+            ) from exc
+        store.record_audit(
+            actor=user.sub,
+            action="scene.ortho_rmse",
+            object_type="imagery_scene",
+            object_id=scene_id,
+        )
+        return _scene_listing(scene)
 
     # ------------------------------------------------------------------
     # GIS layers (requisition §3 verification layers)

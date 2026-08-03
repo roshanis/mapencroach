@@ -54,9 +54,18 @@ MAPENCROACH_DEMO=1 .venv/bin/uvicorn "mapencroach.api.app:create_app" --factory
 ```
 
 Any SQLAlchemy URL works — SQLite for a quick persistent dev setup,
-PostGIS in production. The jurisdiction hierarchy is data, not schema:
-set `MAPENCROACH_JURISDICTION_LEVELS=authority,zone,ward` for a
+PostGIS in production (`pip install '.[postgres]'`, then
+`CREATE EXTENSION postgis;` on the database; smoke the deployment with
+`MAPENCROACH_TEST_DB_URL=... pytest tests/test_integration_paths.py`).
+The jurisdiction hierarchy is data, not schema: set
+`MAPENCROACH_JURISDICTION_LEVELS=authority,zone,ward` for a
 development-authority deployment (default `state,district,taluk,village`).
+
+Optional extras: `[s3]` stores scene artifacts in S3/MinIO
+(`MAPENCROACH_OBJECT_STORE_URL=s3://bucket/prefix`, or a local
+directory path without the extra); `[orchestration]` adds a Prefect
+flow around the monthly detection run (the cron-able CLI needs no
+extras).
 
 **Production auth (Keycloak/OIDC):** set `MAPENCROACH_OIDC_JWKS_URL` to the
 realm's `jwks_uri` (plus `MAPENCROACH_OIDC_ISSUER` / `MAPENCROACH_OIDC_AUDIENCE`).
