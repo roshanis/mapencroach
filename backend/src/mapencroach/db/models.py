@@ -243,9 +243,55 @@ class ImageryScene(Base):
     stac_item: Mapped[str] = mapped_column(Text, nullable=False)  # STAC item JSON
     sidecar_raw: Mapped[str | None] = mapped_column(Text)
     sidecar_sha256: Mapped[str | None] = mapped_column(String(64))
+    # RMSE (meters) against ground control points after orthorectification;
+    # recorded per scene so accuracy claims in court are measured, not asserted.
+    ortho_rmse_m: Mapped[float | None] = mapped_column(Float)
     ingested_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class GroundControlPoint(Base):
+    """A DGPS-surveyed geodetic reference point (requisition §3.3).
+
+    GCPs anchor orthorectification QC: each scene's residual error is
+    measured against these, giving an honest per-scene accuracy figure
+    instead of the requisition's impossible "zero-margin" claim.
+    """
+
+    __tablename__ = "ground_control_point"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    geometry = mapped_column(GeoJSONGeometry("POINT", 4326), nullable=False)
+    elevation_m: Mapped[float | None] = mapped_column(Float)
+    accuracy_m: Mapped[float] = mapped_column(Float, nullable=False)
+    surveyed_on: Mapped[datetime.date] = mapped_column(Date, nullable=False)
+    source: Mapped[str] = mapped_column(String(200), nullable=False)
+
+
+class BaselineDeclaration(Base):
+    """The declared legal baseline for an AOI: date + pinned, hashed scene set.
+
+    Everything before the baseline is legacy (LEGACY tier, political/legal
+    routing); the detection engine only ever asserts post-baseline change.
+    Declarations are append-only — a new declaration supersedes, never
+    edits, and each is anchored in the audit chain.
+    """
+
+    __tablename__ = "baseline_declaration"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    aoi_jurisdiction_id: Mapped[str] = mapped_column(
+        ForeignKey("jurisdiction.id"), nullable=False
+    )
+    baseline_date: Mapped[datetime.date] = mapped_column(Date, nullable=False)
+    declared_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    declared_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    scene_ids: Mapped[str] = mapped_column(Text, nullable=False)  # JSON list
+    scene_hashes: Mapped[str] = mapped_column(Text, nullable=False)  # JSON list
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 
 class DetectionRun(Base):
@@ -319,6 +365,8 @@ class Alert(Base):
     # High-res confirmation outcome + Phase D enrichment flags, as JSON.
     confirmation: Mapped[str | None] = mapped_column(Text)
     enrichment: Mapped[str | None] = mapped_column(Text)
+    # Field-verification verdict on a shadow alert (precision measurement), JSON.
+    disposition: Mapped[str | None] = mapped_column(Text)
 
 
 class CaseRow(Base):

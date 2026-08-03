@@ -99,6 +99,61 @@ function sceneCaption(scene: Scene): string {
   return `${scene.captured_at.slice(0, 10)} · ${scene.sensor}`;
 }
 
+type ColorMode = "natural" | "false-color";
+
+/**
+ * Client-side display filter approximating a False Color Composite so
+ * vegetation reads as red instead of green. This is a CSS presentation aid
+ * applied to the already-rendered RGB tile, not a spectral recombination:
+ * the tile proxy does not yet forward band-selection query params to
+ * TiTiler, so a true NIR-based FCC isn't possible until that lands.
+ * hue-rotate(240deg) maps green hues (~120deg) to red (~0deg/360deg);
+ * saturate() keeps the shifted vegetation visibly distinct from concrete.
+ */
+const FALSE_COLOR_FILTER = "hue-rotate(240deg) saturate(1.6)";
+
+/** Two-state toggle for the tile color presentation. */
+function ColorModeToggle({
+  mode,
+  onChange,
+}: {
+  mode: ColorMode;
+  onChange: (mode: ColorMode) => void;
+}) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Imagery color mode"
+      className="inline-flex rounded-lg bg-gray-100 p-1"
+    >
+      {(
+        [
+          { value: "natural" as const, label: "Natural" },
+          { value: "false-color" as const, label: "False color (vegetation = red)" },
+        ]
+      ).map((option) => {
+        const selected = option.value === mode;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            onClick={() => onChange(option.value)}
+            className={`rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-gov focus:ring-offset-1 ${
+              selected
+                ? "bg-gov text-white shadow-sm"
+                : "text-gray-600 hover:bg-white hover:text-gray-900"
+            }`}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function BeforeAfterSlider({
   beforeScene,
   afterScene,
@@ -108,8 +163,11 @@ export function BeforeAfterSlider({
 }: BeforeAfterSliderProps) {
   const base = apiBase ?? getApiBase();
   const [position, setPosition] = useState(50);
+  const [colorMode, setColorMode] = useState<ColorMode>("natural");
   const before = useSceneTile(beforeScene, base, token, zoom);
   const after = useSceneTile(afterScene, base, token, zoom);
+  const tileFilterStyle =
+    colorMode === "false-color" ? { filter: FALSE_COLOR_FILTER } : undefined;
 
   if (!beforeScene || !afterScene || !base) {
     return (
@@ -128,6 +186,10 @@ export function BeforeAfterSlider({
 
   return (
     <section aria-label="Before/after imagery comparison" data-testid="before-after-slider">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <ColorModeToggle mode={colorMode} onChange={setColorMode} />
+      </div>
+
       <div className="relative aspect-video overflow-hidden rounded-lg border border-gray-200 bg-gray-100">
         {before.status === "ready" && before.objectUrl ? (
           <Image
@@ -138,6 +200,7 @@ export function BeforeAfterSlider({
             // the Next.js image loader/CDN can resolve — skip optimization.
             unoptimized
             className="object-cover"
+            style={tileFilterStyle}
           />
         ) : (
           <div className="absolute inset-0 grid place-items-center text-sm text-gray-500">
@@ -156,6 +219,7 @@ export function BeforeAfterSlider({
               fill
               unoptimized
               className="object-cover"
+              style={tileFilterStyle}
             />
           ) : (
             <div className="grid h-full w-full place-items-center text-sm text-gray-500">
@@ -185,6 +249,14 @@ export function BeforeAfterSlider({
         <span>Before · {sceneCaption(beforeScene)}</span>
         <span>After · {sceneCaption(afterScene)}</span>
       </div>
+
+      {colorMode === "false-color" && (
+        <p className="mt-2 text-xs italic text-gray-500">
+          False color is a display aid, not spectral FCC — a true NIR-based
+          false color composite requires band selection at the tile server,
+          which arrives once the tile proxy forwards band query params.
+        </p>
+      )}
     </section>
   );
 }

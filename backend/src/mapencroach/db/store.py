@@ -338,6 +338,27 @@ class DatabaseStore:
                 )
                 if value
             )
+            identifier_rows = (
+                session.execute(
+                    select(models.ParcelIdentifier)
+                    .where(models.ParcelIdentifier.parcel_id == parcel_id)
+                    .order_by(models.ParcelIdentifier.id)
+                )
+                .scalars()
+                .all()
+            )
+            aliases = aliases + tuple(
+                ParcelAlias(
+                    scheme=row.scheme,
+                    value=row.value,
+                    source=row.source,
+                    valid_from=row.valid_from,
+                    valid_to=row.valid_to,
+                    match_method=row.match_method,
+                    confidence=row.confidence,
+                )
+                for row in identifier_rows
+            )
             snapshot = session.get(models.ParcelContextSnapshot, parcel_id)
         if snapshot is not None:
             stored = ParcelContext.from_dict(json.loads(snapshot.context))
@@ -380,6 +401,8 @@ class DatabaseStore:
             alert["confirmation"] = json.loads(row.confirmation)
         if row.enrichment:
             alert["enrichment"] = json.loads(row.enrichment)
+        if row.disposition:
+            alert["disposition"] = json.loads(row.disposition)
         return alert
 
     @property
@@ -423,6 +446,7 @@ class DatabaseStore:
             "stac_item": json.loads(row.stac_item),
             "sidecar_sha256": row.sidecar_sha256,
             "sidecar_raw": row.sidecar_raw,
+            "ortho_rmse_m": row.ortho_rmse_m,
         }
 
     @property
@@ -460,6 +484,118 @@ class DatabaseStore:
             )
             session.commit()
 
+    def add_parcel_aliases(self, parcel_id: str, aliases: list[ParcelAlias]) -> None:
+        with self._session_factory() as session:
+            if session.get(models.Parcel, parcel_id) is None:
+                raise KeyError(parcel_id)
+            for alias in aliases:
+                session.add(
+                    models.ParcelIdentifier(
+                        parcel_id=parcel_id,
+                        scheme=alias.scheme,
+                        value=alias.value,
+                        source=alias.source,
+                        valid_from=alias.valid_from,
+                        valid_to=alias.valid_to,
+                        match_method=alias.match_method,
+                        confidence=alias.confidence,
+                    )
+                )
+            session.commit()
+
+    def declare_baseline(self, declaration: dict[str, Any]) -> dict[str, Any]:
+        with self._session_factory() as session:
+            row = models.BaselineDeclaration(
+                aoi_jurisdiction_id=declaration["aoi_jurisdiction_id"],
+                baseline_date=datetime.fromisoformat(declaration["baseline_date"]).date()
+                if isinstance(declaration["baseline_date"], str)
+                else declaration["baseline_date"],
+                declared_by=declaration["declared_by"],
+                declared_at=datetime.fromisoformat(declaration["declared_at"])
+                if isinstance(declaration["declared_at"], str)
+                else declaration["declared_at"],
+                scene_ids=json.dumps(declaration["scene_ids"]),
+                scene_hashes=json.dumps(declaration["scene_hashes"]),
+                note=declaration.get("note", ""),
+            )
+            session.add(row)
+            session.commit()
+            return self._baseline_dict(row)
+
+    @staticmethod
+    def _baseline_dict(row: models.BaselineDeclaration) -> dict[str, Any]:
+        return {
+            "id": row.id,
+            "aoi_jurisdiction_id": row.aoi_jurisdiction_id,
+            "baseline_date": row.baseline_date.isoformat(),
+            "declared_by": row.declared_by,
+            "declared_at": _utc(row.declared_at).isoformat(),
+            "scene_ids": json.loads(row.scene_ids),
+            "scene_hashes": json.loads(row.scene_hashes),
+            "note": row.note,
+        }
+
+    def active_baseline(self, aoi_jurisdiction_id: str) -> dict[str, Any] | None:
+        with self._session_factory() as session:
+            row = (
+                session.execute(
+                    select(models.BaselineDeclaration)
+                    .where(
+                        models.BaselineDeclaration.aoi_jurisdiction_id == aoi_jurisdiction_id
+                    )
+                    .order_by(models.BaselineDeclaration.id.desc())
+                )
+                .scalars()
+                .first()
+            )
+            return self._baseline_dict(row) if row else None
+
+    def save_gcp(self, gcp: dict[str, Any]) -> None:
+        from datetime import date as date_type
+
+        surveyed_on = gcp["surveyed_on"]
+        if not isinstance(surveyed_on, date_type):
+            surveyed_on = date_type.fromisoformat(surveyed_on)
+        with self._session_factory() as session:
+            if session.get(models.GroundControlPoint, gcp["id"]) is not None:
+                raise ValueError(f"GCP already registered: {gcp['id']!r}")
+            session.add(
+                models.GroundControlPoint(
+                    id=gcp["id"],
+                    geometry=gcp["geometry"],
+                    elevation_m=gcp.get("elevation_m"),
+                    accuracy_m=gcp["accuracy_m"],
+                    surveyed_on=surveyed_on,
+                    source=gcp["source"],
+                )
+            )
+            session.commit()
+
+    @property
+    def gcps(self) -> dict[str, dict[str, Any]]:
+        with self._session_factory() as session:
+            rows = session.execute(select(models.GroundControlPoint)).scalars().all()
+            return {
+                row.id: {
+                    "id": row.id,
+                    "geometry": row.geometry,
+                    "elevation_m": row.elevation_m,
+                    "accuracy_m": row.accuracy_m,
+                    "surveyed_on": row.surveyed_on.isoformat(),
+                    "source": row.source,
+                }
+                for row in rows
+            }
+
+    def set_scene_ortho_rmse(self, scene_id: str, rmse_m: float) -> dict[str, Any]:
+        with self._session_factory() as session:
+            row = session.get(models.ImageryScene, scene_id)
+            if row is None:
+                raise KeyError(scene_id)
+            row.ortho_rmse_m = rmse_m
+            session.commit()
+            return self._scene_dict(row)
+
     def save_alert(self, alert: dict[str, Any]) -> None:
         with self._session_factory() as session:
             session.add(
@@ -479,12 +615,17 @@ class DatabaseStore:
                     enrichment=(
                         json.dumps(alert["enrichment"]) if alert.get("enrichment") else None
                     ),
+                    disposition=(
+                        json.dumps(alert["disposition"]) if alert.get("disposition") else None
+                    ),
                 )
             )
             session.commit()
 
-    _ALERT_UPDATABLE = frozenset({"tier", "status", "shadow", "confirmation", "enrichment"})
-    _ALERT_JSON_FIELDS = frozenset({"confirmation", "enrichment"})
+    _ALERT_UPDATABLE = frozenset(
+        {"tier", "status", "shadow", "confirmation", "enrichment", "disposition"}
+    )
+    _ALERT_JSON_FIELDS = frozenset({"confirmation", "enrichment", "disposition"})
 
     def update_alert(self, alert_id: str, **fields: Any) -> dict[str, Any]:
         unknown = set(fields) - self._ALERT_UPDATABLE

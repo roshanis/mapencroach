@@ -153,4 +153,125 @@ describe("BeforeAfterSlider", () => {
 
     expect(slider).toHaveValue("80");
   });
+
+  it("defaults to Natural color mode with no filter applied and no caption", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      blob: async () => new Blob(["fake-png-bytes"], { type: "image/png" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <BeforeAfterSlider
+        beforeScene={BEFORE_SCENE}
+        afterScene={AFTER_SCENE}
+        apiBase="https://api.example.test"
+      />
+    );
+
+    const naturalButton = screen.getByRole("radio", { name: "Natural" });
+    const falseColorButton = screen.getByRole("radio", {
+      name: "False color (vegetation = red)",
+    });
+    expect(naturalButton).toHaveAttribute("aria-checked", "true");
+    expect(falseColorButton).toHaveAttribute("aria-checked", "false");
+
+    await waitFor(() => {
+      expect(screen.getByAltText(/Before:/)).toBeInTheDocument();
+    });
+
+    expect(screen.getByAltText(/Before:/).style.filter).toBe("");
+    expect(screen.queryByText(/display aid/i)).not.toBeInTheDocument();
+  });
+
+  it("switches to false color mode, applies the filter to both tiles, and shows the display-aid caption", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      blob: async () => new Blob(["fake-png-bytes"], { type: "image/png" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <BeforeAfterSlider
+        beforeScene={BEFORE_SCENE}
+        afterScene={AFTER_SCENE}
+        apiBase="https://api.example.test"
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByAltText(/Before:/)).toBeInTheDocument();
+      expect(screen.getByAltText(/After:/)).toBeInTheDocument();
+    });
+
+    const falseColorButton = screen.getByRole("radio", {
+      name: "False color (vegetation = red)",
+    });
+    fireEvent.click(falseColorButton);
+
+    expect(falseColorButton).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: "Natural" })).toHaveAttribute(
+      "aria-checked",
+      "false"
+    );
+
+    const beforeImg = screen.getByAltText(/Before:/);
+    const afterImg = screen.getByAltText(/After:/);
+    expect(beforeImg.style.filter).toContain("hue-rotate");
+    expect(afterImg.style.filter).toContain("hue-rotate");
+
+    expect(screen.getByText(/display aid/i)).toBeInTheDocument();
+  });
+
+  it("keeps the color mode selection when the scenes change", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      blob: async () => new Blob(["fake-png-bytes"], { type: "image/png" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { rerender } = render(
+      <BeforeAfterSlider
+        beforeScene={BEFORE_SCENE}
+        afterScene={AFTER_SCENE}
+        apiBase="https://api.example.test"
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByAltText(/Before:/)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("radio", { name: "False color (vegetation = red)" }));
+    expect(screen.getByText(/display aid/i)).toBeInTheDocument();
+
+    const NEW_AFTER_SCENE: Scene = {
+      ...AFTER_SCENE,
+      scene_id: "scene-after-2",
+      captured_at: "2025-01-01T00:00:00Z",
+    };
+
+    rerender(
+      <BeforeAfterSlider
+        beforeScene={BEFORE_SCENE}
+        afterScene={NEW_AFTER_SCENE}
+        apiBase="https://api.example.test"
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByAltText(/After: 2025-01-01/)).toBeInTheDocument();
+    });
+
+    expect(
+      screen.getByRole("radio", { name: "False color (vegetation = red)" })
+    ).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText(/display aid/i)).toBeInTheDocument();
+  });
 });

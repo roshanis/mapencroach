@@ -80,7 +80,10 @@ class Store:
     scenes: dict[str, dict[str, Any]] = field(default_factory=dict)
     gis_layers: dict[int, dict[str, Any]] = field(default_factory=dict)
     surveys: list[dict[str, Any]] = field(default_factory=list)
+    baselines: list[dict[str, Any]] = field(default_factory=list)
+    gcps: dict[str, dict[str, Any]] = field(default_factory=dict)
     parcel_contexts: dict[str, ParcelContext] = field(default_factory=dict)
+    parcel_extra_aliases: dict[str, list[ParcelAlias]] = field(default_factory=dict)
     audit_chain: list[AuditEntry] = field(default_factory=list)
 
     root_jurisdiction_id: str = "state"
@@ -166,7 +169,9 @@ class Store:
             raise ValueError(f"scene content already registered: {scene['sha256']!r}")
         self.scenes[scene["scene_id"]] = scene
 
-    _ALERT_UPDATABLE = frozenset({"tier", "status", "shadow", "confirmation", "enrichment"})
+    _ALERT_UPDATABLE = frozenset(
+        {"tier", "status", "shadow", "confirmation", "enrichment", "disposition"}
+    )
 
     def update_alert(self, alert_id: str, **fields: Any) -> dict[str, Any]:
         unknown = set(fields) - self._ALERT_UPDATABLE
@@ -175,6 +180,34 @@ class Store:
         alert = self.alerts[alert_id]
         alert.update(fields)
         return alert
+
+    def add_parcel_aliases(self, parcel_id: str, aliases: list[ParcelAlias]) -> None:
+        if parcel_id not in self.parcels:
+            raise KeyError(parcel_id)
+        self.parcel_extra_aliases.setdefault(parcel_id, []).extend(aliases)
+
+    def declare_baseline(self, declaration: dict[str, Any]) -> dict[str, Any]:
+        declaration = dict(declaration)
+        declaration["id"] = len(self.baselines) + 1
+        self.baselines.append(declaration)
+        return declaration
+
+    def active_baseline(self, aoi_jurisdiction_id: str) -> dict[str, Any] | None:
+        """Latest declaration for the AOI — declarations supersede, never edit."""
+        matching = [
+            b for b in self.baselines if b["aoi_jurisdiction_id"] == aoi_jurisdiction_id
+        ]
+        return matching[-1] if matching else None
+
+    def save_gcp(self, gcp: dict[str, Any]) -> None:
+        if gcp["id"] in self.gcps:
+            raise ValueError(f"GCP already registered: {gcp['id']!r}")
+        self.gcps[gcp["id"]] = dict(gcp)
+
+    def set_scene_ortho_rmse(self, scene_id: str, rmse_m: float) -> dict[str, Any]:
+        scene = self.scenes[scene_id]
+        scene["ortho_rmse_m"] = rmse_m
+        return scene
 
     def save_layer(
         self, meta: dict[str, Any], features: list[dict[str, Any]]
@@ -243,7 +276,7 @@ class Store:
             )
             for scheme, key in (("survey_no", "survey_no"), ("ULPIN", "ulpin"))
             if parcel.get(key)
-        )
+        ) + tuple(self.parcel_extra_aliases.get(parcel_id, []))
         stored = self.parcel_contexts.get(parcel_id)
         if stored is not None:
             return replace(stored, aliases=aliases)

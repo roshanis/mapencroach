@@ -52,6 +52,7 @@ class IngestedScene:
             "stac_item": self.stac_item,
             "sidecar_sha256": self.sidecar.sha256 if self.sidecar else None,
             "sidecar_raw": self.sidecar.raw if self.sidecar else None,
+            "ortho_rmse_m": None,  # measured against GCPs after ortho-QC, not at ingest
         }
 
 

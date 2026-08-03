@@ -101,7 +101,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     run = subparsers.add_parser("run", help="screen an AOI between a baseline and current scene")
     run.add_argument("--db-url", required=True)
-    run.add_argument("--baseline", required=True, help="baseline scene id")
+    run.add_argument(
+        "--baseline",
+        default=None,
+        help="baseline scene id (default: the AOI's declared baseline, hash-verified)",
+    )
     run.add_argument("--current", required=True, help="current scene id")
     run.add_argument("--aoi", required=True, help="AOI jurisdiction id")
     run.add_argument(

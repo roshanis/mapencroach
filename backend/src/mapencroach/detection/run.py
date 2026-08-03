@@ -76,9 +76,9 @@ def _persistence_count(session: Session, parcel_id: str, observed_on: date) -> i
 def run_detection(
     store: DatabaseStore,
     *,
-    baseline_scene_id: str,
     current_scene_id: str,
     aoi_jurisdiction_id: str,
+    baseline_scene_id: str | None = None,
     live: bool = False,
     band_map: BandMap = DEFAULT_BAND_MAP,
     thresholds: ScreeningThresholds = DEFAULT_THRESHOLDS,
@@ -86,13 +86,25 @@ def run_detection(
     enrichment_layers: dict[str, list[dict]] | None = None,
     actor: str = "detection-pipeline",
 ) -> DetectionSummary:
-    """Screen every parcel in the AOI against baseline vs current scene."""
+    """Screen every parcel in the AOI against baseline vs current scene.
+
+    When baseline_scene_id is omitted, the AOI's declared baseline
+    (imagery/baseline.py) is resolved — hash-verified — which is the
+    normal production path; an explicit id is for ad-hoc comparisons.
+    """
     scenes = store.scenes
-    for scene_id in (baseline_scene_id, current_scene_id):
-        if scene_id not in scenes:
-            raise KeyError(f"scene not registered: {scene_id!r}")
-    baseline_scene = scenes[baseline_scene_id]
+    if current_scene_id not in scenes:
+        raise KeyError(f"scene not registered: {current_scene_id!r}")
     current_scene = scenes[current_scene_id]
+    if baseline_scene_id is None:
+        from mapencroach.imagery.baseline import resolve_baseline_scene
+
+        baseline_scene_id = resolve_baseline_scene(
+            store, aoi_jurisdiction_id, current_scene
+        )
+    elif baseline_scene_id not in scenes:
+        raise KeyError(f"scene not registered: {baseline_scene_id!r}")
+    baseline_scene = scenes[baseline_scene_id]
     if current_scene["captured_at"] <= baseline_scene["captured_at"]:
         raise ValueError("current scene must be captured after the baseline scene")
 

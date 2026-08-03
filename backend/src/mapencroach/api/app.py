@@ -11,7 +11,7 @@ we don't leak that they exist.
 import json
 import os
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Any
 
 import httpx
@@ -37,6 +37,7 @@ from mapencroach.domain.case_engine import (
     allowed_transitions,
     required_artifacts_for,
 )
+from mapencroach.domain.identifiers import identifier_block
 
 _VALID_GRADES = {"A", "B", "C"}
 
@@ -148,6 +149,23 @@ class PersonaLogin(BaseModel):
     persona_id: str
 
 
+class BaselineDeclare(BaseModel):
+    aoi_jurisdiction_id: str
+    baseline_date: str  # ISO date
+    scene_ids: list[str]
+    note: str = ""
+
+
+class DispositionCreate(BaseModel):
+    field_verified_real: bool
+    note: str = ""
+
+
+class RorImportRequest(BaseModel):
+    csv: str
+    source: str
+
+
 class SurveyCreate(BaseModel):
     survey_ref: str
     method: str  # DGPS | ETS | drone_rtk
@@ -168,13 +186,18 @@ class TransitionRequest(BaseModel):
 
 
 def _parcel_to_feature(parcel: dict[str, Any]) -> dict[str, Any]:
+    identifiers = identifier_block(parcel)
     return {
         "type": "Feature",
+        # Identifiers cite the parcel; this geometry is the legal authority
+        # on extent (see domain/identifiers.py).
         "geometry": parcel["geometry"],
         "properties": {
             "id": parcel["id"],
             "survey_no": parcel["survey_no"],
             "ulpin": parcel["ulpin"],
+            "official_identifier": identifiers["official_identifier"],
+            "digipin": identifiers["digipin"],
             "owning_department": parcel["owning_department"],
             "land_category": parcel["land_category"],
             "boundary_grade": parcel["boundary_grade"],
@@ -577,6 +600,158 @@ def create_app(store: Store | None = None) -> FastAPI:
             actor=user.sub, action="alert.create", object_type="alert", object_id=alert_id
         )
         return alert
+
+    # ------------------------------------------------------------------
+    # Baselines (the legal anchor: declared date + pinned scene hashes)
+    # ------------------------------------------------------------------
+
+    @app.post("/baselines", status_code=status.HTTP_201_CREATED)
+    def declare_baseline_endpoint(
+        body: BaselineDeclare,
+        store: StoreDep,
+        user: Annotated[User, Depends(require_roles(Role.DATA_ADMIN))],
+    ) -> dict[str, Any]:
+        from mapencroach.imagery.baseline import BaselineError, declare_baseline
+
+        scope = _user_scope(store, user)
+        if body.aoi_jurisdiction_id not in scope:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="AOI not found")
+        try:
+            return declare_baseline(
+                store,
+                aoi_jurisdiction_id=body.aoi_jurisdiction_id,
+                baseline_date=date.fromisoformat(body.baseline_date),
+                scene_ids=body.scene_ids,
+                declared_by=user.sub,
+                declared_at=datetime.now(UTC),
+                note=body.note,
+            )
+        except BaselineError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+            ) from exc
+
+    @app.get("/baselines/{aoi_jurisdiction_id}")
+    def get_baseline(
+        aoi_jurisdiction_id: str, store: StoreDep, user: CurrentUser
+    ) -> dict[str, Any]:
+        scope = _user_scope(store, user)
+        if aoi_jurisdiction_id not in scope:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="AOI not found")
+        declaration = store.active_baseline(aoi_jurisdiction_id)
+        if declaration is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="no baseline declared"
+            )
+        return declaration
+
+    # ------------------------------------------------------------------
+    # Shadow-alert dispositions & detection precision (go-live gate)
+    # ------------------------------------------------------------------
+
+    @app.post("/alerts/{alert_id}/disposition", status_code=status.HTTP_201_CREATED)
+    def disposition_alert(
+        alert_id: str,
+        body: DispositionCreate,
+        store: StoreDep,
+        user: Annotated[User, Depends(require_roles(Role.DATA_ADMIN))],
+    ) -> dict[str, Any]:
+        from mapencroach.detection.precision import (
+            DispositionError,
+            record_shadow_disposition,
+        )
+
+        alert = store.alerts.get(alert_id)
+        scope = _user_scope(store, user)
+        parcel = store.parcels.get(alert["parcel_id"]) if alert else None
+        if alert is None or parcel is None or parcel["jurisdiction_id"] not in scope:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="alert not found")
+        try:
+            return record_shadow_disposition(
+                store,
+                alert_id,
+                field_verified_real=body.field_verified_real,
+                actor=user.sub,
+                verified_at=datetime.now(UTC),
+                note=body.note,
+            )
+        except DispositionError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+            ) from exc
+
+    @app.get("/analytics/detection-precision")
+    def detection_precision(
+        store: StoreDep,
+        user: Annotated[User, Depends(require_roles(Role.DATA_ADMIN, Role.SYSTEM_ADMIN))],
+    ) -> dict[str, Any]:
+        from mapencroach.detection.precision import precision_report
+
+        scope = _user_scope(store, user)
+        scoped_alerts = [
+            alert
+            for alert in store.alerts.values()
+            if (parcel := store.parcels.get(alert["parcel_id"])) is not None
+            and parcel["jurisdiction_id"] in scope
+        ]
+        return precision_report(scoped_alerts)
+
+    # ------------------------------------------------------------------
+    # Revenue-record (RoR) import: khasra numbers -> parcel aliases
+    # ------------------------------------------------------------------
+
+    @app.post("/parcels/ror-import")
+    def ror_import(
+        body: RorImportRequest,
+        store: StoreDep,
+        user: Annotated[User, Depends(require_roles(Role.DATA_ADMIN))],
+    ) -> dict[str, Any]:
+        import tempfile
+        from pathlib import Path
+
+        from mapencroach.cadastral.revenue import link_khasra, load_ror_csv
+
+        # Personal data never enters through this endpoint: occupant names
+        # are dropped at load time (DPDP minimization; include_personal is
+        # deliberately not exposed over HTTP).
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".csv", delete=False, encoding="utf-8"
+        ) as handle:
+            handle.write(body.csv)
+            csv_path = Path(handle.name)
+        try:
+            imported = load_ror_csv(csv_path)
+        finally:
+            csv_path.unlink(missing_ok=True)
+
+        if imported.status == "rejected":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail={"errors": imported.errors},
+            )
+
+        scope = _user_scope(store, user)
+        scoped_parcels = [
+            p for p in store.parcels.values() if p["jurisdiction_id"] in scope
+        ]
+        linkage = link_khasra(imported.records, scoped_parcels, source=body.source)
+
+        persisted = 0
+        for parcel_id, alias in linkage.aliases:
+            store.add_parcel_aliases(parcel_id, [alias])
+            persisted += 1
+        store.record_audit(
+            actor=user.sub,
+            action="parcel.ror_import",
+            object_type="parcel_identifier",
+            object_id=f"{body.source}:{persisted}",
+        )
+        return {
+            "records": len(imported.records),
+            "linked": persisted,
+            "ambiguous": len(linkage.ambiguous),
+            "unmatched": len(linkage.unmatched),
+        }
 
     # ------------------------------------------------------------------
     # Analytics (H3 hotspot aggregation for dashboards)
