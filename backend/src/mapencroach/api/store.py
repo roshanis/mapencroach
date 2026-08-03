@@ -78,6 +78,8 @@ class Store:
     alerts: dict[str, dict[str, Any]] = field(default_factory=dict)
     cases: dict[str, CaseRecord] = field(default_factory=dict)
     scenes: dict[str, dict[str, Any]] = field(default_factory=dict)
+    gis_layers: dict[int, dict[str, Any]] = field(default_factory=dict)
+    surveys: list[dict[str, Any]] = field(default_factory=list)
     parcel_contexts: dict[str, ParcelContext] = field(default_factory=dict)
     audit_chain: list[AuditEntry] = field(default_factory=list)
 
@@ -173,6 +175,33 @@ class Store:
         alert = self.alerts[alert_id]
         alert.update(fields)
         return alert
+
+    def save_layer(
+        self, meta: dict[str, Any], features: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        layer_id = max(self.gis_layers, default=0) + 1
+        layer = {
+            "id": layer_id,
+            "kind": meta["kind"],
+            "name": meta["name"],
+            "source": meta["source"],
+            "version": meta["version"],
+            "feature_count": len(features),
+            "features": [dict(f) for f in features],
+        }
+        self.gis_layers[layer_id] = layer
+        return {k: v for k, v in layer.items() if k != "features"}
+
+    def layer_features(self, kind: str) -> list[dict[str, Any]]:
+        return [
+            dict(feature)
+            for layer in self.gis_layers.values()
+            if layer["kind"] == kind
+            for feature in layer["features"]
+        ]
+
+    def save_survey(self, survey: dict[str, Any]) -> None:
+        self.surveys.append(dict(survey))
 
     def transition_case(
         self,

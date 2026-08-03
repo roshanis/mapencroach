@@ -389,6 +389,82 @@ class Media(Base):
     storage_href: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+GIS_LAYER_KINDS = (
+    "khasra",
+    "plot_boundary",
+    "property",
+    "master_plan",
+    "elu",
+    "plu",
+    "green_belt",
+    "road",
+    "water_body",
+    "ward",
+    "building_footprint",
+    "approved_plan",
+    "legacy_encroachment",
+)
+
+
+class GisLayer(Base):
+    """One imported version of an authority GIS layer (requisition §3).
+
+    Layers are context and verification data around the canonical parcel
+    register — khasra maps, master plans, ELU/PLU zoning, green belts,
+    road/water networks, approved building plans. Provenance is
+    mandatory: an unattributed layer is not usable in enforcement.
+    """
+
+    __tablename__ = "gis_layer"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(
+        Enum(*GIS_LAYER_KINDS, name="gis_layer_kind", native_enum=False), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    source: Mapped[str] = mapped_column(String(300), nullable=False)  # provenance
+    version: Mapped[str] = mapped_column(String(100), nullable=False)
+    imported_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class GisFeature(Base):
+    __tablename__ = "gis_feature"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    layer_id: Mapped[int] = mapped_column(ForeignKey("gis_layer.id"), nullable=False)
+    source_feature_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    # Generic geometry: polygons for zones/plans, lines for roads/canals.
+    geometry = mapped_column(GeoJSONGeometry("GEOMETRY", 4326), nullable=False)
+    attributes: Mapped[str] = mapped_column(Text, nullable=False, default="{}")  # JSON
+
+
+class Survey(Base):
+    """A ground survey (DGPS/ETS) result attached to a parcel.
+
+    Surveys are how boundary grades improve: each upload compounds the
+    map's quality permanently (PLAN persona P4).
+    """
+
+    __tablename__ = "survey"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    parcel_id: Mapped[str] = mapped_column(ForeignKey("parcel.id"), nullable=False)
+    surveyor_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    survey_ref: Mapped[str] = mapped_column(String(100), nullable=False)
+    method: Mapped[str] = mapped_column(
+        Enum("DGPS", "ETS", "drone_rtk", name="survey_method", native_enum=False),
+        nullable=False,
+    )
+    accuracy_m: Mapped[float] = mapped_column(Float, nullable=False)
+    surveyed_on: Mapped[datetime.date] = mapped_column(Date, nullable=False)
+    resulting_grade: Mapped[str] = mapped_column(String(1), nullable=False)
+    uploaded_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class EvidencePacket(Base):
     """Assembled, hash-manifested evidence for a case; the PDF lives in WORM storage."""
 

@@ -148,6 +148,19 @@ class PersonaLogin(BaseModel):
     persona_id: str
 
 
+class SurveyCreate(BaseModel):
+    survey_ref: str
+    method: str  # DGPS | ETS | drone_rtk
+    accuracy_m: float
+    surveyed_on: str  # ISO date
+    resulting_grade: str
+
+
+_SURVEY_METHODS = {"DGPS", "ETS", "drone_rtk"}
+# Lower rank = better. Surveys compound the map's quality; they never degrade it.
+_GRADE_RANK = {"A": 0, "B": 1, "C": 2}
+
+
 class TransitionRequest(BaseModel):
     to_state: str
     artifacts: dict[str, str] | None = None
@@ -379,6 +392,76 @@ def create_app(store: Store | None = None) -> FastAPI:
                 "persona": _enrich_persona(persona, store),
                 "expires_in_hours": 8,
             }
+
+    # ------------------------------------------------------------------
+    # Surveys (DGPS/ETS ground truth -> boundary grade promotion)
+    # ------------------------------------------------------------------
+
+    @app.post("/parcels/{parcel_id}/surveys", status_code=status.HTTP_201_CREATED)
+    def upload_survey(
+        parcel_id: str,
+        body: SurveyCreate,
+        store: StoreDep,
+        user: Annotated[User, Depends(require_roles(Role.SURVEY_OFFICER, Role.DATA_ADMIN))],
+    ) -> dict[str, Any]:
+        parcel = store.parcels.get(parcel_id)
+        scope = _user_scope(store, user)
+        if parcel is None or parcel["jurisdiction_id"] not in scope:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="parcel not found")
+
+        if body.method not in _SURVEY_METHODS:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"unknown survey method {body.method!r}",
+            )
+        if body.resulting_grade not in _GRADE_RANK:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"invalid grade {body.resulting_grade!r}",
+            )
+        current_grade = parcel["boundary_grade"]
+        if _GRADE_RANK[body.resulting_grade] > _GRADE_RANK[current_grade]:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"survey grade {body.resulting_grade} would downgrade parcel "
+                    f"from {current_grade}; surveys only ever improve the map"
+                ),
+            )
+
+        store.save_survey(
+            {
+                "parcel_id": parcel_id,
+                "surveyor_id": user.sub,
+                "survey_ref": body.survey_ref,
+                "method": body.method,
+                "accuracy_m": body.accuracy_m,
+                "surveyed_on": body.surveyed_on,
+                "resulting_grade": body.resulting_grade,
+            }
+        )
+        parcel = store.set_boundary_grade(parcel_id, body.resulting_grade)
+        store.record_audit(
+            actor=user.sub,
+            action="parcel.survey.upload",
+            object_type="parcel",
+            object_id=f"{parcel_id}:{body.survey_ref}",
+        )
+        return _parcel_to_feature(parcel)
+
+    # ------------------------------------------------------------------
+    # GIS layers (requisition §3 verification layers)
+    # ------------------------------------------------------------------
+
+    @app.get("/layers")
+    def list_layers(
+        store: StoreDep,
+        user: Annotated[User, Depends(require_roles(Role.DATA_ADMIN, Role.SYSTEM_ADMIN))],
+    ) -> list[dict[str, Any]]:
+        return [
+            {key: value for key, value in layer.items() if key != "features"}
+            for layer in sorted(store.gis_layers.values(), key=lambda layer: layer["id"])
+        ]
 
     # ------------------------------------------------------------------
     # Imagery scenes & tiles

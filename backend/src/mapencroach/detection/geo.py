@@ -35,3 +35,11 @@ def buffer_m(geometry: BaseGeometry, meters: float) -> BaseGeometry:
     backward = Transformer.from_crs(epsg, 4326, always_xy=True)
     buffered = shapely_transform(forward.transform, geometry).buffer(meters)
     return shapely_transform(backward.transform, buffered)
+
+
+def distance_m(a: BaseGeometry, b: BaseGeometry) -> float:
+    """Distance in meters, both geometries projected into `a`'s UTM zone."""
+    forward = Transformer.from_crs(4326, local_utm_epsg(a), always_xy=True)
+    return shapely_transform(forward.transform, a).distance(
+        shapely_transform(forward.transform, b)
+    )

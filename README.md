@@ -65,10 +65,38 @@ disabled entirely. Roles map from Keycloak realm roles (exactly one
 mapencroach role per user); `jurisdiction_id` comes from a user-attribute
 claim.
 
+## Imagery, detection & GIS layers
+
+The satellite side of the platform lives in three backend packages:
+
+- **`imagery/`** — hash-first ingestion: the delivered GeoTIFF and its
+  Cartosat sidecar (.txt/.xml) are SHA-256 hashed *before* any processing,
+  then converted to a Cloud-Optimized GeoTIFF and cataloged as a STAC item
+  carrying every evidence hash. `GET /scenes` lists the catalog (imagery
+  admins only); `GET /tiles/{scene}/{z}/{x}/{y}.png` proxies TiTiler
+  (`MAPENCROACH_TITILER_URL`) behind auth.
+- **`detection/`** — the change-detection engine (requires database mode).
+  `run_detection()` screens every covered parcel (NDVI drop + brightness
+  rise on 4-band VNIR), records per-run candidates, and raises an AMBER
+  alert through the standard severity path only when change persists across
+  ≥2 observation dates. Alerts start in **shadow mode** (invisible to
+  officers) until a `live=True` run after precision calibration.
+  `confirm_alert()` upgrades to RED when change falls outside known
+  building footprints, or dismisses with a reason code; approved-plan
+  deviation is measured when a plan layer exists.
+- **`cadastral/layers.py`** — the HRDA verification layers (khasra, master
+  plan, ELU/PLU, green belt, roads, water bodies, wards, building
+  footprints, approved plans) with the same accept/quarantine/reject
+  contract as parcels; road/canal layers are linear and get linear topology
+  QA. `detection/enrichment.py` joins these into alert flags (green-belt
+  intersection, ELU/PLU mismatch, right-of-way breach, water proximity).
+  `POST /parcels/{id}/surveys` records DGPS/ETS results and promotes the
+  boundary grade — surveys only ever improve the map.
+
 ## Tests
 
 ```bash
-cd backend && .venv/bin/pytest --cov && .venv/bin/ruff check .   # 363 tests
+cd backend && .venv/bin/pytest --cov && .venv/bin/ruff check .   # 432 tests
 cd web && npm test && npm run build                              # 24 tests
 ```
 
@@ -87,10 +115,12 @@ See [DEPLOY.md](DEPLOY.md) — console on Vercel, API on Render (demo data only)
 | Path | What |
 |------|------|
 | `backend/src/mapencroach/domain/` | Jurisdiction tree (row-level scoping), case state machine (due process encoded), alert severity |
-| `backend/src/mapencroach/cadastral/` | Topology QA + file ingestion (accept / quarantine / reject) |
+| `backend/src/mapencroach/cadastral/` | Topology QA + parcel & GIS-layer ingestion (accept / quarantine / reject) |
 | `backend/src/mapencroach/audit/` | Tamper-evident hash chain |
-| `backend/src/mapencroach/imagery/` | Hash-on-ingest scene registry (STAC) |
-| `backend/src/mapencroach/api/` | FastAPI: JWT auth, RBAC, jurisdiction-scoped endpoints |
+| `backend/src/mapencroach/imagery/` | Hash-first COG/STAC ingestion, Cartosat sidecar preservation |
+| `backend/src/mapencroach/detection/` | Change screening, persistence gating, confirmation, enrichment |
+| `backend/src/mapencroach/db/` | PostGIS/SQLite schema + persistent store |
+| `backend/src/mapencroach/api/` | FastAPI: JWT/OIDC auth, RBAC, jurisdiction-scoped endpoints |
 | `web/` | Next.js console with Google Maps and a MapLibre fallback |
 | `PLAN.md` / `PLAN.html` | Implementation plan v2.0 (Builder's Edition) |
 | `agents-build-log.md` | Agent build log |

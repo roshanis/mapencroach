@@ -501,6 +501,124 @@ class DatabaseStore:
             session.commit()
             return self._alert_dict(row)
 
+    # -- GIS layers & surveys ------------------------------------------
+
+    def save_layer(
+        self, meta: dict[str, Any], features: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        with self._session_factory() as session:
+            layer = models.GisLayer(
+                kind=meta["kind"],
+                name=meta["name"],
+                source=meta["source"],
+                version=meta["version"],
+            )
+            session.add(layer)
+            session.flush()
+            for feature in features:
+                session.add(
+                    models.GisFeature(
+                        layer_id=layer.id,
+                        source_feature_id=feature["source_feature_id"],
+                        geometry=feature["geometry"],
+                        attributes=json.dumps(feature.get("attributes", {}), default=str),
+                    )
+                )
+            session.commit()
+            return {
+                "id": layer.id,
+                "kind": layer.kind,
+                "name": layer.name,
+                "source": layer.source,
+                "version": layer.version,
+                "feature_count": len(features),
+            }
+
+    @property
+    def gis_layers(self) -> dict[int, dict[str, Any]]:
+        with self._session_factory() as session:
+            layers = session.execute(select(models.GisLayer)).scalars().all()
+            result: dict[int, dict[str, Any]] = {}
+            for layer in layers:
+                count = len(
+                    session.execute(
+                        select(models.GisFeature.id).where(
+                            models.GisFeature.layer_id == layer.id
+                        )
+                    ).all()
+                )
+                result[layer.id] = {
+                    "id": layer.id,
+                    "kind": layer.kind,
+                    "name": layer.name,
+                    "source": layer.source,
+                    "version": layer.version,
+                    "feature_count": count,
+                }
+            return result
+
+    def layer_features(self, kind: str) -> list[dict[str, Any]]:
+        with self._session_factory() as session:
+            rows = (
+                session.execute(
+                    select(models.GisFeature)
+                    .join(models.GisLayer, models.GisFeature.layer_id == models.GisLayer.id)
+                    .where(models.GisLayer.kind == kind)
+                    .order_by(models.GisFeature.id)
+                )
+                .scalars()
+                .all()
+            )
+            return [
+                {
+                    "source_feature_id": row.source_feature_id,
+                    "geometry": row.geometry,
+                    "attributes": json.loads(row.attributes),
+                }
+                for row in rows
+            ]
+
+    def save_survey(self, survey: dict[str, Any]) -> None:
+        from datetime import date as date_type
+
+        surveyed_on = survey["surveyed_on"]
+        if not isinstance(surveyed_on, date_type):
+            surveyed_on = date_type.fromisoformat(surveyed_on)
+        with self._session_factory() as session:
+            session.add(
+                models.Survey(
+                    parcel_id=survey["parcel_id"],
+                    surveyor_id=survey["surveyor_id"],
+                    survey_ref=survey["survey_ref"],
+                    method=survey["method"],
+                    accuracy_m=survey["accuracy_m"],
+                    surveyed_on=surveyed_on,
+                    resulting_grade=survey["resulting_grade"],
+                )
+            )
+            session.commit()
+
+    @property
+    def surveys(self) -> list[dict[str, Any]]:
+        with self._session_factory() as session:
+            rows = (
+                session.execute(select(models.Survey).order_by(models.Survey.id))
+                .scalars()
+                .all()
+            )
+            return [
+                {
+                    "parcel_id": row.parcel_id,
+                    "surveyor_id": row.surveyor_id,
+                    "survey_ref": row.survey_ref,
+                    "method": row.method,
+                    "accuracy_m": row.accuracy_m,
+                    "surveyed_on": row.surveyed_on.isoformat(),
+                    "resulting_grade": row.resulting_grade,
+                }
+                for row in rows
+            ]
+
     # -- cases ---------------------------------------------------------
 
     def _case_record(self, session: Session, row: models.CaseRow) -> CaseRecord:

@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from mapencroach.db import models
 from mapencroach.db.store import DatabaseStore
+from mapencroach.detection.enrichment import enrich
 from mapencroach.detection.screening import (
     DEFAULT_BAND_MAP,
     DEFAULT_THRESHOLDS,
@@ -82,6 +83,7 @@ def run_detection(
     band_map: BandMap = DEFAULT_BAND_MAP,
     thresholds: ScreeningThresholds = DEFAULT_THRESHOLDS,
     persistence_required: int = 2,
+    enrichment_layers: dict[str, list[dict]] | None = None,
     actor: str = "detection-pipeline",
 ) -> DetectionSummary:
     """Screen every parcel in the AOI against baseline vs current scene."""
@@ -176,26 +178,31 @@ def run_detection(
                     continue
 
                 alert_id = store.next_alert_id()
-                store.save_alert(
-                    {
-                        "id": alert_id,
-                        "parcel_id": parcel["id"],
-                        # Screening output is AMBER by definition; RED needs
-                        # high-res confirmation (detection/confirm.py).
-                        "tier": AlertTier.AMBER.value,
-                        "severity_score": severity_score(
-                            result.changed_area_m2,
-                            parcel["land_category"],
-                            parcel["boundary_grade"],
-                            False,
-                        ),
-                        "area_m2": result.changed_area_m2,
-                        "status": "OPEN",
-                        "detected_at": current_scene["captured_at"],
-                        "shadow": not live,
-                        "detection_run_id": run_id,
-                    }
-                )
+                alert = {
+                    "id": alert_id,
+                    "parcel_id": parcel["id"],
+                    # Screening output is AMBER by definition; RED needs
+                    # high-res confirmation (detection/confirm.py).
+                    "tier": AlertTier.AMBER.value,
+                    "severity_score": severity_score(
+                        result.changed_area_m2,
+                        parcel["land_category"],
+                        parcel["boundary_grade"],
+                        False,
+                    ),
+                    "area_m2": result.changed_area_m2,
+                    "status": "OPEN",
+                    "detected_at": current_scene["captured_at"],
+                    "shadow": not live,
+                    "detection_run_id": run_id,
+                }
+                if enrichment_layers is not None:
+                    flags = enrich(
+                        result.change_geometry or parcel["geometry"], enrichment_layers
+                    )
+                    if flags:
+                        alert["enrichment"] = flags
+                store.save_alert(alert)
                 candidate.promoted_alert_id = alert_id
                 session.commit()
                 store.record_audit(

@@ -2,6 +2,8 @@
 
 Invalid geometries and overlaps quarantine the import batch (blocking);
 gaps only warn — uncovered strips are often legitimate roads or rivers.
+Linear layers (road centerlines, canals) get their own QA: empty or
+self-intersecting lines block; exact duplicates warn.
 """
 
 from dataclasses import dataclass, field
@@ -11,10 +13,12 @@ from shapely.ops import unary_union
 from shapely.strtree import STRtree
 from shapely.validation import explain_validity
 
+_BLOCKING_KINDS = frozenset({"invalid", "overlap", "self_intersection"})
+
 
 @dataclass(frozen=True)
 class TopologyIssue:
-    kind: str  # "invalid" | "overlap" | "gap"
+    kind: str  # "invalid" | "overlap" | "gap" | "self_intersection" | "duplicate"
     parcel_ids: tuple[str, ...]
     detail: str
     area: float | None = None
@@ -26,7 +30,7 @@ class TopologyReport:
 
     @property
     def blocking(self) -> bool:
-        return any(issue.kind in ("invalid", "overlap") for issue in self.issues)
+        return any(issue.kind in _BLOCKING_KINDS for issue in self.issues)
 
 
 def find_invalid(parcels: dict[str, BaseGeometry]) -> list[TopologyIssue]:
@@ -96,4 +100,44 @@ def run_qa(
     issues += find_overlaps(parcels, min_area=min_overlap_area)
     if boundary is not None:
         issues += find_gaps(parcels, boundary, min_area=min_gap_area)
+    return TopologyReport(issues=issues)
+
+
+def find_self_intersections(lines: dict[str, BaseGeometry]) -> list[TopologyIssue]:
+    issues = []
+    for feature_id, geometry in lines.items():
+        if not geometry.is_empty and geometry.is_valid and not geometry.is_simple:
+            issues.append(
+                TopologyIssue(
+                    "self_intersection", (feature_id,), "line crosses itself"
+                )
+            )
+    return issues
+
+
+def find_duplicates(lines: dict[str, BaseGeometry]) -> list[TopologyIssue]:
+    seen: dict[bytes, str] = {}
+    issues = []
+    for feature_id, geometry in lines.items():
+        if geometry.is_empty:
+            continue
+        key = geometry.wkb
+        if key in seen:
+            issues.append(
+                TopologyIssue(
+                    "duplicate",
+                    (seen[key], feature_id),
+                    "identical geometry appears twice",
+                )
+            )
+        else:
+            seen[key] = feature_id
+    return issues
+
+
+def run_linear_qa(lines: dict[str, BaseGeometry]) -> TopologyReport:
+    """QA for centerline networks (roads, canals, drains)."""
+    issues = find_invalid(lines)
+    issues += find_self_intersections(lines)
+    issues += find_duplicates(lines)
     return TopologyReport(issues=issues)
