@@ -393,6 +393,60 @@ class DatabaseStore:
             ids = session.execute(select(models.CaseRow.id)).scalars().all()
         return self._next_id("case", list(ids))
 
+    # -- scenes --------------------------------------------------------
+
+    @staticmethod
+    def _scene_dict(row: models.ImageryScene) -> dict[str, Any]:
+        return {
+            "scene_id": row.scene_id,
+            "sha256": row.sha256,
+            "cog_sha256": row.cog_sha256,
+            "captured_at": _utc(row.captured_at).isoformat(),
+            "sensor": row.sensor,
+            "resolution_m": row.resolution_m,
+            "cloud_pct": row.cloud_pct,
+            "source": row.source,
+            "href": row.href,
+            "stac_item": json.loads(row.stac_item),
+            "sidecar_sha256": row.sidecar_sha256,
+            "sidecar_raw": row.sidecar_raw,
+        }
+
+    @property
+    def scenes(self) -> dict[str, dict[str, Any]]:
+        with self._session_factory() as session:
+            rows = session.execute(select(models.ImageryScene)).scalars().all()
+            return {row.scene_id: self._scene_dict(row) for row in rows}
+
+    def save_scene(self, scene: dict[str, Any]) -> None:
+        with self._session_factory() as session:
+            if session.get(models.ImageryScene, scene["scene_id"]) is not None:
+                raise ValueError(f"scene already registered: {scene['scene_id']!r}")
+            duplicate = session.execute(
+                select(models.ImageryScene.scene_id).where(
+                    models.ImageryScene.sha256 == scene["sha256"]
+                )
+            ).first()
+            if duplicate is not None:
+                raise ValueError(f"scene content already registered: {scene['sha256']!r}")
+            session.add(
+                models.ImageryScene(
+                    scene_id=scene["scene_id"],
+                    sha256=scene["sha256"],
+                    cog_sha256=scene.get("cog_sha256"),
+                    captured_at=datetime.fromisoformat(scene["captured_at"]),
+                    sensor=scene["sensor"],
+                    resolution_m=scene["resolution_m"],
+                    cloud_pct=scene["cloud_pct"],
+                    source=scene["source"],
+                    href=scene["href"],
+                    stac_item=json.dumps(scene["stac_item"]),
+                    sidecar_sha256=scene.get("sidecar_sha256"),
+                    sidecar_raw=scene.get("sidecar_raw"),
+                )
+            )
+            session.commit()
+
     def save_alert(self, alert: dict[str, Any]) -> None:
         with self._session_factory() as session:
             session.add(

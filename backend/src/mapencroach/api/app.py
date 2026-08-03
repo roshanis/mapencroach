@@ -8,11 +8,13 @@ their own jurisdiction_id. Parcels outside scope 404 rather than 403 so
 we don't leak that they exist.
 """
 
+import json
 import os
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -377,6 +379,60 @@ def create_app(store: Store | None = None) -> FastAPI:
                 "persona": _enrich_persona(persona, store),
                 "expires_in_hours": 8,
             }
+
+    # ------------------------------------------------------------------
+    # Imagery scenes & tiles
+    # ------------------------------------------------------------------
+
+    def _scene_listing(scene: dict[str, Any]) -> dict[str, Any]:
+        listed = dict(scene)
+        if isinstance(listed.get("stac_item"), str):
+            listed["stac_item"] = json.loads(listed["stac_item"])
+        # The raw sidecar is court evidence served on demand, not a listing field.
+        listed.pop("sidecar_raw", None)
+        return listed
+
+    @app.get("/scenes")
+    def list_scenes(
+        store: StoreDep,
+        user: Annotated[User, Depends(require_roles(Role.DATA_ADMIN, Role.SYSTEM_ADMIN))],
+    ) -> list[dict[str, Any]]:
+        # Coverage maps are Restricted-class data: knowing what is (and is
+        # not) imaged is exactly what a motivated encroacher wants.
+        return sorted(
+            (_scene_listing(s) for s in store.scenes.values()),
+            key=lambda s: s["captured_at"],
+        )
+
+    @app.get("/tiles/{scene_id}/{z}/{x}/{y}.png")
+    def get_tile(
+        scene_id: str,
+        z: int,
+        x: int,
+        y: int,
+        store: StoreDep,
+        user: CurrentUser,
+    ) -> Response:
+        scene = store.scenes.get(scene_id)
+        if scene is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="scene not found")
+        titiler_url = os.environ.get("MAPENCROACH_TITILER_URL")
+        if not titiler_url:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="tile serving is not configured (MAPENCROACH_TITILER_URL)",
+            )
+        upstream = httpx.get(
+            f"{titiler_url.rstrip('/')}/cog/tiles/WebMercatorQuad/{z}/{x}/{y}.png",
+            params={"url": scene["href"]},
+            timeout=15,
+        )
+        if upstream.status_code != status.HTTP_200_OK:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"tile backend returned {upstream.status_code}",
+            )
+        return Response(content=upstream.content, media_type="image/png")
 
     # ------------------------------------------------------------------
     # Alerts

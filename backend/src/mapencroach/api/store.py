@@ -77,6 +77,7 @@ class Store:
     parcels: dict[str, dict[str, Any]] = field(default_factory=dict)
     alerts: dict[str, dict[str, Any]] = field(default_factory=dict)
     cases: dict[str, CaseRecord] = field(default_factory=dict)
+    scenes: dict[str, dict[str, Any]] = field(default_factory=dict)
     parcel_contexts: dict[str, ParcelContext] = field(default_factory=dict)
     audit_chain: list[AuditEntry] = field(default_factory=list)
 
@@ -155,6 +156,13 @@ class Store:
 
     def save_alert(self, alert: dict[str, Any]) -> None:
         self.alerts[alert["id"]] = alert
+
+    def save_scene(self, scene: dict[str, Any]) -> None:
+        if scene["scene_id"] in self.scenes:
+            raise ValueError(f"scene already registered: {scene['scene_id']!r}")
+        if any(s["sha256"] == scene["sha256"] for s in self.scenes.values()):
+            raise ValueError(f"scene content already registered: {scene['sha256']!r}")
+        self.scenes[scene["scene_id"]] = scene
 
     def transition_case(
         self,

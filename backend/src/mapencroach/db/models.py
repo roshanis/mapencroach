@@ -231,6 +231,7 @@ class ImageryScene(Base):
 
     scene_id: Mapped[str] = mapped_column(String(200), primary_key=True)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    cog_sha256: Mapped[str | None] = mapped_column(String(64))
     captured_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
