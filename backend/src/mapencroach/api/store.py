@@ -164,6 +164,16 @@ class Store:
             raise ValueError(f"scene content already registered: {scene['sha256']!r}")
         self.scenes[scene["scene_id"]] = scene
 
+    _ALERT_UPDATABLE = frozenset({"tier", "status", "shadow", "confirmation", "enrichment"})
+
+    def update_alert(self, alert_id: str, **fields: Any) -> dict[str, Any]:
+        unknown = set(fields) - self._ALERT_UPDATABLE
+        if unknown:
+            raise ValueError(f"alert fields not updatable: {sorted(unknown)}")
+        alert = self.alerts[alert_id]
+        alert.update(fields)
+        return alert
+
     def transition_case(
         self,
         case_id: str,
@@ -436,6 +446,7 @@ class Store:
                 "area_m2": area_m2,
                 "status": status,
                 "detected_at": detected_at.isoformat(),
+                "shadow": False,
             }
             alert_ids.append(alert_id)
             store.record_audit(

@@ -189,6 +189,11 @@ class DatabaseStore:
         self._tree: JurisdictionTree | None = None
         self._rows: list[tuple[str, str | None]] | None = None
 
+    @property
+    def engine(self) -> Engine:
+        """Exposed for batch jobs (detection runs) that need their own sessions."""
+        return self._engine
+
     # -- jurisdictions -------------------------------------------------
 
     @property
@@ -359,7 +364,7 @@ class DatabaseStore:
 
     @staticmethod
     def _alert_dict(row: models.Alert) -> dict[str, Any]:
-        return {
+        alert = {
             "id": row.id,
             "parcel_id": row.parcel_id,
             "tier": row.tier,
@@ -367,7 +372,15 @@ class DatabaseStore:
             "area_m2": row.area_m2,
             "status": row.status,
             "detected_at": _utc(row.detected_at).isoformat(),
+            "shadow": row.shadow,
         }
+        if row.detection_run_id is not None:
+            alert["detection_run_id"] = row.detection_run_id
+        if row.confirmation:
+            alert["confirmation"] = json.loads(row.confirmation)
+        if row.enrichment:
+            alert["enrichment"] = json.loads(row.enrichment)
+        return alert
 
     @property
     def alerts(self) -> dict[str, dict[str, Any]]:
@@ -458,9 +471,35 @@ class DatabaseStore:
                     area_m2=alert["area_m2"],
                     status=alert["status"],
                     detected_at=datetime.fromisoformat(alert["detected_at"]),
+                    shadow=alert.get("shadow", False),
+                    detection_run_id=alert.get("detection_run_id"),
+                    confirmation=(
+                        json.dumps(alert["confirmation"]) if alert.get("confirmation") else None
+                    ),
+                    enrichment=(
+                        json.dumps(alert["enrichment"]) if alert.get("enrichment") else None
+                    ),
                 )
             )
             session.commit()
+
+    _ALERT_UPDATABLE = frozenset({"tier", "status", "shadow", "confirmation", "enrichment"})
+    _ALERT_JSON_FIELDS = frozenset({"confirmation", "enrichment"})
+
+    def update_alert(self, alert_id: str, **fields: Any) -> dict[str, Any]:
+        unknown = set(fields) - self._ALERT_UPDATABLE
+        if unknown:
+            raise ValueError(f"alert fields not updatable: {sorted(unknown)}")
+        with self._session_factory() as session:
+            row = session.get(models.Alert, alert_id)
+            if row is None:
+                raise KeyError(alert_id)
+            for name, value in fields.items():
+                if name in self._ALERT_JSON_FIELDS and value is not None:
+                    value = json.dumps(value)
+                setattr(row, name, value)
+            session.commit()
+            return self._alert_dict(row)
 
     # -- cases ---------------------------------------------------------
 

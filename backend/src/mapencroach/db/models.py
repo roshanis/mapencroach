@@ -269,6 +269,29 @@ class DetectionRun(Base):
     finished_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class DetectionCandidate(Base):
+    """A single-run change observation on a parcel.
+
+    Candidates are not alerts: the persistence rule (PLAN §2.4) requires
+    the same parcel to recur across runs before an alert exists, so
+    one-off satellite artifacts die here instead of wasting an officer's
+    trust.
+    """
+
+    __tablename__ = "detection_candidate"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    detection_run_id: Mapped[int] = mapped_column(
+        ForeignKey("detection_run.id"), nullable=False
+    )
+    parcel_id: Mapped[str] = mapped_column(ForeignKey("parcel.id"), nullable=False)
+    observed_on: Mapped[datetime.date] = mapped_column(Date, nullable=False)
+    changed_area_m2: Mapped[float] = mapped_column(Float, nullable=False)
+    stats: Mapped[str] = mapped_column(Text, nullable=False)  # screening stats JSON
+    change_geometry: Mapped[str | None] = mapped_column(Text)  # GeoJSON (WGS84)
+    promoted_alert_id: Mapped[str | None] = mapped_column(ForeignKey("alert.id"))
+
+
 class Alert(Base):
     __tablename__ = "alert"
 
@@ -290,6 +313,12 @@ class Alert(Base):
     detected_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
+    # Shadow-mode alerts exist for precision measurement only and stay
+    # invisible to officers until detection go-live (PLAN §5 field reality).
+    shadow: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # High-res confirmation outcome + Phase D enrichment flags, as JSON.
+    confirmation: Mapped[str | None] = mapped_column(Text)
+    enrichment: Mapped[str | None] = mapped_column(Text)
 
 
 class CaseRow(Base):

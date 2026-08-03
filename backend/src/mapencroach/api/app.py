@@ -444,12 +444,18 @@ def create_app(store: Store | None = None) -> FastAPI:
         user: CurrentUser,
         tier: str | None = Query(default=None),
         status_filter: str | None = Query(default=None, alias="status"),
+        include_shadow: bool = Query(default=False),
     ) -> list[dict[str, Any]]:
+        # Shadow-mode alerts are precision-measurement data, not casework:
+        # only imagery admins may see them, and only on request.
+        show_shadow = include_shadow and user.role in (Role.DATA_ADMIN, Role.SYSTEM_ADMIN)
         scope = _user_scope(store, user)
         results = []
         for alert in store.alerts.values():
             parcel = store.parcels.get(alert["parcel_id"])
             if parcel is None or parcel["jurisdiction_id"] not in scope:
+                continue
+            if alert.get("shadow", False) and not show_shadow:
                 continue
             if tier is not None and alert["tier"] != tier:
                 continue
@@ -481,6 +487,7 @@ def create_app(store: Store | None = None) -> FastAPI:
             "area_m2": body.area_m2,
             "status": "OPEN",
             "detected_at": body.detected_at.isoformat(),
+            "shadow": False,
         }
         store.save_alert(alert)
         store.record_audit(
