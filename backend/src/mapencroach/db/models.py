@@ -1,18 +1,47 @@
-"""Schema v1: jurisdiction tree, parcels with boundary grades, audit log.
+"""Schema v1: jurisdiction tree, parcels, alerts, cases, imagery, evidence, audit log.
 
 Enums use native_enum=False (CHECK constraints) so the schema stays
-portable between PostGIS and test databases.
+portable between PostGIS and test databases; geometry columns use
+GeoJSONGeometry for the same reason (PostGIS geometry on PostgreSQL,
+GeoJSON text elsewhere).
 """
 
 import datetime
 
-from geoalchemy2 import Geometry
-from sqlalchemy import Boolean, Date, DateTime, Enum, Float, ForeignKey, String, Text, func
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+from mapencroach.db.types import GeoJSONGeometry
 
 
 class Base(DeclarativeBase):
     pass
+
+
+class JurisdictionLevel(Base):
+    """Per-deployment hierarchy vocabulary, ordered by depth.
+
+    A revenue deployment seeds state/district/taluk/village; a development
+    authority seeds authority/zone/ward. Keeping levels as data instead of
+    an enum is what lets one schema serve both.
+    """
+
+    __tablename__ = "jurisdiction_level"
+
+    name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    depth: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)
 
 
 class Jurisdiction(Base):
@@ -21,11 +50,9 @@ class Jurisdiction(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     parent_id: Mapped[str | None] = mapped_column(ForeignKey("jurisdiction.id"), nullable=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
-    level: Mapped[str] = mapped_column(
-        Enum("state", "district", "taluk", "village", name="jurisdiction_level",
-             native_enum=False),
-        nullable=False,
-    )
+    level: Mapped[str] = mapped_column(ForeignKey("jurisdiction_level.name"), nullable=False)
+    # Optional boundary so zone/ward polygons (requisition §3.4) are drawable.
+    geometry = mapped_column(GeoJSONGeometry("MULTIPOLYGON", 4326), nullable=True)
 
 
 class Parcel(Base):
@@ -47,9 +74,32 @@ class Parcel(Base):
     )
     legal_status: Mapped[str | None] = mapped_column(String(100))
     jurisdiction_id: Mapped[str] = mapped_column(ForeignKey("jurisdiction.id"), nullable=False)
-    geometry = mapped_column(
-        Geometry(geometry_type="MULTIPOLYGON", srid=4326), nullable=False
-    )
+    geometry = mapped_column(GeoJSONGeometry("MULTIPOLYGON", 4326), nullable=False)
+
+
+class ParcelTag(Base):
+    """Officer-applied working labels on a parcel (e.g. court-monitored)."""
+
+    __tablename__ = "parcel_tag"
+    __table_args__ = (UniqueConstraint("parcel_id", "tag", name="uq_parcel_tag"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    parcel_id: Mapped[str] = mapped_column(ForeignKey("parcel.id"), nullable=False)
+    tag: Mapped[str] = mapped_column(String(40), nullable=False)
+
+
+class ParcelContextSnapshot(Base):
+    """Read-model for GET /parcels/{id}/context: the ParcelContext dict as JSON.
+
+    The normalized context tables below remain the ingest target; this
+    snapshot is what the API serves, refreshed whenever context is
+    (re)imported for a parcel.
+    """
+
+    __tablename__ = "parcel_context_snapshot"
+
+    parcel_id: Mapped[str] = mapped_column(ForeignKey("parcel.id"), primary_key=True)
+    context: Mapped[str] = mapped_column(Text, nullable=False)  # ParcelContext.to_dict() JSON
 
 
 class ParcelIdentifier(Base):
@@ -114,9 +164,7 @@ class GeographicUnit(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     level: Mapped[str] = mapped_column(String(100), nullable=False)
     source_id: Mapped[str] = mapped_column(ForeignKey("context_source.id"), nullable=False)
-    geometry = mapped_column(
-        Geometry(geometry_type="MULTIPOLYGON", srid=4326), nullable=True
-    )
+    geometry = mapped_column(GeoJSONGeometry("MULTIPOLYGON", 4326), nullable=True)
 
 
 class ParcelGeographicLink(Base):
@@ -170,3 +218,160 @@ class AuditLog(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class ImageryScene(Base):
+    """A registered satellite/drone scene; hashes anchor the evidence chain.
+
+    sidecar_raw preserves the delivered Cartosat metadata file (.txt/.xml)
+    byte-for-byte — courts get the original, never our parse of it.
+    """
+
+    __tablename__ = "imagery_scene"
+
+    scene_id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    captured_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    sensor: Mapped[str] = mapped_column(String(100), nullable=False)
+    resolution_m: Mapped[float] = mapped_column(Float, nullable=False)
+    cloud_pct: Mapped[float] = mapped_column(Float, nullable=False)
+    source: Mapped[str] = mapped_column(String(100), nullable=False)
+    href: Mapped[str] = mapped_column(Text, nullable=False)
+    stac_item: Mapped[str] = mapped_column(Text, nullable=False)  # STAC item JSON
+    sidecar_raw: Mapped[str | None] = mapped_column(Text)
+    sidecar_sha256: Mapped[str | None] = mapped_column(String(64))
+    ingested_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class DetectionRun(Base):
+    """One execution of the change-screening pipeline; every alert traces to a run."""
+
+    __tablename__ = "detection_run"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    model_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    aoi_jurisdiction_id: Mapped[str] = mapped_column(
+        ForeignKey("jurisdiction.id"), nullable=False
+    )
+    params: Mapped[str | None] = mapped_column(Text)  # JSON
+    status: Mapped[str] = mapped_column(
+        Enum("RUNNING", "SUCCEEDED", "FAILED", name="detection_run_status", native_enum=False),
+        nullable=False,
+    )
+    started_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    finished_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Alert(Base):
+    __tablename__ = "alert"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    parcel_id: Mapped[str] = mapped_column(ForeignKey("parcel.id"), nullable=False)
+    # Nullable: officers may raise alerts manually; automated ones trace to a run.
+    detection_run_id: Mapped[int | None] = mapped_column(ForeignKey("detection_run.id"))
+    tier: Mapped[str] = mapped_column(
+        Enum("GREEN", "AMBER", "RED", "LEGACY", name="alert_tier", native_enum=False),
+        nullable=False,
+    )
+    severity_score: Mapped[float] = mapped_column(Float, nullable=False)
+    area_m2: Mapped[float] = mapped_column(Float, nullable=False)
+    status: Mapped[str] = mapped_column(
+        Enum("OPEN", "UNDER_REVIEW", "ESCALATED", "CLOSED", name="alert_status",
+             native_enum=False),
+        nullable=False,
+    )
+    detected_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class CaseRow(Base):
+    """Case header; the authoritative history lives in append-only case_event rows."""
+
+    __tablename__ = "case"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    alert_id: Mapped[str] = mapped_column(ForeignKey("alert.id"), nullable=False)
+    parcel_id: Mapped[str] = mapped_column(ForeignKey("parcel.id"), nullable=False)
+    jurisdiction_id: Mapped[str] = mapped_column(ForeignKey("jurisdiction.id"), nullable=False)
+    state: Mapped[str] = mapped_column(String(40), nullable=False)
+    paused_state: Mapped[str | None] = mapped_column(String(40))
+    opened_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    sla_due: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CaseEventRow(Base):
+    """Append-only transition log — the case engine's audit trail, never updated."""
+
+    __tablename__ = "case_event"
+    __table_args__ = (UniqueConstraint("case_id", "seq", name="uq_case_event_seq"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    case_id: Mapped[str] = mapped_column(ForeignKey("case.id"), nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    from_state: Mapped[str] = mapped_column(String(40), nullable=False)
+    to_state: Mapped[str] = mapped_column(String(40), nullable=False)
+    actor: Mapped[str] = mapped_column(String(64), nullable=False)
+    occurred_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    artifacts: Mapped[str] = mapped_column(Text, nullable=False)  # JSON name -> reference
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+
+class Inspection(Base):
+    __tablename__ = "inspection"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    case_id: Mapped[str] = mapped_column(ForeignKey("case.id"), nullable=False)
+    inspector_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    started_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    ended_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+    gps_track: Mapped[str | None] = mapped_column(Text)  # GeoJSON LineString
+    form: Mapped[str | None] = mapped_column(Text)  # guided inspection form JSON
+
+
+class Media(Base):
+    """A photo/video captured in the field; hashed on-device before upload."""
+
+    __tablename__ = "media"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    inspection_id: Mapped[int | None] = mapped_column(ForeignKey("inspection.id"))
+    case_id: Mapped[str | None] = mapped_column(ForeignKey("case.id"))
+    sha256_at_capture: Mapped[str] = mapped_column(String(64), nullable=False)
+    captured_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    gps_lat: Mapped[float | None] = mapped_column(Float)
+    gps_lon: Mapped[float | None] = mapped_column(Float)
+    device_id: Mapped[str | None] = mapped_column(String(100))
+    storage_href: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class EvidencePacket(Base):
+    """Assembled, hash-manifested evidence for a case; the PDF lives in WORM storage."""
+
+    __tablename__ = "evidence_packet"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    case_id: Mapped[str] = mapped_column(ForeignKey("case.id"), nullable=False)
+    manifest: Mapped[str] = mapped_column(Text, nullable=False)  # JSON of member hashes
+    certificate_status: Mapped[str] = mapped_column(
+        Enum("DRAFT", "PENDING_CERTIFICATION", "CERTIFIED",
+             name="evidence_certificate_status", native_enum=False),
+        nullable=False,
+    )
+    issued_by: Mapped[str | None] = mapped_column(String(64))
+    issued_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+    storage_href: Mapped[str | None] = mapped_column(Text)

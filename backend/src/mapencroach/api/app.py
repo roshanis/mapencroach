@@ -34,7 +34,6 @@ from mapencroach.domain.case_engine import (
     MissingArtifact,
     allowed_transitions,
     required_artifacts_for,
-    transition,
 )
 
 _VALID_GRADES = {"A", "B", "C"}
@@ -196,7 +195,13 @@ def create_app(store: Store | None = None) -> FastAPI:
     """
     demo_mode = os.environ.get("MAPENCROACH_DEMO") == "1"
     if store is None:
-        store = Store.seed_demo() if demo_mode else Store()
+        db_url = os.environ.get("MAPENCROACH_DB_URL")
+        if db_url:
+            from mapencroach.db.store import create_database_store
+
+            store = create_database_store(db_url, demo=demo_mode)
+        else:
+            store = Store.seed_demo() if demo_mode else Store()
 
     app = FastAPI(title="mapencroach API")
     app.state.store = store
@@ -272,7 +277,7 @@ def create_app(store: Store | None = None) -> FastAPI:
                 detail=f"invalid grade {body.grade!r}, must be one of {sorted(_VALID_GRADES)}",
             )
 
-        parcel["boundary_grade"] = body.grade
+        parcel = store.set_boundary_grade(parcel_id, body.grade)
         store.record_audit(
             actor=user.sub,
             action="parcel.boundary_grade.update",
@@ -302,12 +307,11 @@ def create_app(store: Store | None = None) -> FastAPI:
                 "starting with a letter or digit",
             )
 
-        tags: list[str] = parcel.setdefault("tags", [])
-        if tag in tags:
+        parcel, added = store.add_parcel_tag(parcel_id, tag)
+        if not added:
             response.status_code = status.HTTP_200_OK
             return _parcel_to_feature(parcel)
 
-        tags.append(tag)
         store.record_audit(
             actor=user.sub,
             action="parcel.tag.add",
@@ -329,11 +333,11 @@ def create_app(store: Store | None = None) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="parcel not found")
 
         normalized = tag.strip().lower()
-        tags: list[str] = parcel.setdefault("tags", [])
-        if normalized not in tags:
+        updated = store.remove_parcel_tag(parcel_id, normalized)
+        if updated is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="tag not found")
+        parcel = updated
 
-        tags.remove(normalized)
         store.record_audit(
             actor=user.sub,
             action="parcel.tag.remove",
@@ -422,7 +426,7 @@ def create_app(store: Store | None = None) -> FastAPI:
             "status": "OPEN",
             "detected_at": body.detected_at.isoformat(),
         }
-        store.alerts[alert_id] = alert
+        store.save_alert(alert)
         store.record_audit(
             actor=user.sub, action="alert.create", object_type="alert", object_id=alert_id
         )
@@ -501,8 +505,8 @@ def create_app(store: Store | None = None) -> FastAPI:
             ) from exc
 
         try:
-            event = transition(
-                record.case,
+            record, event = store.transition_case(
+                case_id,
                 to_state,
                 actor=user.sub,
                 occurred_at=datetime.now(UTC),

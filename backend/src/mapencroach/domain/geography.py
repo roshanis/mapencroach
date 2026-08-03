@@ -30,6 +30,10 @@ def _date_value(value: date | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
+def _parse_date(value: str | None) -> date | None:
+    return date.fromisoformat(value) if value is not None else None
+
+
 class LineageRelation(StrEnum):
     """A relationship expressed from the current parcel to an earlier parcel."""
 
@@ -209,3 +213,79 @@ class ParcelContext:
             "classification": self.classification,
             "disclaimer": self.disclaimer,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ParcelContext":
+        """Rebuild a ParcelContext from its own to_dict output.
+
+        Persistent stores keep the context as JSON; this is the inverse
+        that revalidates every invariant on the way back in (confidence
+        ranges, context-only flags, declared sources).
+        """
+        parcel_id = data["parcel_id"]
+        return cls(
+            parcel_id=parcel_id,
+            canonical_id=data["canonical_id"],
+            aliases=tuple(
+                ParcelAlias(
+                    scheme=a["scheme"],
+                    value=a["value"],
+                    source=a["source"],
+                    valid_from=_parse_date(a["valid_from"]),
+                    valid_to=_parse_date(a["valid_to"]),
+                    match_method=a["match_method"],
+                    confidence=a["confidence"],
+                )
+                for a in data["aliases"]
+            ),
+            lineage=tuple(
+                ParcelLineageEdge(
+                    related_parcel_id=e["related_parcel_id"],
+                    relation=LineageRelation(e["relation"]),
+                    effective_on=_parse_date(e["effective_on"]),
+                    source=e["source"],
+                    confidence=e["confidence"],
+                    current_parcel_id=parcel_id,
+                )
+                for e in data["lineage"]
+            ),
+            geographic_links=tuple(
+                GeographicLink(
+                    scheme=link["scheme"],
+                    geographic_unit_id=link["geographic_unit_id"],
+                    name=link["name"],
+                    level=link["level"],
+                    match_method=link["match_method"],
+                    confidence=link["confidence"],
+                    source_id=link["source_id"],
+                )
+                for link in data["geographic_links"]
+            ),
+            observations=tuple(
+                ContextObservation(
+                    key=o["key"],
+                    label=o["label"],
+                    value=o["value"],
+                    unit=o["unit"],
+                    period=o["period"],
+                    trend=o["trend"],
+                    source_id=o["source_id"],
+                )
+                for o in data["observations"]
+            ),
+            sources=tuple(
+                ContextSource(
+                    id=s["id"],
+                    provider=s["provider"],
+                    dataset=s["dataset"],
+                    version=s["version"],
+                    vintage=s["vintage"],
+                    license=s["license"],
+                    source_url=s["source_url"],
+                    resolution=s["resolution"],
+                    limitations=tuple(s["limitations"]),
+                    is_demo=s["is_demo"],
+                )
+                for s in data["sources"]
+            ),
+        )

@@ -125,6 +125,62 @@ class Store:
         self._next_case_seq += 1
         return f"case-{self._next_case_seq}"
 
+    # -- mutations -----------------------------------------------------
+    # The API layer calls these instead of mutating parcel/alert/case
+    # structures in place, so a persistent store can implement the same
+    # interface with real writes.
+
+    def set_boundary_grade(self, parcel_id: str, grade: str) -> dict[str, Any]:
+        parcel = self.parcels[parcel_id]
+        parcel["boundary_grade"] = grade
+        return parcel
+
+    def add_parcel_tag(self, parcel_id: str, tag: str) -> tuple[dict[str, Any], bool]:
+        """Returns (parcel, added). added=False when the tag was already present."""
+        parcel = self.parcels[parcel_id]
+        tags: list[str] = parcel.setdefault("tags", [])
+        if tag in tags:
+            return parcel, False
+        tags.append(tag)
+        return parcel, True
+
+    def remove_parcel_tag(self, parcel_id: str, tag: str) -> dict[str, Any] | None:
+        """Returns the parcel, or None when the tag was not present."""
+        parcel = self.parcels[parcel_id]
+        tags: list[str] = parcel.setdefault("tags", [])
+        if tag not in tags:
+            return None
+        tags.remove(tag)
+        return parcel
+
+    def save_alert(self, alert: dict[str, Any]) -> None:
+        self.alerts[alert["id"]] = alert
+
+    def transition_case(
+        self,
+        case_id: str,
+        to_state: CaseState,
+        actor: str,
+        occurred_at: datetime,
+        artifacts: dict[str, str] | None,
+        note: str,
+    ) -> tuple["CaseRecord", Any]:
+        """Apply a case transition and persist it.
+
+        Raises the case engine's InvalidTransition/MissingArtifact
+        unchanged; on failure nothing is persisted.
+        """
+        record = self.cases[case_id]
+        event = transition(
+            record.case,
+            to_state,
+            actor=actor,
+            occurred_at=occurred_at,
+            artifacts=artifacts,
+            note=note,
+        )
+        return record, event
+
     def context_for_parcel(self, parcel_id: str) -> ParcelContext:
         """Return canonical identifiers plus any linked context for a parcel."""
         parcel = self.parcels[parcel_id]

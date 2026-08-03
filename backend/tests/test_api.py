@@ -25,9 +25,28 @@ def auth_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-@pytest.fixture
-def store() -> Store:
-    return Store.seed_demo()
+def _database_store():
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
+
+    from mapencroach.db.store import DatabaseStore, init_db, seed_demo_database
+
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    init_db(engine)
+    seed_demo_database(engine)
+    return DatabaseStore(engine)
+
+
+# Every API test runs twice: once against the in-memory store and once
+# against the SQLAlchemy store on SQLite — the same code path production
+# uses against PostGIS. Behaviour must be identical.
+@pytest.fixture(params=["memory", "database"])
+def store(request) -> Store:
+    if request.param == "memory":
+        return Store.seed_demo()
+    return _database_store()
 
 
 @pytest.fixture

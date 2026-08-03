@@ -42,10 +42,33 @@ console falls back to MapLibre when either value is absent or Google cannot
 load; never commit the API key, and restrict it to approved web referrers and
 the Maps JavaScript API.
 
+## Run against a database (persistent mode)
+
+Set `MAPENCROACH_DB_URL` and the API swaps its in-memory store for the
+SQLAlchemy/PostGIS-backed one (schema is created automatically; with
+`MAPENCROACH_DEMO=1` an empty database is seeded with the demo dataset):
+
+```bash
+MAPENCROACH_DB_URL=postgresql+psycopg://mapencroach:...@localhost/mapencroach \
+MAPENCROACH_DEMO=1 .venv/bin/uvicorn "mapencroach.api.app:create_app" --factory
+```
+
+Any SQLAlchemy URL works — SQLite for a quick persistent dev setup,
+PostGIS in production. The jurisdiction hierarchy is data, not schema:
+set `MAPENCROACH_JURISDICTION_LEVELS=authority,zone,ward` for a
+development-authority deployment (default `state,district,taluk,village`).
+
+**Production auth (Keycloak/OIDC):** set `MAPENCROACH_OIDC_JWKS_URL` to the
+realm's `jwks_uri` (plus `MAPENCROACH_OIDC_ISSUER` / `MAPENCROACH_OIDC_AUDIENCE`).
+Tokens must then be RS256-signed by the realm — the HS256 dev-token path is
+disabled entirely. Roles map from Keycloak realm roles (exactly one
+mapencroach role per user); `jurisdiction_id` comes from a user-attribute
+claim.
+
 ## Tests
 
 ```bash
-cd backend && .venv/bin/pytest --cov && .venv/bin/ruff check .   # 200 tests
+cd backend && .venv/bin/pytest --cov && .venv/bin/ruff check .   # 363 tests
 cd web && npm test && npm run build                              # 24 tests
 ```
 
