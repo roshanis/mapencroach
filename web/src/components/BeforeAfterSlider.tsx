@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useState } from "react";
 import { authHeaders, getApiBase } from "@/lib/api";
 import type { Scene } from "@/lib/types";
@@ -129,10 +130,14 @@ export function BeforeAfterSlider({
     <section aria-label="Before/after imagery comparison" data-testid="before-after-slider">
       <div className="relative aspect-video overflow-hidden rounded-lg border border-gray-200 bg-gray-100">
         {before.status === "ready" && before.objectUrl ? (
-          <img
+          <Image
             src={before.objectUrl}
             alt={`Before: ${sceneCaption(beforeScene)}`}
-            className="absolute inset-0 h-full w-full object-cover"
+            fill
+            // Tile blobs are locally created object URLs, not remote assets
+            // the Next.js image loader/CDN can resolve — skip optimization.
+            unoptimized
+            className="object-cover"
           />
         ) : (
           <div className="absolute inset-0 grid place-items-center text-sm text-gray-500">
@@ -145,10 +150,12 @@ export function BeforeAfterSlider({
           style={{ clipPath: `inset(0 ${100 - position}% 0 0)` }}
         >
           {after.status === "ready" && after.objectUrl ? (
-            <img
+            <Image
               src={after.objectUrl}
               alt={`After: ${sceneCaption(afterScene)}`}
-              className="h-full w-full object-cover"
+              fill
+              unoptimized
+              className="object-cover"
             />
           ) : (
             <div className="grid h-full w-full place-items-center text-sm text-gray-500">

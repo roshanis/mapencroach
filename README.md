@@ -96,8 +96,8 @@ The satellite side of the platform lives in three backend packages:
 ## Tests
 
 ```bash
-cd backend && .venv/bin/pytest --cov && .venv/bin/ruff check .   # 432 tests
-cd web && npm test && npm run build                              # 24 tests
+cd backend && .venv/bin/pytest --cov && .venv/bin/ruff check .   # 455 tests
+cd web && npm test && npm run build                              # 213 tests
 ```
 
 ## Full dev stack (PostGIS, Keycloak, MinIO, TiTiler)
