@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import {
   getAlertForRequest,
   getCaseForRequest,
+  getCaseImageryForRequest,
   getJurisdictionsForRequest,
   getParcelForRequest,
   getPersonaRoleForRequest,
@@ -11,6 +12,7 @@ import { STATE_DESCRIPTIONS } from "@/lib/explanations";
 import { formatDuration } from "@/lib/format";
 import { canDraftNotice } from "@/lib/notice-gate";
 import { CASE_STATE_CHAIN, LAND_CATEGORY_LABELS, STATE_LABELS } from "@/lib/types";
+import { CaseImageryHistory } from "@/components/CaseImageryHistory";
 import { EventTimeline } from "@/components/EventTimeline";
 import { EvidenceManifest } from "@/components/EvidenceManifest";
 import { NoticeDraftWorkspace } from "@/components/NoticeDraftWorkspace";
@@ -49,8 +51,9 @@ export default async function CaseDetailPage({
     notFound();
   }
 
-  const [alert, parcel, personaRole, jurisdictions] = await Promise.all([
+  const [alert, imagery, parcel, personaRole, jurisdictions] = await Promise.all([
     getAlertForRequest(caseRecord.alert_id),
+    getCaseImageryForRequest(id),
     getParcelForRequest(caseRecord.parcel_id),
     getPersonaRoleForRequest(),
     getJurisdictionsForRequest(),
@@ -165,7 +168,7 @@ export default async function CaseDetailPage({
           <h2 className="mb-6 text-base font-semibold text-gray-900">
             Due-Process Progress
           </h2>
-          <StateRail currentState={caseRecord.state} />
+          <StateRail currentState={caseRecord.state} events={caseRecord.events} />
           <details className="mt-4 text-xs text-gray-500">
             <summary className="cursor-pointer text-gov">
               What do these steps mean?
@@ -218,6 +221,22 @@ export default async function CaseDetailPage({
             Event History
           </h2>
           <EventTimeline events={caseRecord.events} />
+        </section>
+
+        <section className="overflow-x-auto rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-4 text-base font-semibold text-gray-900">
+            Imagery History
+          </h2>
+          {imagery ? (
+            <CaseImageryHistory caseId={caseRecord.id} initialImagery={imagery} />
+          ) : (
+            <p
+              data-testid="case-imagery-unavailable"
+              className="text-sm text-gray-400"
+            >
+              Imagery history could not be loaded for this case.
+            </p>
+          )}
         </section>
 
         <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">

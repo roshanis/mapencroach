@@ -64,6 +64,14 @@ describe("HistoricalImageryTimeline", () => {
     ).toBeInTheDocument();
   });
 
+  it("exposes the year switcher to assistive tech as a labeled group, not a bare div", () => {
+    render(<HistoricalImageryTimeline parcel={FIXTURE_PARCELS[0]} />);
+
+    expect(
+      screen.getByRole("group", { name: "Historical imagery year" })
+    ).toBeInTheDocument();
+  });
+
   it("offers an aligned same-sensor before and after comparison with the parcel boundary", () => {
     render(<HistoricalImageryTimeline parcel={FIXTURE_PARCELS[0]} />);
 

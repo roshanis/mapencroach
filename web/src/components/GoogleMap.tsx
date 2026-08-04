@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { LAND_CATEGORY_COLORS } from "@/lib/types";
 import { BasemapToggle, type BasemapMode } from "./BasemapToggle";
-import { loadGoogleMapLibraries } from "./googleMapsLoader";
+import { loadGoogleMapLibraries, onGoogleMapsAuthFailure } from "./googleMapsLoader";
 import { collectParcelVertices, createAlertMarkerElement } from "./map-markers";
 import type { OperationalMapProps } from "./map-types";
 
@@ -77,6 +77,24 @@ export default function GoogleMap({
     });
   }, [selectedAlertId]);
 
+  // CONSTRAINT: `parcels`, `alerts`, `center`, and `zoom` are read once, at
+  // mount, by the effect below (empty dep array) — they are a snapshot, not
+  // a live binding. A parent that re-renders this component with new
+  // parcels/alerts/center/zoom after the initial mount will NOT see the map
+  // update; the Google Data layer and AdvancedMarkerElements created here
+  // are never rebuilt. This is currently safe only because MapView mounts
+  // this component once data is already loaded and fully remounts it (fresh
+  // key) on retry — so in practice the values never change under a mounted
+  // instance today. `selectedAlertId`, `onAlertClick`, and `onProviderError`
+  // are the only props that ARE live, via the ref pattern below.
+  //
+  // Before adding any feature that streams updated parcels/alerts/center/
+  // zoom into an already-mounted map, this effect needs real sync, not a
+  // fresh mount: parcels via clearing + re-adding map.data (or diffing
+  // features), alerts via reconciling AdvancedMarkerElements (add new,
+  // remove stale, matching MapLibreMap's marker Map<id, element> pattern),
+  // and center/zoom via explicit map.panTo/map.setZoom calls in their own
+  // effect. Do not silently assume props are live without doing this.
   useEffect(() => {
     h3CellsRef.current = h3Cells;
     const layer = h3LayerRef.current;
@@ -99,6 +117,14 @@ export default function GoogleMap({
     const markers: google.maps.marker.AdvancedMarkerElement[] = [];
     const markerElements = markerElementsRef.current;
 
+    // An invalid key, referrer restriction, or disabled billing all resolve
+    // importLibrary() successfully — the catch block below never fires.
+    // Google instead reports these through the gm_authFailure global; wire
+    // it to the same fallback path so a permanently gray map still recovers.
+    const unsubscribeAuthFailure = onGoogleMapsAuthFailure(() => {
+      if (!cancelled) onProviderErrorRef.current();
+    });
+
     async function init() {
       try {
         const { Map, AdvancedMarkerElement } = await loadGoogleMapLibraries(apiKey);
@@ -114,6 +140,13 @@ export default function GoogleMap({
           mapTypeControl: false,
           streetViewControl: false,
           zoomControl: true,
+          // "auto" (the default) sometimes decides a map that doesn't
+          // dominate the viewport — e.g. next to the alert sidebar on an
+          // iPad — needs two fingers to pan, to avoid stealing page
+          // scroll. This map's page never scrolls around it, so a single
+          // finger should always drag the map; "greedy" makes that
+          // unconditional instead of heuristic.
+          gestureHandling: "greedy",
         });
         mapRef.current = map;
 
@@ -212,6 +245,7 @@ export default function GoogleMap({
 
     return () => {
       cancelled = true;
+      unsubscribeAuthFailure();
       markers.forEach((marker) => {
         marker.map = null;
       });
@@ -220,14 +254,15 @@ export default function GoogleMap({
       h3LayerRef.current = null;
       mapRef.current = null;
     };
-    // The provider owns one immutable map instance; selection and callbacks are
-    // kept current through refs above. `parcels`, `alerts`, `center`, and
-    // `zoom` are intentionally captured only at mount time (this effect runs
-    // once, deliberately omitting them from its dependency array) -- callers
-    // that need to change any of them must remount this component (e.g. by
-    // changing its `key`) rather than expect a live update. H3 data and
-    // visibility are the exception and stay live through the refs/effects
-    // above.
+    // Intentionally mount-only — see the CONSTRAINT comment above this
+    // effect. The provider owns one immutable map instance; selection and
+    // callbacks are kept current through refs above. `parcels`, `alerts`,
+    // `center`, and `zoom` are intentionally captured only at mount time
+    // (this effect runs once, deliberately omitting them from its dependency
+    // array) -- callers that need to change any of them must remount this
+    // component (e.g. by changing its `key`) rather than expect a live
+    // update. H3 data and visibility are the exception and stay live through
+    // the refs/effects above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -247,7 +282,7 @@ export default function GoogleMap({
           Loading Google map...
         </div>
       ) : null}
-      <div className="absolute left-3 top-3 z-10">
+      <div className="absolute left-[max(0.75rem,env(safe-area-inset-left,0px))] top-[max(0.75rem,env(safe-area-inset-top,0px))] z-10">
         <BasemapToggle mode={mode} onChange={handleBasemapChange} />
       </div>
     </div>

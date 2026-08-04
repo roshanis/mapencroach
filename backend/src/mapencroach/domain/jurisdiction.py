@@ -2,6 +2,11 @@
 
 Backs row-level scoping — every query is filtered to the caller's subtree,
 so scoping bugs here are authorization bugs. Keep this exhaustively tested.
+
+Construction validates the whole row set before anything is usable: every
+non-root parent_id must resolve to a known node id, and the parent links
+must form a single tree with no cycles. A dangling parent_id is rejected
+rather than silently dropping that subtree out of every caller's scope.
 """
 
 from collections.abc import Iterable
@@ -20,17 +25,20 @@ class JurisdictionTree:
             if parent_id is not None:
                 self._children.setdefault(parent_id, []).append(node_id)
 
-        for node_id, parent_id in rows:
-            if parent_id is not None and parent_id not in self._parent:
-                raise ValueError(
-                    f"jurisdiction {node_id!r} references unknown parent {parent_id!r}"
-                )
-
+        self._reject_dangling_parents(rows)
         self._reject_cycles()
 
         roots = [node_id for node_id, parent_id in rows if parent_id is None]
         if len(roots) != 1:
             raise ValueError(f"expected exactly one root jurisdiction, found {len(roots)}")
+
+    def _reject_dangling_parents(self, rows: list[tuple[str, str | None]]) -> None:
+        known = set(self._parent)
+        for node_id, parent_id in rows:
+            if parent_id is not None and parent_id not in known:
+                raise ValueError(
+                    f"jurisdiction {node_id!r} references unknown parent {parent_id!r}"
+                )
 
     def _reject_cycles(self) -> None:
         for start in self._parent:

@@ -35,6 +35,43 @@ describe("AlertSidebar", () => {
     expect(screen.getByText("No unresolved alerts in this jurisdiction.")).toBeInTheDocument();
   });
 
+  describe("mobile overlay backdrop", () => {
+    it("renders no backdrop when the mobile queue is closed (the default)", () => {
+      render(<AlertSidebar alerts={FIXTURE_ALERTS} />);
+
+      expect(
+        screen.queryByTestId("alert-sidebar-backdrop")
+      ).not.toBeInTheDocument();
+    });
+
+    it("renders a backdrop behind the panel once the mobile queue is open", () => {
+      render(
+        <AlertSidebar
+          alerts={FIXTURE_ALERTS}
+          mobileOpen
+          onMobileClose={vi.fn()}
+        />
+      );
+
+      expect(screen.getByTestId("alert-sidebar-backdrop")).toBeInTheDocument();
+    });
+
+    it("closes the queue when the backdrop is clicked, same as the × button", () => {
+      const onMobileClose = vi.fn();
+      render(
+        <AlertSidebar
+          alerts={FIXTURE_ALERTS}
+          mobileOpen
+          onMobileClose={onMobileClose}
+        />
+      );
+
+      fireEvent.click(screen.getByTestId("alert-sidebar-backdrop"));
+
+      expect(onMobileClose).toHaveBeenCalledOnce();
+    });
+  });
+
   it("shows survey no, land category, grade, and rounded severity for a matched parcel", () => {
     const alerts: Alert[] = [
       {
@@ -88,9 +125,18 @@ describe("AlertSidebar", () => {
   });
 
   it("renders a Case quick-action chip only when a case exists for the alert", () => {
-    const casesByAlertId = new Map(
-      FIXTURE_CASES.map((item) => [item.alert_id, item])
-    );
+    // Scoped to a single alert->case mapping rather than derived from the
+    // full FIXTURE_CASES array: several unresolved alerts now have cases of
+    // their own (demo data has grown since this test was written), so
+    // deriving the map from every fixture case would render more than one
+    // "Case" chip and make a bare getByRole ambiguous. The single-mapping
+    // Map below still exercises the real behavior under test: the chip
+    // renders only for the alert with an entry (ALT-5001), and is elsewhere
+    // absent (asserted in the next test).
+    const caseForAlt5001 = FIXTURE_CASES.find(
+      (item) => item.alert_id === FIXTURE_ALERTS[0].id
+    )!;
+    const casesByAlertId = new Map([[FIXTURE_ALERTS[0].id, caseForAlt5001]]);
     const onSelect = vi.fn();
     render(
       <AlertSidebar
@@ -100,9 +146,8 @@ describe("AlertSidebar", () => {
       />
     );
 
-    // ALT-5001 has CASE-9001; ALT-5002/5003/5005 (unresolved) have no case.
     const caseLink = screen.getByRole("link", { name: "Case" });
-    expect(caseLink).toHaveAttribute("href", "/cases/CASE-9001");
+    expect(caseLink).toHaveAttribute("href", `/cases/${caseForAlt5001.id}`);
 
     fireEvent.click(caseLink);
 

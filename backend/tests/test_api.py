@@ -6,11 +6,19 @@ import pytest
 from fastapi.testclient import TestClient
 
 from conftest import TEST_JWT_SECRET
-from mapencroach.api.app import create_app
+from mapencroach.api.app import AlertCreate, create_app
 from mapencroach.api.auth import Role, create_token
 from mapencroach.api.store import JURISDICTION_NAMES, Store
 from mapencroach.audit.chain import verify_chain
+from mapencroach.domain.alerts import AlertTier
 
+# A real, non-default secret: create_app fails closed outside demo mode if
+# MAPENCROACH_JWT_SECRET is unset or equal to auth.py's dev default, so
+# tests need a signing secret that would actually pass that check. The
+# env var itself is supplied for every test by conftest's autouse
+# `_default_jwt_secret` fixture; demo-mode tests delenv it before creating
+# their app, since MAPENCROACH_DEMO=1 refuses to start alongside a custom
+# secret.
 SECRET = TEST_JWT_SECRET
 
 
@@ -722,8 +730,11 @@ class TestCaseTransitions:
             cid for cid, c in store.cases.items() if c.case.state.value == "SHOW_CAUSE_ISSUED"
         )
         case = store.cases[case_id]
+        # CLOSED is a legally-gated target (see TestCaseTransitionLegalGating),
+        # so this needs a legal_officer token - the point here is the 409
+        # from an illegal transition, not the role gate.
         officer_token = token_for(
-            "case-officer-2", Role.CASE_OFFICER, case.jurisdiction_id
+            "legal-officer-2", Role.LEGAL_OFFICER, case.jurisdiction_id
         )
         resp = client.post(
             f"/cases/{case_id}/transitions",
@@ -1013,6 +1024,9 @@ class TestDemoPersonas:
         )
 
     def _demo_client(self, store: Store, monkeypatch) -> TestClient:
+        # Demo mode always signs with the dev default secret and refuses to
+        # start next to a custom one, so drop the autouse test secret here.
+        monkeypatch.delenv("MAPENCROACH_JWT_SECRET", raising=False)
         monkeypatch.setenv("MAPENCROACH_DEMO", "1")
         return TestClient(create_app(store))
 
@@ -1139,6 +1153,9 @@ class TestJurisdictionNames:
 
 class TestPersonaEnrichment:
     def _demo_client(self, store: Store, monkeypatch) -> TestClient:
+        # Demo mode always signs with the dev default secret and refuses to
+        # start next to a custom one, so drop the autouse test secret here.
+        monkeypatch.delenv("MAPENCROACH_JWT_SECRET", raising=False)
         monkeypatch.setenv("MAPENCROACH_DEMO", "1")
         return TestClient(create_app(store))
 
@@ -1178,6 +1195,396 @@ class TestCasesListStateSince:
                 f"/cases/{summary['id']}", headers=auth_headers(state_token)
             ).json()
             assert summary["state_since"] == detail["events"][-1]["occurred_at"]
+
+
+class TestSecretFailsClosed:
+    """create_app refuses to start rather than silently sign tokens with a
+    secret nobody chose - see mapencroach.api.auth.validate_secret_config."""
+
+    def test_missing_secret_outside_demo_mode_refuses_to_start(
+        self, store: Store, monkeypatch
+    ):
+        monkeypatch.delenv("MAPENCROACH_JWT_SECRET", raising=False)
+        monkeypatch.delenv("MAPENCROACH_DEMO", raising=False)
+        with pytest.raises(RuntimeError, match="MAPENCROACH_JWT_SECRET"):
+            create_app(store)
+
+    def test_dev_default_secret_outside_demo_mode_refuses_to_start(
+        self, store: Store, monkeypatch
+    ):
+        monkeypatch.setenv("MAPENCROACH_JWT_SECRET", "dev-secret-do-not-deploy")
+        monkeypatch.delenv("MAPENCROACH_DEMO", raising=False)
+        with pytest.raises(RuntimeError, match="MAPENCROACH_JWT_SECRET"):
+            create_app(store)
+
+    def test_empty_secret_outside_demo_mode_refuses_to_start(
+        self, store: Store, monkeypatch
+    ):
+        monkeypatch.setenv("MAPENCROACH_JWT_SECRET", "")
+        monkeypatch.delenv("MAPENCROACH_DEMO", raising=False)
+        with pytest.raises(RuntimeError, match="MAPENCROACH_JWT_SECRET"):
+            create_app(store)
+
+    def test_custom_secret_outside_demo_mode_starts_cleanly(
+        self, store: Store, monkeypatch
+    ):
+        monkeypatch.setenv("MAPENCROACH_JWT_SECRET", "a-real-nondefault-secret")
+        monkeypatch.delenv("MAPENCROACH_DEMO", raising=False)
+        app = create_app(store)
+        assert app is not None
+
+    def test_demo_mode_with_custom_secret_refuses_to_start(
+        self, store: Store, monkeypatch
+    ):
+        monkeypatch.setenv("MAPENCROACH_JWT_SECRET", "a-real-production-secret")
+        monkeypatch.setenv("MAPENCROACH_DEMO", "1")
+        with pytest.raises(RuntimeError, match="cannot be combined"):
+            create_app(store)
+
+    def test_demo_mode_without_custom_secret_warns_loudly_and_starts(
+        self, store: Store, monkeypatch
+    ):
+        monkeypatch.delenv("MAPENCROACH_JWT_SECRET", raising=False)
+        monkeypatch.setenv("MAPENCROACH_DEMO", "1")
+        with pytest.warns(UserWarning, match="demo"):
+            app = create_app(store)
+        assert app is not None
+
+
+class TestTokenClaimsHardened:
+    """Tokens must carry an exp claim (so a forged token can't be a
+    non-expiring credential) and jurisdiction_id must name a jurisdiction
+    the tree actually knows about."""
+
+    def test_token_without_exp_is_401(self, client: TestClient, store: Store):
+        import jwt as pyjwt
+
+        from mapencroach.api import auth as auth_module
+
+        payload = {
+            "sub": "no-exp-user",
+            "role": "viewer",
+            "jurisdiction_id": store.root_jurisdiction_id,
+            "iss": auth_module._ISSUER,
+            "aud": auth_module._AUDIENCE,
+        }
+        forever_token = pyjwt.encode(payload, SECRET, algorithm="HS256")
+        resp = client.get("/parcels", headers=auth_headers(forever_token))
+        assert resp.status_code == 401
+
+    def test_unknown_jurisdiction_claim_is_401_not_500(
+        self, client: TestClient, store: Store
+    ):
+        import jwt as pyjwt
+
+        from mapencroach.api import auth as auth_module
+
+        payload = {
+            "sub": "ghost-user",
+            "role": "viewer",
+            "jurisdiction_id": "not-a-real-jurisdiction",
+            "exp": datetime.now(UTC) + timedelta(hours=1),
+            "iss": auth_module._ISSUER,
+            "aud": auth_module._AUDIENCE,
+        }
+        bad = pyjwt.encode(payload, SECRET, algorithm="HS256")
+        resp = client.get("/parcels", headers=auth_headers(bad))
+        assert resp.status_code == 401
+
+    def test_non_string_jurisdiction_claim_is_401(self, client: TestClient):
+        import jwt as pyjwt
+
+        from mapencroach.api import auth as auth_module
+
+        payload = {
+            "sub": "weird-claim-user",
+            "role": "viewer",
+            "jurisdiction_id": 12345,
+            "exp": datetime.now(UTC) + timedelta(hours=1),
+            "iss": auth_module._ISSUER,
+            "aud": auth_module._AUDIENCE,
+        }
+        bad = pyjwt.encode(payload, SECRET, algorithm="HS256")
+        resp = client.get("/parcels", headers=auth_headers(bad))
+        assert resp.status_code == 401
+
+
+class TestHealthEndpoint:
+    def test_health_is_unauthenticated_and_ok(self, client: TestClient):
+        resp = client.get("/health")
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "ok"}
+
+
+class TestListPagination:
+    """/parcels, /alerts and /cases stay plain JSON arrays (or, for
+    /parcels, a GeoJSON FeatureCollection) - pagination is limit/offset
+    query params plus an X-Total-Count header, never a response envelope."""
+
+    def test_parcels_default_page_covers_whole_seed_and_reports_total(
+        self, client: TestClient, state_token: str, store: Store
+    ):
+        resp = client.get("/parcels", headers=auth_headers(state_token))
+        assert resp.status_code == 200
+        assert resp.headers["X-Total-Count"] == str(len(store.parcels))
+        assert isinstance(resp.json()["features"], list)
+        assert len(resp.json()["features"]) == len(store.parcels)
+
+    def test_parcels_limit_and_offset_slice_in_stable_order(
+        self, client: TestClient, state_token: str, store: Store
+    ):
+        full = client.get("/parcels", headers=auth_headers(state_token)).json()["features"]
+        resp = client.get(
+            "/parcels", params={"limit": 5, "offset": 10}, headers=auth_headers(state_token)
+        )
+        assert resp.status_code == 200
+        assert resp.headers["X-Total-Count"] == str(len(store.parcels))
+        page = resp.json()["features"]
+        assert len(page) == 5
+        assert [f["properties"]["id"] for f in page] == [
+            f["properties"]["id"] for f in full[10:15]
+        ]
+
+    def test_parcels_limit_above_hard_max_is_422(self, client: TestClient, state_token: str):
+        resp = client.get(
+            "/parcels", params={"limit": 1001}, headers=auth_headers(state_token)
+        )
+        assert resp.status_code == 422
+
+    def test_parcels_limit_zero_is_422(self, client: TestClient, state_token: str):
+        resp = client.get("/parcels", params={"limit": 0}, headers=auth_headers(state_token))
+        assert resp.status_code == 422
+
+    def test_parcels_negative_offset_is_422(self, client: TestClient, state_token: str):
+        resp = client.get(
+            "/parcels", params={"offset": -1}, headers=auth_headers(state_token)
+        )
+        assert resp.status_code == 422
+
+    def test_alerts_stay_a_plain_array_and_paginate(
+        self, client: TestClient, state_token: str, store: Store
+    ):
+        resp = client.get(
+            "/alerts", params={"limit": 3, "offset": 2}, headers=auth_headers(state_token)
+        )
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
+        assert resp.headers["X-Total-Count"] == str(len(store.alerts))
+        assert len(resp.json()) == 3
+
+    def test_alerts_total_count_reflects_the_filtered_set(
+        self, client: TestClient, state_token: str, store: Store
+    ):
+        red_count = sum(1 for a in store.alerts.values() if a["tier"] == "RED")
+        resp = client.get("/alerts", params={"tier": "RED"}, headers=auth_headers(state_token))
+        assert resp.status_code == 200
+        assert resp.headers["X-Total-Count"] == str(red_count)
+        assert len(resp.json()) == red_count
+
+    def test_cases_stay_a_plain_array_and_paginate(
+        self, client: TestClient, state_token: str, store: Store
+    ):
+        resp = client.get("/cases", params={"limit": 2}, headers=auth_headers(state_token))
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
+        assert resp.headers["X-Total-Count"] == str(len(store.cases))
+        assert len(resp.json()) == 2
+
+
+class TestCaseTransitionLegalGating:
+    """Transitions into a legally-significant state (a hearing actually
+    held, an order issued, or the case ending) require Role.LEGAL_OFFICER
+    or Role.SYSTEM_ADMIN; ordinary triage/survey/notice transitions stay
+    with Role.CASE_OFFICER."""
+
+    def _advance_to_hearing_scheduled(self, client: TestClient, store: Store):
+        case_id = next(
+            cid for cid, c in store.cases.items() if c.case.state.value == "SHOW_CAUSE_ISSUED"
+        )
+        case = store.cases[case_id]
+        officer = token_for("gating-officer", Role.CASE_OFFICER, case.jurisdiction_id)
+        resp1 = client.post(
+            f"/cases/{case_id}/transitions",
+            headers=auth_headers(officer),
+            json={"to_state": "RESPONSE_WINDOW"},
+        )
+        assert resp1.status_code == 201
+        resp2 = client.post(
+            f"/cases/{case_id}/transitions",
+            headers=auth_headers(officer),
+            json={"to_state": "HEARING_SCHEDULED", "artifacts": {"hearing_date": "2026-08-01"}},
+        )
+        assert resp2.status_code == 201
+        return case_id, case
+
+    def test_case_officer_cannot_record_a_hearing_as_held(
+        self, client: TestClient, store: Store
+    ):
+        case_id, case = self._advance_to_hearing_scheduled(client, store)
+        officer = token_for("gating-officer-2", Role.CASE_OFFICER, case.jurisdiction_id)
+        resp = client.post(
+            f"/cases/{case_id}/transitions",
+            headers=auth_headers(officer),
+            json={"to_state": "HEARING_HELD", "artifacts": {"hearing_record": "hr.pdf"}},
+        )
+        assert resp.status_code == 403
+        assert "legal authority" in resp.json()["detail"]
+
+    def test_legal_officer_can_record_a_hearing_as_held(
+        self, client: TestClient, store: Store
+    ):
+        case_id, case = self._advance_to_hearing_scheduled(client, store)
+        legal_officer = token_for("legal-gating-1", Role.LEGAL_OFFICER, case.jurisdiction_id)
+        resp = client.post(
+            f"/cases/{case_id}/transitions",
+            headers=auth_headers(legal_officer),
+            json={"to_state": "HEARING_HELD", "artifacts": {"hearing_record": "hr.pdf"}},
+        )
+        assert resp.status_code == 201
+        assert resp.json()["to_state"] == "HEARING_HELD"
+
+    def test_system_admin_can_record_a_hearing_as_held(
+        self, client: TestClient, store: Store
+    ):
+        case_id, case = self._advance_to_hearing_scheduled(client, store)
+        admin = token_for("admin-gating-1", Role.SYSTEM_ADMIN, case.jurisdiction_id)
+        resp = client.post(
+            f"/cases/{case_id}/transitions",
+            headers=auth_headers(admin),
+            json={"to_state": "HEARING_HELD", "artifacts": {"hearing_record": "hr.pdf"}},
+        )
+        assert resp.status_code == 201
+
+    def test_case_officer_cannot_unilaterally_close_a_case(
+        self, client: TestClient, store: Store
+    ):
+        case_id = next(
+            cid for cid, c in store.cases.items() if c.case.state.value == "SHOW_CAUSE_ISSUED"
+        )
+        case = store.cases[case_id]
+        officer = token_for("gating-officer-3", Role.CASE_OFFICER, case.jurisdiction_id)
+        resp = client.post(
+            f"/cases/{case_id}/transitions",
+            headers=auth_headers(officer),
+            json={"to_state": "CLOSED"},
+        )
+        assert resp.status_code == 403
+
+
+class TestAlertCreateValidation:
+    """AlertCreate validates tier against the AlertTier enum and requires a
+    finite, non-negative area_m2, instead of accepting any string/float."""
+
+    def test_invalid_tier_is_422(self, client: TestClient, state_token: str, store: Store):
+        parcel_id = next(iter(store.parcels))
+        resp = client.post(
+            "/alerts",
+            headers=auth_headers(state_token),
+            json={
+                "parcel_id": parcel_id,
+                "tier": "ORANGE",
+                "area_m2": 100,
+                "detected_at": datetime.now(UTC).isoformat(),
+            },
+        )
+        assert resp.status_code == 422
+
+    def test_negative_area_is_422(self, client: TestClient, state_token: str, store: Store):
+        parcel_id = next(iter(store.parcels))
+        resp = client.post(
+            "/alerts",
+            headers=auth_headers(state_token),
+            json={
+                "parcel_id": parcel_id,
+                "tier": "AMBER",
+                "area_m2": -5,
+                "detected_at": datetime.now(UTC).isoformat(),
+            },
+        )
+        assert resp.status_code == 422
+
+    def test_non_finite_area_is_rejected_by_the_model(self):
+        # Exercised at the model level rather than over HTTP: a literal
+        # "Infinity" body makes FastAPI's own 422 error response try (and
+        # fail) to re-embed the offending inf value as JSON, which is a
+        # framework-level footgun unrelated to this validator. The
+        # allow_inf_nan=False constraint itself is what finding 8 asks for,
+        # and this is what actually exercises it.
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            AlertCreate(
+                parcel_id="parcel-1",
+                tier=AlertTier.AMBER,
+                area_m2=float("inf"),
+                detected_at=datetime.now(UTC),
+            )
+
+    def test_valid_tier_and_area_still_create_an_alert(
+        self, client: TestClient, state_token: str, store: Store
+    ):
+        parcel_id = next(iter(store.parcels))
+        resp = client.post(
+            "/alerts",
+            headers=auth_headers(state_token),
+            json={
+                "parcel_id": parcel_id,
+                "tier": "RED",
+                "area_m2": 1234.5,
+                "detected_at": datetime.now(UTC).isoformat(),
+            },
+        )
+        assert resp.status_code == 201
+        assert resp.json()["tier"] == "RED"
+
+
+class TestCorsWildcardRejected:
+    def test_wildcard_origin_with_credentials_refuses_to_start(
+        self, store: Store, monkeypatch
+    ):
+        monkeypatch.setenv("MAPENCROACH_CORS_ORIGINS", "*")
+        with pytest.raises(RuntimeError, match="CORS_ORIGINS"):
+            create_app(store)
+
+    def test_wildcard_among_multiple_origins_also_refuses(
+        self, store: Store, monkeypatch
+    ):
+        monkeypatch.setenv("MAPENCROACH_CORS_ORIGINS", "https://example.gov, *")
+        with pytest.raises(RuntimeError, match="CORS_ORIGINS"):
+            create_app(store)
+
+
+class TestStoreConcurrencySafety:
+    """Sync endpoints run in FastAPI's threadpool, so concurrent requests
+    against one Store must not fork the audit hash chain or collide on
+    allocated ids."""
+
+    def test_concurrent_alert_creation_has_unique_ids_and_a_valid_chain(
+        self, client: TestClient, state_token: str, store: Store
+    ):
+        import concurrent.futures
+
+        parcel_id = next(iter(store.parcels))
+
+        def _create(_i: int):
+            return client.post(
+                "/alerts",
+                headers=auth_headers(state_token),
+                json={
+                    "parcel_id": parcel_id,
+                    "tier": "GREEN",
+                    "area_m2": 10,
+                    "detected_at": datetime.now(UTC).isoformat(),
+                },
+            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            responses = list(pool.map(_create, range(40)))
+
+        assert all(r.status_code == 201 for r in responses)
+        ids = [r.json()["id"] for r in responses]
+        assert len(ids) == len(set(ids))
+        assert verify_chain(store.audit_chain).ok
 
 
 class TestCaseTransfer:

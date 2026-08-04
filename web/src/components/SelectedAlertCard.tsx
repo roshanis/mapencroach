@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { BoundaryGradeBadge } from "./BoundaryGradeBadge";
 import { TierChip } from "./TierChip";
+import { WatchToggle } from "./WatchToggle";
 import { LAND_CATEGORY_LABELS, type Alert, type Case, type Parcel } from "@/lib/types";
 
 export interface SelectedAlertCardProps {
@@ -27,7 +28,7 @@ export function SelectedAlertCard({
   return (
     <aside
       aria-label={`Selected alert ${alert.id}`}
-      className="absolute bottom-20 left-3 right-3 z-20 rounded-lg border border-slate-200 bg-white p-4 shadow-xl sm:left-auto sm:right-3 sm:w-80"
+      className="absolute bottom-20 left-[max(0.75rem,env(safe-area-inset-left,0px))] right-[max(0.75rem,env(safe-area-inset-right,0px))] z-20 rounded-lg border border-slate-200 bg-white p-4 shadow-xl sm:left-auto sm:right-[max(0.75rem,env(safe-area-inset-right,0px))] sm:w-80"
     >
       <div className="flex items-start justify-between gap-3">
         <div>
@@ -49,7 +50,7 @@ export function SelectedAlertCard({
           type="button"
           aria-label="Close selected alert"
           onClick={onClose}
-          className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          className="flex min-h-11 min-w-11 items-center justify-center rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
         >
           ×
         </button>
@@ -60,6 +61,9 @@ export function SelectedAlertCard({
         <span className="text-xs text-slate-500">
           Severity {Math.round(alert.severity_score)}
         </span>
+      </div>
+      <div className="mt-3">
+        <WatchToggle alert={alert} />
       </div>
       <div className="mt-4 flex flex-col gap-2">
         <Link

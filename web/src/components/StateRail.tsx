@@ -5,21 +5,46 @@ import {
   SPECIAL_STATE_LABELS,
   STATE_LABELS,
   type AnyCaseState,
+  type CaseEvent,
   type SpecialCaseState,
 } from "@/lib/types";
 
 export interface StateRailProps {
   currentState: AnyCaseState;
+  /**
+   * The case's event history. When `currentState` is a paused special state
+   * (SURVEY_REQUESTED/STAYED_BY_COURT), this is used to find the last
+   * on-chain step reached before the pause, so the rail can show that
+   * progress instead of resetting every step to not-done — matching the
+   * banner's promise that "the chain resumes where it stopped".
+   */
+  events?: CaseEvent[];
 }
 
 function isSpecialState(state: AnyCaseState): state is SpecialCaseState {
   return state in SPECIAL_STATE_LABELS;
 }
 
-export function StateRail({ currentState }: StateRailProps) {
+/** The most recent chain step the event history actually reached, in order —
+ * i.e. the step a paused case will resume from. */
+function lastChainStateReached(
+  events: CaseEvent[] | undefined
+): (typeof CASE_STATE_CHAIN)[number] | undefined {
+  if (!events) return undefined;
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const { to_state } = events[i];
+    if ((CASE_STATE_CHAIN as string[]).includes(to_state)) return to_state;
+  }
+  return undefined;
+}
+
+export function StateRail({ currentState, events }: StateRailProps) {
   const special = isSpecialState(currentState);
+  const resumeState = special ? lastChainStateReached(events) : undefined;
   const currentIndex = special
-    ? -1
+    ? resumeState
+      ? CASE_STATE_CHAIN.indexOf(resumeState)
+      : -1
     : CASE_STATE_CHAIN.indexOf(currentState);
 
   return (
@@ -49,7 +74,13 @@ export function StateRail({ currentState }: StateRailProps) {
       >
         {CASE_STATE_CHAIN.map((state, index) => {
           const isCurrent = !special && state === currentState;
-          const isDone = !special && index < currentIndex;
+          // For a paused case there is no "current" chain step (the pause
+          // target is off-chain) — everything up to and including the step
+          // reached before pausing counts as done, showing the progress the
+          // banner promises is preserved.
+          const isDone = special
+            ? index <= currentIndex
+            : index < currentIndex;
           return (
             <li
               key={state}

@@ -43,6 +43,12 @@ export const LAND_CATEGORY_COLORS: Record<LandCategory, string> = {
   grazing: "#a3903c",
 };
 
+// Single source of truth for land-category display labels — previously
+// ParcelAttributesCard kept its own diverging copy ("Revenue Land",
+// "Grazing (Gauchar)") while the map legend used the plainer wording below,
+// so the two panels disagreed about the same parcel's category. The more
+// specific, locally-meaningful wording won (it names the vernacular term
+// "Gauchar" used for grazing land in this jurisdiction).
 export const LAND_CATEGORY_LABELS: Record<LandCategory, string> = {
   waterbody: "Waterbody",
   forest: "Forest",
@@ -50,9 +56,9 @@ export const LAND_CATEGORY_LABELS: Record<LandCategory, string> = {
   municipal: "Municipal",
   housing: "Housing",
   industrial: "Industrial",
-  revenue: "Revenue",
+  revenue: "Revenue Land",
   agricultural: "Agricultural",
-  grazing: "Grazing",
+  grazing: "Grazing (Gauchar)",
 };
 
 export interface Parcel {
@@ -204,6 +210,16 @@ export const SPECIAL_STATE_LABELS: Record<SpecialCaseState, string> = {
   STAYED_BY_COURT: "Paused — Stayed by Court",
 };
 
+/** Verb-phrase labels for the special-state transition actions, shared by
+ * TransitionPanel (action buttons) and ParcelWorkSummary ("next action"). */
+export const TRANSITION_ACTION_LABELS: Record<string, string> = {
+  RESPONSE_WINDOW: "Open response window",
+  DISMISSED_FALSE_POSITIVE: "Dismiss false positive",
+  LEGACY_REFERRED: "Refer to legacy process",
+  SURVEY_REQUESTED: "Request boundary survey",
+  STAYED_BY_COURT: "Record court stay",
+};
+
 /** Special states where the forward chain is frozen but resumable. */
 export const PAUSED_STATES: ReadonlySet<string> = new Set([
   "SURVEY_REQUESTED",
@@ -275,7 +291,76 @@ export interface BBox {
   north: number;
 }
 
-export interface AlertFilters {
-  tier?: AlertTier;
-  status?: AlertStatus;
+// Weekly-snapshot watchlist (mapencroach/imagery/capture.py + the
+// /watchlist HTTP API). CaptureAttempt/WatchEntry mirror the backend
+// dataclasses field-for-field — see the interface contract.
+
+export type CaptureStatus = "captured" | "no_usable_scene" | "provider_error";
+
+export interface CaptureAttempt {
+  /** WeekRef.key, e.g. "2026-W31". */
+  week: string;
+  status: CaptureStatus;
+  attempted_at: string;
+  scene_id: string | null;
+  sha256: string | null;
+  cloud_pct: number | null;
+  /** Human-readable; always set unless status is "captured". */
+  reason: string | null;
+  /**
+   * Server-side path for this week's scene image, or null when there is
+   * provably nothing to serve (status is not "captured"). A non-null value
+   * is a *candidate* path, not a guarantee the bytes are actually
+   * retrievable: the backend's CaptureAttempt wire format carries no
+   * "were the bytes retained" flag (that lives only on the server's
+   * internal SceneRecord — contract-blobs.md §2), so a captured week whose
+   * bytes were never retained still gets a URL here, and that URL 404s
+   * when fetched. WeeklySnapshotTimeline treats that load failure the same
+   * as a null image_url — the explicit "hash on record, image not
+   * retained" state — so either path (never had a URL, or had one that
+   * failed to load) ends up rendering the same honest evidence state. See
+   * the blob-serving interface contract §3–§4. Populated by the API layer
+   * (api.ts/server-api.ts) from the parent resource + week key — never
+   * built by string-concatenation in a component.
+   */
+  image_url: string | null;
+}
+
+export interface WatchEntry {
+  alert_id: string;
+  parcel_id: string;
+  started_on: string;
+  cadence: "weekly";
+  watched_by: string;
+  captures: CaptureAttempt[];
+  /** Weeks from started_on through today that have not yet been attempted. */
+  due_weeks: string[];
+}
+
+// Case imagery backfill (mapencroach/imagery — case-level view of the same
+// WatchEntry record, extended backwards). See the interface contract
+// addendum: there is ONE timeline per alert; a case reaches it through
+// Case.alert_id, so CaseImagery mirrors WatchEntry's shape rather than being
+// a second parallel record type.
+export interface CaseImagery {
+  case_id: string;
+  alert_id: string;
+  parcel_id: string;
+  alert_tier: string;
+  /** Whether the originating alert's tier is RED — backfill is only offered
+   * when true; it is 422 at the backend otherwise. */
+  watchable: boolean;
+  /** Earliest week covered by `captures`, or null if no timeline exists yet
+   * (never watched and never backfilled). */
+  started_on: string | null;
+  cadence: "weekly";
+  captures: CaptureAttempt[];
+  /** Weeks from started_on through today that have not yet been attempted. */
+  due_weeks: string[];
+  /** MAPENCROACH_IMAGERY_BACKFILL_FLOOR — the earliest date backfill will
+   * ever reach; a request before it is 422. */
+  backfill_floor: string;
+  /** Weeks between backfill_floor and started_on that have no attempt yet.
+   * 0 once the history reaches the floor. */
+  remaining_backfill_weeks: number;
 }

@@ -77,6 +77,16 @@ In the Vercel project → **Settings → Environment Variables**:
 
 Then **Deployments → Redeploy** (env vars are baked in at build time).
 
+`MAPENCROACH_API_TOKEN` is deliberately not a `NEXT_PUBLIC_*` var: those are
+inlined into the browser bundle, so a bearer token set there would be readable
+by every visitor and usable to drive case transitions. It is only ever read
+server-side — by server-rendered requests directly, and by the `/api/backend`
+proxy as its last-resort fallback when a request (including one relayed from
+the browser) carries no `Authorization` header and no `mapencroach_token`
+persona cookie. The browser itself never sees this token; once a persona is
+signed in it authenticates with the sign-in cookie, which the proxy forwards
+upstream on its behalf.
+
 Restrict the Google browser key to the production Vercel hostname (and only
 the preview/local hostnames that need it) plus the Maps JavaScript API. The map
 ID is public configuration; the API key must never be committed to this repo.

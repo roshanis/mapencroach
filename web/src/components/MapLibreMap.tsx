@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+// Without this, maplibre-gl never gets its own CSS: no `touch-action`
+// rules on the canvas container (so its own pinch/pan gesture handling
+// fights the browser's native ones on touch), and the built-in
+// zoom/attribution controls render unstyled/unpositioned.
 import "maplibre-gl/dist/maplibre-gl.css";
 import type * as MapLibreGL from "maplibre-gl";
 import { LAND_CATEGORY_COLORS } from "@/lib/types";
@@ -85,6 +89,27 @@ export default function MapLibreMap({
     });
   }, [selectedAlertId]);
 
+  // CONSTRAINT: `parcels`, `alerts`, `center`, and `zoom` are read once, at
+  // mount, by the effect below (empty dep array) — they are a snapshot, not
+  // a live binding. A parent that re-renders this component with new
+  // parcels/alerts/center/zoom after the initial mount will NOT see the map
+  // update; the GeoJSON source and Markers created here are never rebuilt.
+  // This is currently safe only because MapView mounts this component once
+  // data is already loaded and fully remounts it (fresh key) on retry — so
+  // in practice the values never change under a mounted instance today.
+  // `selectedAlertId` and `onAlertClick` are the only props that ARE live,
+  // via the ref pattern below.
+  //
+  // Before adding any feature that streams updated parcels/alerts/center/
+  // zoom into an already-mounted map, this effect needs real sync, not a
+  // fresh mount: parcels via
+  // `(map.getSource("parcels") as GeoJSONSource).setData(...)` (cheap —
+  // no need to remove/re-add the source or layers), alerts via reconciling
+  // the `markerElementsRef` Map (add new marker ids, remove stale ones,
+  // matching the selection-sync pattern already used for
+  // `selectedAlertId` above), and center/zoom via an explicit
+  // `map.jumpTo({ center, zoom })` call in their own effect. Do not
+  // silently assume props are live without doing this.
   useEffect(() => {
     h3CellsRef.current = h3Cells;
 
@@ -168,9 +193,17 @@ export default function MapLibreMap({
         },
         center,
         zoom,
+        // This is a flat, top-down parcel map with no compass/reset
+        // control, so letting a two-finger touch twist (or a desktop
+        // right-drag) rotate it would leave someone stuck looking at an
+        // off-north map with no way back. Pinch-to-zoom and one-finger
+        // pan/drag are unaffected.
+        dragRotate: false,
+        touchPitch: false,
       });
       mapInstance = map;
       mapRef.current = map;
+      map.touchZoomRotate.disableRotation();
 
       map.on("load", () => {
         if (cancelled) return;
@@ -312,12 +345,13 @@ export default function MapLibreMap({
       mapInstance?.remove();
       mapRef.current = null;
     };
-    // This effect runs once, deliberately omitting `parcels`, `alerts`,
-    // `center`, and `zoom` from its dependency array: they are intentionally
-    // captured only at mount time. Callers that need to change any of them
-    // must remount this component (e.g. by changing its `key`) rather than
-    // expect a live update. H3 cells, H3 visibility, selection, and callbacks
-    // stay live via refs/effects above.
+    // Intentionally mount-only — see the CONSTRAINT comment above this
+    // effect. This effect runs once, deliberately omitting `parcels`,
+    // `alerts`, `center`, and `zoom` from its dependency array: they are
+    // intentionally captured only at mount time. Callers that need to change
+    // any of them must remount this component (e.g. by changing its `key`)
+    // rather than expect a live update. H3 cells, H3 visibility, selection,
+    // and callbacks stay live via refs/effects above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -328,7 +362,7 @@ export default function MapLibreMap({
         data-testid="maplibre-container"
         className="h-full w-full"
       />
-      <div className="absolute left-3 top-3 z-10">
+      <div className="absolute left-[max(0.75rem,env(safe-area-inset-left,0px))] top-[max(0.75rem,env(safe-area-inset-top,0px))] z-10">
         <BasemapToggle mode={mode} onChange={handleBasemapChange} />
       </div>
     </div>

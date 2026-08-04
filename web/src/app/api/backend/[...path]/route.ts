@@ -57,6 +57,13 @@ async function proxy(
   const headers = new Headers();
   const authHeader = resolveAuthHeader(request);
   if (authHeader) headers.set("authorization", authHeader);
+  // Forwarded so conditional requests survive the hop: retained scene images
+  // are content-addressed and served with a strong ETag, so a re-fetch should
+  // be able to come back 304 instead of re-sending the bytes.
+  for (const name of ["if-none-match", "if-modified-since", "accept"]) {
+    const value = request.headers.get(name);
+    if (value) headers.set(name, value);
+  }
 
   let body: string | undefined;
   if (METHODS_WITH_BODY.has(request.method)) {
@@ -82,13 +89,36 @@ async function proxy(
     );
   }
 
-  const responseBody = await upstreamResponse.text();
-  const upstreamContentType = upstreamResponse.headers.get("content-type");
-  return new NextResponse(responseBody, {
+  // Read as bytes, never as text. Retained scene images come back through
+  // this proxy, and `Response.text()` decodes as UTF-8: every byte sequence
+  // that is not valid UTF-8 becomes U+FFFD, so a JPEG or PNG would arrive
+  // silently corrupted -- a 200 carrying garbage, which is worse than an
+  // error, because nothing downstream can tell it apart from a real image.
+  const responseBody = await upstreamResponse.arrayBuffer();
+
+  const responseHeaders = new Headers();
+  // ETag and Cache-Control are what make content-addressed scene bytes
+  // cacheable and revalidatable; dropping them here would silently turn every
+  // thumbnail into a full re-download.
+  for (const name of [
+    "content-type",
+    "etag",
+    "cache-control",
+    "content-disposition",
+    "last-modified",
+  ]) {
+    const value = upstreamResponse.headers.get(name);
+    if (value) responseHeaders.set(name, value);
+  }
+
+  // 204 and 304 are defined to carry no body; handing one a buffer makes the
+  // runtime throw rather than pass the status through.
+  const bodyless =
+    upstreamResponse.status === 204 || upstreamResponse.status === 304;
+
+  return new NextResponse(bodyless ? null : responseBody, {
     status: upstreamResponse.status,
-    headers: upstreamContentType
-      ? { "content-type": upstreamContentType }
-      : undefined,
+    headers: responseHeaders,
   });
 }
 

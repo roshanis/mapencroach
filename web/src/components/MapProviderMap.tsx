@@ -24,7 +24,12 @@ function FallbackMap({
       <div
         role="status"
         data-testid="map-provider-notice"
-        className="absolute bottom-3 right-3 z-10 max-w-[calc(100vw-1.5rem)] whitespace-nowrap rounded border border-amber-300 bg-amber-50/95 px-3 py-1.5 text-xs font-medium text-amber-950 shadow"
+        // Kept on the RIGHT (not the safe-area-aware left treatment used
+        // elsewhere in this iPad/iPhone pass): MapLegend is pinned bottom-left
+        // by the page as an independent sibling this component can't see, so
+        // anchoring the notice to the same corner would let it cover a
+        // legend row. `right-3` is asserted verbatim by a regression test.
+        className="absolute bottom-[calc(0.75rem_+_env(safe-area-inset-bottom,0px))] right-3 z-10 max-w-[calc(100vw-1.5rem)] whitespace-nowrap rounded border border-amber-300 bg-amber-50/95 px-3 py-1.5 text-xs font-medium text-amber-950 shadow"
       >
         {reason}
       </div>

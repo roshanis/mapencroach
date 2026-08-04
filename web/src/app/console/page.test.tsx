@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import CommandMapPage from "./page";
-import { getAlerts, getCases, getParcels } from "@/lib/api";
+import { getAlerts, getCases, getParcels, getWatchEntry } from "@/lib/api";
 import {
   FIXTURE_ALERTS,
   FIXTURE_CASES,
@@ -13,6 +13,9 @@ vi.mock("@/lib/api", () => ({
   getAlerts: vi.fn(),
   getCases: vi.fn(),
   getParcels: vi.fn(),
+  getWatchEntry: vi.fn(),
+  watchAlert: vi.fn(),
+  unwatchAlert: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -66,6 +69,7 @@ beforeEach(() => {
   vi.mocked(getParcels).mockResolvedValue(FIXTURE_PARCELS);
   vi.mocked(getAlerts).mockResolvedValue(FIXTURE_ALERTS);
   vi.mocked(getCases).mockResolvedValue(FIXTURE_CASES);
+  vi.mocked(getWatchEntry).mockResolvedValue(undefined);
   vi.mocked(useRouter).mockReturnValue({
     replace: replaceMock,
   } as unknown as ReturnType<typeof useRouter>);
@@ -111,6 +115,45 @@ describe("CommandMapPage", () => {
     expect(
       await screen.findByRole("link", { name: "Open parcel record" })
     ).toHaveAttribute("href", "/parcels/PCL-1001");
+  });
+
+  it("hides the floating trigger while the mobile work queue is open, and both the × and the backdrop bring it back", async () => {
+    render(<CommandMapPage />);
+
+    const openButton = await screen.findByRole("button", {
+      name: "Open work queue",
+    });
+    expect(
+      screen.queryByTestId("alert-sidebar-backdrop")
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(openButton);
+
+    // The trigger is unmounted while the queue is open — otherwise it
+    // would sit, hidden behind the now-open panel, as a dead but still
+    // focusable button. The panel's own backdrop + close control take
+    // over from here.
+    expect(
+      screen.queryByRole("button", { name: "Open work queue" })
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("alert-sidebar-backdrop")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close work queue" }));
+
+    expect(
+      await screen.findByRole("button", { name: "Open work queue" })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("alert-sidebar-backdrop")
+    ).not.toBeInTheDocument();
+
+    // Tapping the backdrop is equivalent to the × button.
+    fireEvent.click(screen.getByRole("button", { name: "Open work queue" }));
+    fireEvent.click(screen.getByTestId("alert-sidebar-backdrop"));
+
+    expect(
+      await screen.findByRole("button", { name: "Open work queue" })
+    ).toBeInTheDocument();
   });
 
   describe("URL-persisted selection", () => {

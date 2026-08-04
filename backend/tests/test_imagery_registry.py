@@ -5,7 +5,13 @@ from datetime import UTC, datetime
 
 import pytest
 
-from mapencroach.imagery.registry import DuplicateScene, SceneRecord, SceneRegistry
+from mapencroach.imagery.blobstore import BlobNotFound, MemoryBlobStore
+from mapencroach.imagery.registry import (
+    DuplicateScene,
+    SceneNotRetained,
+    SceneRecord,
+    SceneRegistry,
+)
 
 
 def make_registry() -> SceneRegistry:
@@ -23,8 +29,12 @@ def register_scene(
     cloud_pct: float = 5.0,
     source: str = "copernicus",
     href: str = "https://example.com/scene-1.tif",
+    media_type: str | None = None,
 ) -> SceneRecord:
     captured_at = captured_at or datetime(2026, 1, 1, tzinfo=UTC)
+    kwargs = {}
+    if media_type is not None:
+        kwargs["media_type"] = media_type
     return registry.register(
         data,
         scene_id=scene_id,
@@ -34,6 +44,7 @@ def register_scene(
         cloud_pct=cloud_pct,
         source=source,
         href=href,
+        **kwargs,
     )
 
 
@@ -147,6 +158,152 @@ class TestStacItemShape:
         record = register_scene(registry, scene_id="frozen-check")
         with pytest.raises(Exception):  # noqa: B017 - dataclass frozen error type
             record.scene_id = "changed"
+
+    def test_stac_item_cannot_be_mutated_through_the_returned_record(self):
+        registry = make_registry()
+        record = register_scene(registry, scene_id="immutable-check")
+        with pytest.raises(TypeError):
+            record.stac_item["id"] = "TAMPERED"
+
+    def test_stac_item_nested_dicts_cannot_be_mutated_either(self):
+        registry = make_registry()
+        record = register_scene(registry, scene_id="nested-immutable-check")
+        with pytest.raises(TypeError):
+            record.stac_item["properties"]["eo:cloud_cover"] = 0.0
+        with pytest.raises(TypeError):
+            record.stac_item["assets"]["data"]["href"] = "https://tampered.example/"
+
+    def test_registered_stac_item_is_unchanged_after_a_mutation_attempt(self):
+        registry = make_registry()
+        record = register_scene(registry, scene_id="unchanged-check")
+        try:
+            record.stac_item["id"] = "TAMPERED"
+        except TypeError:
+            pass
+        assert registry.get("unchanged-check").stac_item["id"] == "unchanged-check"
+
+
+class TestMediaType:
+    def test_defaults_to_image_png(self):
+        registry = make_registry()
+        record = register_scene(registry, scene_id="default-media-type")
+        assert record.media_type == "image/png"
+
+    def test_explicit_media_type_is_honored(self):
+        registry = make_registry()
+        record = register_scene(registry, scene_id="tiff-scene", media_type="image/tiff")
+        assert record.media_type == "image/tiff"
+
+
+class TestRetentionWithoutBlobStore:
+    """`SceneRegistry(blob_store=None)` -- the default -- must behave
+    exactly as it did before blob storage existed."""
+
+    def test_default_construction_has_no_blob_store(self):
+        registry = SceneRegistry()
+        assert registry.blob_store is None
+
+    def test_register_reports_not_retained(self):
+        registry = make_registry()
+        record = register_scene(registry, scene_id="unretained")
+        assert record.retained is False
+
+    def test_load_raises_scene_not_retained(self):
+        registry = make_registry()
+        register_scene(registry, scene_id="unretained")
+        with pytest.raises(SceneNotRetained):
+            registry.load("unretained")
+
+    def test_load_unknown_scene_raises_keyerror_not_scene_not_retained(self):
+        registry = make_registry()
+        with pytest.raises(KeyError):
+            registry.load("nope")
+
+    def test_existing_callers_are_unaffected(self):
+        """The exact call shape every pre-existing test in this file (and
+        capture.py) uses must keep working unchanged."""
+        registry = SceneRegistry()
+        record = register_scene(registry, data=b"legacy-call-shape", scene_id="legacy")
+        assert record.sha256 == register_scene(
+            SceneRegistry(), data=b"legacy-call-shape", scene_id="other"
+        ).sha256
+        assert record.retained is False
+
+
+class TestRetentionWithBlobStore:
+    def test_register_writes_through_and_reports_retained(self):
+        blob_store = MemoryBlobStore()
+        registry = SceneRegistry(blob_store=blob_store)
+        record = register_scene(registry, data=b"retained-bytes", scene_id="retained-1")
+
+        assert record.retained is True
+        assert blob_store.has(record.sha256)
+        assert blob_store.get(record.sha256) == b"retained-bytes"
+
+    def test_load_returns_the_registered_bytes(self):
+        blob_store = MemoryBlobStore()
+        registry = SceneRegistry(blob_store=blob_store)
+        register_scene(registry, data=b"loadable-bytes", scene_id="loadable")
+
+        assert registry.load("loadable") == b"loadable-bytes"
+
+    def test_load_matches_verify(self):
+        blob_store = MemoryBlobStore()
+        registry = SceneRegistry(blob_store=blob_store)
+        register_scene(registry, data=b"consistency-check", scene_id="consistent")
+
+        data = registry.load("consistent")
+        assert registry.verify("consistent", data) is True
+
+    def test_dedup_by_hash_still_rejects_with_retention_on(self):
+        blob_store = MemoryBlobStore()
+        registry = SceneRegistry(blob_store=blob_store)
+        register_scene(registry, data=b"dup-bytes", scene_id="s1")
+        with pytest.raises(DuplicateScene):
+            register_scene(registry, data=b"dup-bytes", scene_id="s2")
+
+    def test_dedup_by_scene_id_still_rejects_with_retention_on(self):
+        blob_store = MemoryBlobStore()
+        registry = SceneRegistry(blob_store=blob_store)
+        register_scene(registry, data=b"bytes-a", scene_id="dup-id")
+        with pytest.raises(DuplicateScene):
+            register_scene(registry, data=b"bytes-b", scene_id="dup-id")
+
+    def test_registering_identical_bytes_under_a_rejected_duplicate_does_not_double_store(self):
+        """A DuplicateScene doesn't write a second copy -- put() would be
+        idempotent anyway, but register() should never even attempt it
+        since it raises before touching the blob store."""
+        blob_store = MemoryBlobStore()
+        registry = SceneRegistry(blob_store=blob_store)
+        register_scene(registry, data=b"once-only", scene_id="s1")
+        with pytest.raises(DuplicateScene):
+            register_scene(registry, data=b"once-only", scene_id="s2")
+        assert registry.load("s1") == b"once-only"
+
+    def test_load_propagates_blob_not_found_if_storage_lost_the_bytes(self):
+        """Defensive: if the underlying store somehow no longer has bytes
+        for a hash the registry believes are retained (e.g. an external
+        deletion), `load` must surface that rather than hide it."""
+        blob_store = MemoryBlobStore()
+        registry = SceneRegistry(blob_store=blob_store)
+        record = register_scene(registry, data=b"will-vanish", scene_id="vanishing")
+        del blob_store._blobs[record.sha256]  # noqa: SLF001 - simulating storage-layer data loss
+
+        with pytest.raises(BlobNotFound):
+            registry.load("vanishing")
+
+
+class TestRegistryStateIsNotInjectable:
+    def test_lookup_dicts_are_not_constructor_arguments(self):
+        with pytest.raises(TypeError):
+            SceneRegistry(_by_id={"fake": object()})  # type: ignore[call-arg]
+
+    def test_lookup_dicts_are_not_in_repr(self):
+        registry = make_registry()
+        register_scene(registry, scene_id="repr-check")
+        rendered = repr(registry)
+        assert "_by_id" not in rendered
+        assert "_by_hash" not in rendered
 
 
 class TestConcurrency:

@@ -8,30 +8,46 @@ import { cookies } from "next/headers";
 import {
   getAlerts,
   getCase,
+  getCaseImagery,
   getCases,
   getJurisdictions,
   getParcel,
   getParcelContext,
   getParcels,
+  getWatchEntry,
+  getWatchlist,
   TOKEN_COOKIE,
 } from "./api";
 import { PERSONA_META_COOKIE } from "./cookies";
 import type {
   Alert,
-  AlertFilters,
   BBox,
   Case,
+  CaseImagery,
   Jurisdiction,
   Parcel,
   ParcelContext,
+  WatchEntry,
 } from "./types";
+
+// Server-only fallback credential. Unlike NEXT_PUBLIC_API_TOKEN this is never
+// inlined into client JavaScript — only read here, in a module that must
+// never be imported from a "use client" file. Used when a request has no
+// session cookie (e.g. server-rendered pages hit before persona login).
+function serverOnlyToken(): string | undefined {
+  const token = process.env.MAPENCROACH_API_TOKEN;
+  return token && token.length > 0 ? token : undefined;
+}
 
 export async function serverToken(): Promise<string | undefined> {
   try {
-    return (await cookies()).get(TOKEN_COOKIE)?.value;
+    const cookieToken = (await cookies()).get(TOKEN_COOKIE)?.value;
+    if (cookieToken) return cookieToken;
   } catch {
-    return undefined;
+    // No request context (e.g. static generation) — fall through to the
+    // server-only token below.
   }
+  return serverOnlyToken();
 }
 
 /**
@@ -71,11 +87,9 @@ export async function getParcelContextForRequest(
   return getParcelContext(id, token);
 }
 
-export async function getAlertsForRequest(
-  filters?: AlertFilters
-): Promise<Alert[]> {
+export async function getAlertsForRequest(): Promise<Alert[]> {
   const token = await serverToken();
-  return getAlerts(filters, token);
+  return getAlerts(token);
 }
 
 /**
@@ -100,6 +114,25 @@ export async function getCaseForRequest(
 export async function getCasesForRequest(): Promise<Case[]> {
   const token = await serverToken();
   return getCases(token);
+}
+
+export async function getWatchlistForRequest(): Promise<WatchEntry[]> {
+  const token = await serverToken();
+  return getWatchlist(token);
+}
+
+export async function getWatchEntryForRequest(
+  alertId: string
+): Promise<WatchEntry | undefined> {
+  const token = await serverToken();
+  return getWatchEntry(alertId, token);
+}
+
+export async function getCaseImageryForRequest(
+  caseId: string
+): Promise<CaseImagery | undefined> {
+  const token = await serverToken();
+  return getCaseImagery(caseId, token);
 }
 
 export async function getJurisdictionsForRequest(): Promise<Jurisdiction[]> {

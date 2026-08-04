@@ -25,6 +25,26 @@ body {
   background: #dbeafe;
 }
 
+/*
+ * `100vh` on iOS Safari is the height of the layout viewport, which is
+ * taller than what's actually visible once the address bar / bottom
+ * toolbar are on screen — content and controls sized with h-screen end up
+ * partly hidden behind that browser chrome. `100dvh` tracks the real
+ * visible viewport, but isn't understood by older browsers. Declaring the
+ * property twice — `vh` first, `dvh` second — is the standard fallback:
+ * unsupporting browsers simply never reach the second (invalid)
+ * declaration and keep the first.
+ */
+.h-screen-safe {
+  height: 100vh;
+  height: 100dvh;
+}
+
+.min-h-screen-safe {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
 .landing-grid {
   background-color: #f3f4f6;
   background-image:
@@ -48,6 +68,26 @@ body {
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
+  }
+}
+
+/* iOS Safari zooms the whole page in when a form control smaller than 16px
+   takes focus, and it does not zoom back out afterwards -- the officer is
+   left panning a magnified console one-handed. The console's inputs are
+   deliberately small (text-sm/text-xs), so this raises them to the 16px
+   threshold on phone-width screens only; iPad does not zoom on focus and
+   keeps the denser sizing.
+
+   `!important` is load-bearing rather than lazy here: every one of these
+   inputs carries a Tailwind `text-*` utility, whose class selector would
+   otherwise out-specify a bare element selector and silently reinstate the
+   zoom. It is also what makes this a safety net -- an input added later
+   with `text-sm` is covered without anyone remembering this rule exists. */
+@media (max-width: 639px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
   }
 }
 

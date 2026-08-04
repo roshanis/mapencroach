@@ -54,6 +54,54 @@ describe("cookies", () => {
   });
 });
 
+describe("cookie Secure attribute", () => {
+  const originalLocation = window.location;
+
+  afterEach(() => {
+    clearAllTestCookies();
+    Object.defineProperty(window, "location", {
+      value: originalLocation,
+      writable: true,
+    });
+    vi.restoreAllMocks();
+  });
+
+  it("does not append Secure over plain http (e.g. localhost dev)", () => {
+    const setSpy = vi.spyOn(document, "cookie", "set");
+
+    setCookie("test_cookie", "hello");
+
+    expect(setSpy).toHaveBeenCalledOnce();
+    expect(setSpy.mock.calls[0][0]).not.toContain("Secure");
+  });
+
+  it("appends Secure when the page is served over https — mapencroach_token carries a real bearer credential in live mode", () => {
+    Object.defineProperty(window, "location", {
+      value: { ...window.location, protocol: "https:" },
+      writable: true,
+    });
+    const setSpy = vi.spyOn(document, "cookie", "set");
+
+    setCookie("mapencroach_token", "tok-abc");
+
+    expect(setSpy.mock.calls[0][0]).toContain("; Secure");
+    expect(setSpy.mock.calls[0][0]).toContain("SameSite=Lax");
+    expect(setSpy.mock.calls[0][0]).toContain("path=/");
+  });
+
+  it("clearCookie also appends Secure over https so the deletion write's attributes match", () => {
+    Object.defineProperty(window, "location", {
+      value: { ...window.location, protocol: "https:" },
+      writable: true,
+    });
+    const setSpy = vi.spyOn(document, "cookie", "set");
+
+    clearCookie("mapencroach_token");
+
+    expect(setSpy.mock.calls[0][0]).toContain("; Secure");
+  });
+});
+
 describe("buildCookieString Secure attribute", () => {
   afterEach(() => {
     vi.unstubAllGlobals();

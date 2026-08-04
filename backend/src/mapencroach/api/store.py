@@ -8,13 +8,28 @@ PostGIS-backed implementation (SQLAlchemy models already exist in
 mapencroach.db.models) is meant to replace this class behind the same
 interface later; callers should depend only on the attributes/methods
 documented here, not on dict internals.
+
+Concurrency: FastAPI runs sync `def` endpoints in a threadpool, so one
+Store instance is shared across concurrently-executing requests.
+`record_audit`, `next_alert_id`, and `next_case_id` serialize themselves on
+`self.lock` (a re-entrant `threading.RLock`); callers doing a
+read-modify-write across a mutation and its audit entry should hold
+`store.lock` for the whole critical section rather than relying on the
+individual methods alone.
+
+Durability: this class has no opinion of its own about surviving a
+restart -- `state_persister` (see its docstring below) is `None` by
+default, so a bare `Store()`/`Store.seed_demo()` is exactly as ephemeral
+as it always was. `mapencroach.persistence` is where an actual
+`StatePersister` gets built and wired in for a real deployment; see that
+module for what is (and, just as importantly, is not) persisted.
 """
 
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime, timedelta
-from typing import Any
+from datetime import UTC, date, datetime, timedelta
+from typing import Any, Protocol
 
 from mapencroach.audit.chain import AuditEntry, append_entry
 from mapencroach.context.shrug import ShrugImportManifest
@@ -27,9 +42,51 @@ from mapencroach.domain.geography import (
     ParcelContext,
 )
 from mapencroach.domain.jurisdiction import JurisdictionTree
+from mapencroach.imagery.blobstore import build_blob_store
+from mapencroach.imagery.capture import CaptureAttempt, ImageryProvider
+from mapencroach.imagery.providers import build_provider
 from mapencroach.imagery.registry import SceneRegistry
+from mapencroach.imagery.schedule import due_weeks
 
 _PARCEL_SIZE_DEG = 0.001  # ~110m square at this latitude
+
+
+class StatePersister(Protocol):
+    """Structural interface for whatever persists a `Store`'s
+    evidence-bearing state to disk (see `mapencroach.persistence`).
+
+    Defined here rather than imported from `mapencroach.persistence` so
+    this module -- and `Store` itself -- has no dependency on how (or
+    whether) persistence is implemented; persistence is opt-in wiring
+    layered on top of `Store`, never a thing `Store` needs to know about
+    beyond "something with a `save` method, or nothing at all".
+    """
+
+    def save(self, store: "Store") -> None: ...
+
+
+def _utc_now() -> datetime:
+    """Default `Store.clock`: real wall-clock time, UTC.
+
+    Centralizing "now" behind a store attribute (rather than reading
+    `datetime.now()` inline in the watchlist handlers) is what lets tests
+    pin "today" deterministically -- swap `store.clock` for a fixed
+    callable and every started_on/due_weeks computation in the request
+    follows it, including across a week boundary.
+    """
+    return datetime.now(UTC)
+
+
+def _default_scene_registry() -> SceneRegistry:
+    """Build the store's shared `SceneRegistry`, wired to retain bytes.
+
+    This is the one place in the app that opts a registry into blob
+    storage -- `SceneRegistry()` on its own still defaults to
+    `blob_store=None` (hash-on-ingest bookkeeping only, nothing
+    retrievable later), which is what every other constructor call
+    (including most of the registry's own test suite) continues to get.
+    """
+    return SceneRegistry(blob_store=build_blob_store())
 
 
 def _ago(now: datetime, days: float, hour: int, minute: int = 0) -> datetime:
@@ -84,6 +141,47 @@ class CaseRecord:
 
 
 @dataclass
+class WatchEntryRecord:
+    """A RED alert under weekly-snapshot watch, plus its capture history.
+
+    `in_flight` records weeks a capture run has claimed but not yet
+    written a `CaptureAttempt` for. It exists so `POST
+    /watchlist/{id}/captures` can release `store.lock` while it does
+    provider I/O (never holding the lock across network calls) without a
+    second concurrent run re-selecting and double-attempting the same
+    week -- see that handler in `api/app.py`. It is bookkeeping only, not
+    part of the public WatchEntry JSON shape, so like the store's other
+    internal-only fields it is excluded from repr/compare.
+    """
+
+    alert_id: str
+    parcel_id: str
+    started_on: date
+    watched_by: str
+    captures: list[CaptureAttempt] = field(default_factory=list)
+    in_flight: set[str] = field(default_factory=set, repr=False, compare=False)
+
+    def to_dict(self, today: date) -> dict[str, Any]:
+        """Render the WatchEntry JSON shape (see the HTTP API contract).
+
+        `due_weeks` is derived fresh from `started_on`/`captures` against
+        the caller-supplied `today` rather than cached, so it's always
+        consistent with whatever the store's clock currently says.
+        """
+        attempted = {c.week for c in self.captures}
+        due = due_weeks(self.started_on, today, attempted)
+        return {
+            "alert_id": self.alert_id,
+            "parcel_id": self.parcel_id,
+            "started_on": self.started_on.isoformat(),
+            "cadence": "weekly",
+            "watched_by": self.watched_by,
+            "captures": [c.to_dict() for c in self.captures],
+            "due_weeks": [week.key for week in due],
+        }
+
+
+@dataclass
 class Store:
     """Mutable in-memory data store shared across a single app instance."""
 
@@ -93,7 +191,7 @@ class Store:
     cases: dict[str, CaseRecord] = field(default_factory=dict)
     parcel_contexts: dict[str, ParcelContext] = field(default_factory=dict)
     audit_chain: list[AuditEntry] = field(default_factory=list)
-    scene_registry: SceneRegistry = field(default_factory=SceneRegistry)
+    watchlist: dict[str, WatchEntryRecord] = field(default_factory=dict)
 
     root_jurisdiction_id: str = "state"
     district_a_id: str = "dist-a"
@@ -102,17 +200,47 @@ class Store:
     _next_alert_seq: int = 0
     _next_case_seq: int = 0
 
+    # Weekly-snapshot watch state. `scene_registry` is the hash-on-ingest
+    # evidence anchor and must stay a single shared instance for the life
+    # of the store -- a per-request registry would defeat both dedup and
+    # hash-chain continuity. It is built (via `_default_scene_registry`)
+    # with a real `BlobStore` attached, so captures made through this
+    # store actually retain their bytes and can be served back later --
+    # `SceneRegistry()` on its own still defaults to no retention.
+    # `imagery_provider` is env-selected via
+    # `build_provider()` (falls back to the deterministic demo provider
+    # with no credentials configured) and can be swapped for a fake in
+    # tests that need to force provider_error/no_usable_scene outcomes
+    # without touching the network. `clock` centralizes "now" so watch
+    # start dates and due-week math are deterministic under test control
+    # (see `_utc_now`).
+    scene_registry: SceneRegistry = field(default_factory=_default_scene_registry)
+    imagery_provider: ImageryProvider = field(default_factory=build_provider)
+    clock: Callable[[], datetime] = field(default_factory=lambda: _utc_now)
+
+    # Durability is opt-in and OFF by default: plain `Store()` /
+    # `Store.seed_demo()` construction (every existing test, every
+    # ephemeral demo) never touches disk, exactly as before this field
+    # existed. Something external (see `mapencroach.persistence.build_store`,
+    # wired in automatically by `create_app()`'s no-store "real deploy"
+    # path) opts a given store into persistence by setting this field --
+    # at that point `persist_now()` below stops being a no-op.
+    state_persister: StatePersister | None = field(default=None, repr=False, compare=False)
+
     def __post_init__(self) -> None:
         self._tree: JurisdictionTree | None = None
         if self.jurisdiction_rows:
             self._tree = JurisdictionTree(self.jurisdiction_rows)
-        # Guards the audit chain append and the id sequences below. All
-        # app.py handlers are sync `def`s, so FastAPI runs them on a
-        # threadpool sharing this one Store -- without a lock, concurrent
-        # requests can interleave append_entry's non-atomic
-        # read-prev-hash-then-append (corrupting the hash chain) or the
-        # id counters' non-atomic increment (handing out duplicate ids).
-        self._lock = threading.Lock()
+        # Sync endpoints run in FastAPI's threadpool, so every mutating
+        # operation on this shared instance must be serialized -- without a
+        # lock, concurrent requests can interleave append_entry's non-atomic
+        # read-prev-hash-then-append (corrupting the hash chain) or the id
+        # counters' non-atomic increment (handing out duplicate ids). Public
+        # (`store.lock`, not `_lock`) and re-entrant because app.py handlers
+        # routinely hold it across a read-modify-write that itself calls
+        # `record_audit` (which also takes it), and `record_audit` is in
+        # turn called from within other locked store methods.
+        self.lock = threading.RLock()
 
     @property
     def tree(self) -> JurisdictionTree:
@@ -137,6 +265,18 @@ class Store:
         object_id: str,
         extra: Mapping[str, Any] | None = None,
     ) -> None:
+        """Append a hash-chained audit entry.
+
+        `extra` merges additional, action-specific fields (e.g. a boundary
+        grade change's survey reference and from/to grades) into the
+        payload -- callers that need to record more than the bare
+        actor/action/object identity pass it rather than dropping that
+        context on the floor.
+
+        Locked so concurrent requests can't both read the same
+        `audit_chain[-1]` and append with the same prev_hash, which would
+        fork the chain instead of extending it.
+        """
         payload: dict[str, Any] = {
             "actor": actor,
             "action": action,
@@ -146,16 +286,37 @@ class Store:
         }
         if extra:
             payload.update(extra)
-        with self._lock:
+        with self.lock:
             append_entry(self.audit_chain, payload)
 
+    def persist_now(self) -> None:
+        """Flush the evidence-bearing state (watchlist, scene registry
+        index, audit chain) to disk via `state_persister`, if one is
+        configured. A no-op otherwise -- see the `state_persister` field
+        docstring for why plain `Store()` construction never reaches this.
+
+        Callers (the watch-list/imagery HTTP handlers in `api/app.py`) are
+        expected to call this *after* releasing `store.lock`, not from
+        within a locked block: `state_persister.save` takes the lock
+        itself only long enough to snapshot the state to serialize, then
+        releases it before doing any file I/O, matching the same
+        never-hold-the-lock-across-I/O discipline the capture endpoints
+        use for provider calls.
+        """
+        if self.state_persister is not None:
+            self.state_persister.save(self)
+
     def next_alert_id(self) -> str:
-        with self._lock:
+        """Allocate the next alert id. Locked so concurrent callers can't
+        read-then-increment the same sequence value and collide."""
+        with self.lock:
             self._next_alert_seq += 1
             return f"alert-{self._next_alert_seq}"
 
     def next_case_id(self) -> str:
-        with self._lock:
+        """Allocate the next case id. Locked for the same reason as
+        `next_alert_id`."""
+        with self.lock:
             self._next_case_seq += 1
             return f"case-{self._next_case_seq}"
 

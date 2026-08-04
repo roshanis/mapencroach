@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { FIXTURE_PARCELS } from "@/lib/fixtures";
+import { FIXTURE_ALERTS, FIXTURE_PARCELS } from "@/lib/fixtures";
 import MapLibreMap from "./MapLibreMap";
 import type { H3FeatureCollection } from "./map-types";
 
@@ -42,8 +42,10 @@ const UPDATED_H3_CELLS: H3FeatureCollection = {
 
 // Fake maplibre-gl: a `Map` class that records its constructor args, exposes
 // `on("load", cb)` (capturing the callback so tests can fire it manually), a
-// controllable `isStyleLoaded()` flag, and spies for the layer/layout calls
-// the component depends on. `Marker`/`LngLatBounds` are minimal stubs.
+// controllable `isStyleLoaded()` flag, and spies for the layer/layout/marker
+// calls the component depends on. `Marker`/`LngLatBounds` are minimal stubs
+// that still record enough (the element handed to the Marker constructor,
+// removal) for assertions.
 const mapMocks = vi.hoisted(() => {
   let styleLoaded = false;
   let loadCallback: (() => void) | undefined;
@@ -57,8 +59,15 @@ const mapMocks = vi.hoisted(() => {
   const fitBounds = vi.fn();
   const flyTo = vi.fn();
   const remove = vi.fn();
+  const disableRotation = vi.fn();
+  const markerConstructor = vi.fn();
+  const markerSetLngLat = vi.fn();
+  const markerAddTo = vi.fn();
+  const markerRemove = vi.fn();
 
   class FakeMap {
+    touchZoomRotate = { disableRotation };
+
     constructor(options: unknown) {
       mapConstructor(options);
     }
@@ -93,13 +102,23 @@ const mapMocks = vi.hoisted(() => {
   }
 
   class FakeMarker {
-    setLngLat() {
+    private element: HTMLElement;
+
+    constructor({ element }: { element: HTMLElement }) {
+      this.element = element;
+      markerConstructor(element);
+    }
+    setLngLat(...args: unknown[]) {
+      markerSetLngLat(...args);
       return this;
     }
-    addTo() {
+    addTo(...args: unknown[]) {
+      markerAddTo(...args);
       return this;
     }
-    remove() {}
+    remove() {
+      markerRemove();
+    }
   }
 
   class FakeLngLatBounds {
@@ -118,6 +137,11 @@ const mapMocks = vi.hoisted(() => {
     fitBounds,
     flyTo,
     remove,
+    disableRotation,
+    markerConstructor,
+    markerSetLngLat,
+    markerAddTo,
+    markerRemove,
     FakeMap,
     FakeMarker,
     FakeLngLatBounds,
@@ -126,6 +150,9 @@ const mapMocks = vi.hoisted(() => {
     },
     fireLoad() {
       loadCallback?.();
+    },
+    getLoadCallback() {
+      return loadCallback;
     },
     reset() {
       styleLoaded = false;
@@ -153,7 +180,139 @@ describe("MapLibreMap", () => {
     mapMocks.getSource.mockClear();
     mapMocks.setH3Data.mockClear();
     mapMocks.fitBounds.mockClear();
+    mapMocks.flyTo.mockClear();
     mapMocks.remove.mockClear();
+    mapMocks.disableRotation.mockClear();
+    mapMocks.markerConstructor.mockClear();
+    mapMocks.markerSetLngLat.mockClear();
+    mapMocks.markerAddTo.mockClear();
+    mapMocks.markerRemove.mockClear();
+  });
+
+  it("builds the map without rotation, loads parcels/alerts, and wires marker + basemap interaction", async () => {
+    const onReady = vi.fn();
+    const onAlertClick = vi.fn();
+
+    const { unmount } = render(
+      <MapLibreMap
+        parcels={FIXTURE_PARCELS.slice(0, 2)}
+        alerts={FIXTURE_ALERTS.slice(0, 1)}
+        selectedAlertId={FIXTURE_ALERTS[0].id}
+        onReady={onReady}
+        onAlertClick={onAlertClick}
+      />
+    );
+
+    await waitFor(() => expect(mapMocks.mapConstructor).toHaveBeenCalledOnce());
+
+    // A flat parcel map with no compass/reset control must not let a
+    // two-finger touch twist (or desktop right-drag) rotate it away from
+    // north with no way back — pinch-zoom and pan stay on.
+    expect(mapMocks.mapConstructor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        center: [78.03, 29.92],
+        zoom: 11,
+        dragRotate: false,
+        touchPitch: false,
+      })
+    );
+    expect(mapMocks.disableRotation).toHaveBeenCalledOnce();
+
+    await waitFor(() => expect(mapMocks.getLoadCallback()).toBeInstanceOf(Function));
+    act(() => {
+      mapMocks.fireLoad();
+    });
+
+    expect(mapMocks.addSource).toHaveBeenCalledWith(
+      "parcels",
+      expect.objectContaining({
+        type: "geojson",
+        data: expect.objectContaining({
+          features: expect.arrayContaining([
+            expect.objectContaining({
+              properties: expect.objectContaining({ id: FIXTURE_PARCELS[0].id }),
+            }),
+          ]),
+        }),
+      })
+    );
+    expect(mapMocks.addLayer).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "parcel-fill", source: "parcels" })
+    );
+    expect(mapMocks.addLayer).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "parcel-outline", source: "parcels" })
+    );
+
+    // The map SDK only ever gets the marker WRAPPER (never the inner
+    // button) -- MapLibre's positioning `transform` and its "Map marker"
+    // aria-label overwrite land on the wrapper, never touching the button's
+    // own selection styling or label.
+    expect(mapMocks.markerConstructor).toHaveBeenCalledOnce();
+    const wrapper = mapMocks.markerConstructor.mock.calls[0][0] as HTMLElement;
+    const markerButton = wrapper.querySelector(
+      '[data-testid="alert-marker"]'
+    ) as HTMLButtonElement;
+
+    expect(markerButton).toBeTruthy();
+    expect(markerButton.getAttribute("aria-label")).toContain(FIXTURE_ALERTS[0].id);
+    expect(markerButton.getAttribute("aria-label")).toContain("Red");
+    expect(markerButton).toHaveAttribute("data-selected", "true");
+    markerButton.click();
+    expect(onAlertClick).toHaveBeenCalledWith(FIXTURE_ALERTS[0].id);
+
+    expect(onReady).toHaveBeenCalledOnce();
+    onReady.mock.calls[0][0].panTo([77.99, 29.91]);
+    expect(mapMocks.flyTo).toHaveBeenCalledWith({ center: [77.99, 29.91], zoom: 15 });
+
+    // The "load" event having already fired means the style is done
+    // loading in reality; reflect that in the mock so basemap clicks below
+    // actually reach setLayoutProperty instead of being deferred.
+    mapMocks.setStyleLoaded(true);
+
+    fireEvent.click(screen.getByTestId("basemap-streets"));
+    expect(mapMocks.setLayoutProperty).toHaveBeenCalledWith(
+      "esri-base",
+      "visibility",
+      "none"
+    );
+    expect(mapMocks.setLayoutProperty).toHaveBeenCalledWith(
+      "osm-base",
+      "visibility",
+      "visible"
+    );
+
+    fireEvent.click(screen.getByTestId("basemap-satellite"));
+    expect(mapMocks.setLayoutProperty).toHaveBeenCalledWith(
+      "esri-base",
+      "visibility",
+      "visible"
+    );
+    expect(mapMocks.setLayoutProperty).toHaveBeenCalledWith(
+      "osm-base",
+      "visibility",
+      "none"
+    );
+
+    unmount();
+    expect(mapMocks.markerRemove).toHaveBeenCalledOnce();
+    expect(mapMocks.remove).toHaveBeenCalledOnce();
+  });
+
+  it("skips alerts that have no matching parcel instead of crashing", async () => {
+    const orphanAlert = {
+      ...FIXTURE_ALERTS[0],
+      id: "orphan-alert",
+      parcel_id: "no-such-parcel",
+    };
+
+    render(<MapLibreMap parcels={[]} alerts={[orphanAlert]} />);
+
+    await waitFor(() => expect(mapMocks.getLoadCallback()).toBeInstanceOf(Function));
+    act(() => {
+      mapMocks.fireLoad();
+    });
+
+    expect(mapMocks.markerConstructor).not.toHaveBeenCalled();
   });
 
   it("defers a basemap toggle clicked before the style finishes loading, then applies it once load fires; a toggle after load applies immediately", async () => {
@@ -172,7 +331,9 @@ describe("MapLibreMap", () => {
 
     // Once the style finishes loading, the pending toggle must take effect:
     // osm-base (streets) visible, esri-base (satellite) hidden.
-    mapMocks.fireLoad();
+    act(() => {
+      mapMocks.fireLoad();
+    });
 
     expect(mapMocks.setLayoutProperty).toHaveBeenCalledWith(
       "esri-base",

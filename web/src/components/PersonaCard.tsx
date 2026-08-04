@@ -88,7 +88,7 @@ export function PersonaCard({
           onViewAs ? undefined : "Connect the demo backend to switch personas"
         }
         onClick={() => onViewAs?.(persona.id)}
-        className="mt-4 rounded bg-gov px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+        className="mt-4 inline-flex min-h-11 items-center justify-center rounded bg-gov px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
       >
         View as
       </button>

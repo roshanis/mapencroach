@@ -22,7 +22,9 @@ export function readCookie(name: string): string | undefined {
  * Builds a `document.cookie`-assignable string. Appends `; Secure` only when
  * running in a browser (`typeof window !== "undefined"`, SSR-safe) that is
  * currently served over https — an unconditional `Secure` attribute would
- * silently drop the cookie in plain-http local dev (e.g. Safari).
+ * silently drop the cookie in plain-http local dev (e.g. Safari), and
+ * `mapencroach_token` carries a real bearer credential in live mode, so it
+ * must not be sendable over a plaintext connection once one exists.
  *
  * `value === undefined` builds the "clear" form (empty value, `max-age=0`
  * is expected to be passed by the caller).

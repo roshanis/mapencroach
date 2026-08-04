@@ -23,6 +23,23 @@ function lineageLabel(edge: ParcelLineageEdge): string {
   return edge.relation.replaceAll("_", " ");
 }
 
+/**
+ * `source_url` is backend-supplied data, not app-controlled config. Rendered
+ * as-is it would let a `javascript:`/`data:` URL execute as an href click.
+ * Allow-list http(s) only; anything else renders as plain (non-clickable)
+ * text instead of a link.
+ */
+function safeSourceUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:"
+      ? url
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export function ParcelContextPanel({ context }: ParcelContextPanelProps) {
   return (
     <div className="flex flex-col gap-6">
@@ -215,14 +232,29 @@ export function ParcelContextPanel({ context }: ParcelContextPanelProps) {
                         </h3>
                         <p className="text-sm text-slate-600">{source.provider}</p>
                       </div>
-                      <a
-                        href={source.source_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-xs font-medium text-gov hover:underline"
-                      >
-                        Source documentation
-                      </a>
+                      {safeSourceUrl(source.source_url) ? (
+                        <a
+                          href={source.source_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          // -m-3.5 p-3.5 expands the tappable area to
+                          // Apple HIG's 44x44pt floor (14px padding around
+                          // a ~16px line box) without enlarging the visible
+                          // text — the extra padding is offset by an equal
+                          // negative margin, so the link's visual position
+                          // and size are unchanged.
+                          className="-m-3.5 inline-flex items-center p-3.5 text-xs font-medium text-gov hover:underline"
+                        >
+                          Source documentation
+                        </a>
+                      ) : (
+                        <span
+                          className="text-xs font-medium text-slate-400"
+                          title="Source link omitted: not a valid http(s) URL"
+                        >
+                          Source documentation unavailable
+                        </span>
+                      )}
                     </div>
                     <dl className="mt-3 grid gap-2 text-xs text-slate-600 sm:grid-cols-3">
                       <div>

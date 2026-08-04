@@ -151,6 +151,7 @@ export function HistoricalImageryTimeline({ parcel }: { parcel: Parcel }) {
         </div>
         <div className="flex flex-col items-stretch gap-2 sm:items-end">
           <div
+            role="group"
             aria-label="Imagery view"
             className="grid grid-cols-2 gap-1 rounded-lg bg-gray-100 p-1"
           >
@@ -160,7 +161,7 @@ export function HistoricalImageryTimeline({ parcel }: { parcel: Parcel }) {
                 type="button"
                 aria-pressed={view === option}
                 onClick={() => setView(option)}
-                className={`rounded-md px-3 py-2 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-gov focus:ring-offset-1 ${
+                className={`min-h-11 rounded-md px-3 py-2 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-gov focus:ring-offset-1 ${
                   view === option
                     ? "bg-white text-gov shadow-sm"
                     : "text-gray-600 hover:text-gray-900"
@@ -172,6 +173,7 @@ export function HistoricalImageryTimeline({ parcel }: { parcel: Parcel }) {
           </div>
           {view === "single" && (
             <div
+              role="group"
               aria-label="Historical imagery year"
               className="grid grid-cols-4 gap-1 rounded-lg bg-gray-100 p-1"
             >
@@ -183,7 +185,7 @@ export function HistoricalImageryTimeline({ parcel }: { parcel: Parcel }) {
                     type="button"
                     aria-pressed={selected}
                     onClick={() => setSelectedId(scene.id)}
-                    className={`rounded-md px-3 py-2 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-gov focus:ring-offset-1 ${
+                    className={`min-h-11 rounded-md px-3 py-2 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-gov focus:ring-offset-1 ${
                       selected
                         ? "bg-gov text-white shadow-sm"
                         : "text-gray-600 hover:bg-white hover:text-gray-900"

@@ -279,4 +279,60 @@ describe("backend proxy route — body forwarding on POST/PATCH/DELETE", () => {
     const [, init] = fetchMock.mock.calls[0];
     expect(init.body).toBeUndefined();
   });
+
+  it("passes image bytes through unchanged instead of decoding them as text", async () => {
+    // A JPEG header is not valid UTF-8. Reading the upstream body with
+    // `.text()` replaces those bytes with U+FFFD, so the browser receives a
+    // 200 carrying corrupted bytes -- indistinguishable downstream from a
+    // real image, and worse than an honest error.
+    process.env.MAPENCROACH_BACKEND_URL = "https://backend.example.test";
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(jpeg, {
+        status: 200,
+        headers: {
+          "content-type": "image/jpeg",
+          etag: '"abc123"',
+          "cache-control": "private, max-age=31536000, immutable",
+        },
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const request = makeRequest(
+      "http://localhost:3000/api/backend/cases/case-1/imagery/2026-W31/image"
+    );
+    const response = await GET(
+      request,
+      makeParams(["cases", "case-1", "imagery", "2026-W31", "image"])
+    );
+
+    const received = new Uint8Array(await response.arrayBuffer());
+    expect(Array.from(received)).toEqual(Array.from(jpeg));
+    expect(response.headers.get("content-type")).toBe("image/jpeg");
+    // Dropping these would turn every cached thumbnail into a re-download.
+    expect(response.headers.get("etag")).toBe('"abc123"');
+    expect(response.headers.get("cache-control")).toContain("immutable");
+  });
+
+  it("forwards If-None-Match and passes a 304 through with no body", async () => {
+    process.env.MAPENCROACH_BACKEND_URL = "https://backend.example.test";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 304, headers: { etag: '"abc123"' } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const request = makeRequest(
+      "http://localhost:3000/api/backend/cases/case-1/imagery/2026-W31/image",
+      { headers: { "if-none-match": '"abc123"' } }
+    );
+    const response = await GET(
+      request,
+      makeParams(["cases", "case-1", "imagery", "2026-W31", "image"])
+    );
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers.get("if-none-match")).toBe('"abc123"');
+    expect(response.status).toBe(304);
+  });
 });

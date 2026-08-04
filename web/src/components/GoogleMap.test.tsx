@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FIXTURE_ALERTS, FIXTURE_PARCELS } from "@/lib/fixtures";
 import GoogleMap from "./GoogleMap";
@@ -456,5 +456,92 @@ describe("GoogleMap", () => {
 
     unmount();
     expect(h3SetMap).toHaveBeenLastCalledWith(null);
+  });
+
+  it("triggers the provider fallback when Google reports gm_authFailure (invalid key / referrer / billing) even though the script load resolved", async () => {
+    // importLibrary() resolves normally here — this reproduces an invalid
+    // key, referrer restriction, or disabled billing, all of which Google
+    // reports only via the gm_authFailure global, never as a rejected
+    // promise. Without wiring that signal up, onProviderError never fires
+    // and the map stays gray forever.
+    class FakeMap {
+      data = { addGeoJson: vi.fn(), setStyle: vi.fn() };
+      setMapTypeId = vi.fn();
+    }
+    loaderMocks.importLibrary.mockImplementation(async (library: string) => {
+      if (library === "maps") return { Map: FakeMap };
+      if (library === "marker") {
+        return { AdvancedMarkerElement: class {} };
+      }
+      throw new Error(`Unexpected library: ${library}`);
+    });
+
+    vi.stubGlobal("google", {
+      maps: {
+        Data: FakeData,
+        LatLngBounds: FakeLatLngBounds,
+      },
+    });
+
+    const onProviderError = vi.fn();
+    render(
+      <GoogleMap
+        apiKey="restricted-browser-key"
+        mapId="map-id"
+        parcels={[]}
+        alerts={[]}
+        onProviderError={onProviderError}
+      />
+    );
+
+    await waitFor(() => expect(window.gm_authFailure).toBeInstanceOf(Function));
+    expect(onProviderError).not.toHaveBeenCalled();
+
+    act(() => {
+      window.gm_authFailure?.();
+    });
+
+    expect(onProviderError).toHaveBeenCalledOnce();
+  });
+
+  it("stops calling onProviderError for gm_authFailure after unmount", async () => {
+    class FakeMap {
+      data = { addGeoJson: vi.fn(), setStyle: vi.fn() };
+      setMapTypeId = vi.fn();
+    }
+    loaderMocks.importLibrary.mockImplementation(async (library: string) => {
+      if (library === "maps") return { Map: FakeMap };
+      if (library === "marker") {
+        return { AdvancedMarkerElement: class {} };
+      }
+      throw new Error(`Unexpected library: ${library}`);
+    });
+
+    vi.stubGlobal("google", {
+      maps: {
+        Data: FakeData,
+        LatLngBounds: FakeLatLngBounds,
+      },
+    });
+
+    const onProviderError = vi.fn();
+    const { unmount } = render(
+      <GoogleMap
+        apiKey="restricted-browser-key"
+        mapId="map-id"
+        parcels={[]}
+        alerts={[]}
+        onProviderError={onProviderError}
+      />
+    );
+
+    await waitFor(() => expect(window.gm_authFailure).toBeInstanceOf(Function));
+    unmount();
+
+    act(() => {
+      window.gm_authFailure?.();
+    });
+
+    expect(onProviderError).not.toHaveBeenCalled();
   });
 });

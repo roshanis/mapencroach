@@ -53,7 +53,7 @@ export function ViewingAsBanner() {
   return (
     <div
       data-testid="viewing-as-banner"
-      className="flex items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-xs text-amber-900"
+      className="flex items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 py-1.5 pl-[max(1rem,env(safe-area-inset-left,0px))] pr-[max(1rem,env(safe-area-inset-right,0px))] text-xs text-amber-900"
     >
       <span>
         Viewing as <b>{meta.name}</b>

@@ -1,24 +1,22 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { transitionCase, type TransitionResult } from "@/lib/api";
-import { CASE_STATE_CHAIN, NON_CHAIN_STATES } from "@/lib/types";
+import {
+  CASE_STATE_CHAIN,
+  NON_CHAIN_STATES,
+  TRANSITION_ACTION_LABELS,
+} from "@/lib/types";
 
 const ALL_STATES: string[] = [...CASE_STATE_CHAIN, ...NON_CHAIN_STATES];
 
 /**
  * Human, imperative labels for transition targets (e.g. "Dismiss false
- * positive"). Exported so other views (e.g. CasesTable's next-step chips)
+ * positive"). Re-exported so other views (e.g. CasesTable's next-step chips)
  * can reuse the same phrasing instead of duplicating it.
  */
-export const ACTION_LABELS: Record<string, string> = {
-  RESPONSE_WINDOW: "Open response window",
-  DISMISSED_FALSE_POSITIVE: "Dismiss false positive",
-  LEGACY_REFERRED: "Refer to legacy process",
-  SURVEY_REQUESTED: "Request boundary survey",
-  STAYED_BY_COURT: "Record court stay",
-};
+export const ACTION_LABELS = TRANSITION_ACTION_LABELS;
 
 const SUBMIT_LABELS: Record<string, string> = {
   RESPONSE_WINDOW: "Record response window",
@@ -70,23 +68,33 @@ export function TransitionPanel({
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<TransitionResult | null>(null);
 
-  // The server can re-render this component (e.g. after router.refresh()
-  // following a successful submit) with a brand-new `allowedTransitions`
-  // array object even when its contents haven't changed. Compare by value —
-  // a joined-string key — so we only resync selection state when the case's
-  // actual legal transitions changed, never on identity churn alone (which
-  // would clobber an in-progress, non-default user selection).
-  const allowedTransitionsKey = allowedTransitions.join("|");
-  const previousTransitionsKeyRef = useRef(allowedTransitionsKey);
+  // `allowedTransitions`/`blockedStates` change whenever the parent case
+  // record is refetched (e.g. router.refresh() after a successful submit
+  // below). `selected`/`guardSelected` are otherwise-uncontrolled local
+  // state, so without this they'd keep pointing at a step that is no longer
+  // legal (or blocked) — the button row would show no highlighted step, and
+  // requiredArtifacts[stale-selected] would be undefined, silently passing
+  // the evidence gate for a step the engine will refuse. Resync whenever the
+  // current selection falls outside the fresh set; leave it alone otherwise
+  // so an in-progress manual selection (or a brand-new array object with the
+  // same contents) survives an incidental re-render. Intentionally leave
+  // `result` untouched: a success banner from the transition that just
+  // triggered this refresh should survive the resync.
   useEffect(() => {
-    if (previousTransitionsKeyRef.current === allowedTransitionsKey) return;
-    previousTransitionsKeyRef.current = allowedTransitionsKey;
+    if (allowedTransitions.includes(selected)) return;
     setSelected(allowedTransitions[0] ?? "");
-    setGuardSelected(blockedStates[0] ?? "");
     setArtifactValues({});
-    // Intentionally leave `result` untouched: a success banner from the
-    // transition that just triggered this refresh should survive the resync.
-  }, [allowedTransitionsKey, allowedTransitions, blockedStates]);
+    // Intentionally keyed only on allowedTransitions: this effect resyncs
+    // `selected` to the fresh legal set, it must not re-run just because
+    // `selected` itself changed (e.g. from a manual button click).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allowedTransitions]);
+
+  useEffect(() => {
+    setGuardSelected((current) =>
+      blockedStates.includes(current) ? current : blockedStates[0] ?? ""
+    );
+  }, [blockedStates]);
 
   const artifactNames = requiredArtifacts[selected] ?? [];
   const evidenceComplete = artifactNames.every(
