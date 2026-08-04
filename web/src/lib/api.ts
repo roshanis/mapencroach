@@ -7,6 +7,7 @@
 import {
   FIXTURE_ALERTS,
   FIXTURE_CASES,
+  FIXTURE_HOTSPOTS,
   FIXTURE_PARCELS,
   FIXTURE_PARCEL_CONTEXTS,
 } from "./fixtures";
@@ -16,6 +17,8 @@ import type {
   BBox,
   Case,
   CaseEvent,
+  HotspotCell,
+  HotspotsResponse,
   LandCategory,
   BoundaryGrade,
   Parcel,
@@ -309,6 +312,31 @@ export async function getScenes(token?: string): Promise<Scene[]> {
   if (!base) return [];
   try {
     return await fetchJson<Scene[]>(`${base}/scenes`, token);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Lists H3 alert-density hotspot cells (GET /analytics/hotspots), sorted
+ * hottest-first. Unlike getScenes, fixture mode returns a small illustrative
+ * set (FIXTURE_HOTSPOTS) instead of [] so the map's hotspot overlay has
+ * something to render in the zero-backend demo; once a backend is
+ * configured this never throws — [] on 401/403/404/network failure alike,
+ * same as getScenes/getPersonas.
+ */
+export async function getHotspots(
+  token?: string,
+  resolution = 8
+): Promise<HotspotCell[]> {
+  const base = getApiBase();
+  if (!base) return FIXTURE_HOTSPOTS;
+  try {
+    const body = await fetchJson<HotspotsResponse>(
+      `${base}/analytics/hotspots?resolution=${resolution}`,
+      token
+    );
+    return body.cells;
   } catch {
     return [];
   }

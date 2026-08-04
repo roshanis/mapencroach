@@ -9,9 +9,9 @@ import { MapLegend } from "@/components/MapLegend";
 import { SelectedAlertCard } from "@/components/SelectedAlertCard";
 import { TopBar } from "@/components/TopBar";
 import { WorkbenchSummary } from "@/components/WorkbenchSummary";
-import { getAlerts, getCases, getParcels } from "@/lib/api";
+import { getAlerts, getCases, getHotspots, getParcels } from "@/lib/api";
 import { PERSONA_META_COOKIE, readCookie } from "@/lib/cookies";
-import type { Alert, Case, Parcel } from "@/lib/types";
+import type { Alert, Case, HotspotCell, Parcel } from "@/lib/types";
 
 type LoadState = "loading" | "ready" | "error";
 
@@ -30,6 +30,7 @@ export default function CommandMapPage() {
   const [parcels, setParcels] = useState<Parcel[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [cases, setCases] = useState<Case[]>([]);
+  const [hotspots, setHotspots] = useState<HotspotCell[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [role, setRole] = useState("case_officer");
   const [mobileQueueOpen, setMobileQueueOpen] = useState(false);
@@ -41,14 +42,16 @@ export default function CommandMapPage() {
   const loadData = useCallback(async () => {
     setLoadState("loading");
     try {
-      const [nextParcels, nextAlerts, nextCases] = await Promise.all([
+      const [nextParcels, nextAlerts, nextCases, nextHotspots] = await Promise.all([
         getParcels(),
         getAlerts(),
         getCases(),
+        getHotspots(),
       ]);
       setParcels(nextParcels);
       setAlerts(nextAlerts);
       setCases(nextCases);
+      setHotspots(nextHotspots);
       setLoadState("ready");
     } catch {
       setLoadState("error");
@@ -145,6 +148,7 @@ export default function CommandMapPage() {
           <MapView
             parcels={parcels}
             alerts={alerts}
+            hotspots={hotspots}
             onReady={(api) => {
               mapApiRef.current = api;
             }}

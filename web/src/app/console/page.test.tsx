@@ -1,16 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import CommandMapPage from "./page";
-import { getAlerts, getCases, getParcels } from "@/lib/api";
+import { getAlerts, getCases, getHotspots, getParcels } from "@/lib/api";
 import {
   FIXTURE_ALERTS,
   FIXTURE_CASES,
+  FIXTURE_HOTSPOTS,
   FIXTURE_PARCELS,
 } from "@/lib/fixtures";
 
 vi.mock("@/lib/api", () => ({
   getAlerts: vi.fn(),
   getCases: vi.fn(),
+  getHotspots: vi.fn(),
   getParcels: vi.fn(),
 }));
 
@@ -52,6 +54,7 @@ beforeEach(() => {
   vi.mocked(getParcels).mockResolvedValue(FIXTURE_PARCELS);
   vi.mocked(getAlerts).mockResolvedValue(FIXTURE_ALERTS);
   vi.mocked(getCases).mockResolvedValue(FIXTURE_CASES);
+  vi.mocked(getHotspots).mockResolvedValue(FIXTURE_HOTSPOTS);
 });
 
 describe("CommandMapPage", () => {

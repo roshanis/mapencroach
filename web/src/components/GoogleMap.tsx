@@ -5,7 +5,12 @@ import { LAND_CATEGORY_COLORS } from "@/lib/types";
 import type { AlertTier } from "@/lib/types";
 import { BasemapToggle, type BasemapMode } from "./BasemapToggle";
 import { loadGoogleMapLibraries } from "./googleMapsLoader";
-import type { OperationalMapProps } from "./map-types";
+import {
+  hotspotFillColor,
+  hotspotFillOpacity,
+  hotspotsToFeatureCollection,
+  type OperationalMapProps,
+} from "./map-types";
 
 const TIER_COLORS: Record<AlertTier, string> = {
   green: "#1e8f4e",
@@ -33,6 +38,7 @@ export default function GoogleMap({
   mapId,
   parcels,
   alerts,
+  hotspots = [],
   center = [78.03, 29.92],
   zoom = 11,
   onReady,
@@ -74,6 +80,7 @@ export default function GoogleMap({
     const markers: google.maps.marker.AdvancedMarkerElement[] = [];
     const markerClickCleanups: Array<() => void> = [];
     const markerElements = markerElementsRef.current;
+    let hotspotsData: google.maps.Data | null = null;
 
     async function init() {
       try {
@@ -92,6 +99,25 @@ export default function GoogleMap({
           zoomControl: true,
         });
         mapRef.current = map;
+
+        if (hotspots.length > 0) {
+          hotspotsData = new google.maps.Data({ map });
+          hotspotsData.addGeoJson(hotspotsToFeatureCollection(hotspots));
+          hotspotsData.setStyle((feature) => {
+            const redAlerts = Number(feature.getProperty("red_alerts")) || 0;
+            const alertCount = Number(feature.getProperty("alert_count")) || 0;
+            const color = hotspotFillColor(redAlerts);
+            return {
+              fillColor: color,
+              fillOpacity: hotspotFillOpacity(alertCount),
+              strokeColor: color,
+              strokeOpacity: 0.6,
+              strokeWeight: 1,
+              clickable: false,
+              zIndex: 1,
+            };
+          });
+        }
 
         map.data.addGeoJson({
           type: "FeatureCollection",
@@ -119,6 +145,7 @@ export default function GoogleMap({
             strokeColor: color,
             strokeOpacity: 1,
             strokeWeight: 2.5,
+            zIndex: 2,
           };
         });
 
@@ -178,6 +205,7 @@ export default function GoogleMap({
         marker.map = null;
       });
       markerElements.clear();
+      hotspotsData?.setMap(null);
       mapRef.current = null;
     };
     // The provider owns one immutable map instance; selection and callbacks are

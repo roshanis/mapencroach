@@ -5,7 +5,14 @@ import type * as MapLibreGL from "maplibre-gl";
 import { LAND_CATEGORY_COLORS } from "@/lib/types";
 import type { AlertTier } from "@/lib/types";
 import { BasemapToggle, type BasemapMode } from "./BasemapToggle";
-import type { OperationalMapProps } from "./map-types";
+import {
+  HOTSPOT_AMBER_COLOR,
+  HOTSPOT_MAX_OPACITY,
+  HOTSPOT_MIN_OPACITY,
+  HOTSPOT_RED_COLOR,
+  hotspotsToFeatureCollection,
+  type OperationalMapProps,
+} from "./map-types";
 
 function buildLandCategoryMatchExpression(
   fallback: string
@@ -38,6 +45,7 @@ export type MapLibreMapProps = OperationalMapProps;
 export default function MapLibreMap({
   parcels,
   alerts,
+  hotspots = [],
   center = [78.03, 29.92],
   zoom = 11,
   onReady,
@@ -167,6 +175,55 @@ export default function MapLibreMap({
             "line-width": 2.5,
           },
         });
+
+        if (hotspots.length > 0) {
+          map.addSource("hotspots", {
+            type: "geojson",
+            data: hotspotsToFeatureCollection(hotspots),
+          });
+
+          const hotspotColorExpression: MapLibreGL.DataDrivenPropertyValueSpecification<string> = [
+            "case",
+            [">", ["get", "red_alerts"], 0],
+            HOTSPOT_RED_COLOR,
+            HOTSPOT_AMBER_COLOR,
+          ] as unknown as MapLibreGL.DataDrivenPropertyValueSpecification<string>;
+
+          map.addLayer(
+            {
+              id: "hotspot-fill",
+              type: "fill",
+              source: "hotspots",
+              paint: {
+                "fill-color": hotspotColorExpression,
+                "fill-opacity": [
+                  "interpolate",
+                  ["linear"],
+                  ["get", "alert_count"],
+                  1,
+                  HOTSPOT_MIN_OPACITY,
+                  5,
+                  HOTSPOT_MAX_OPACITY,
+                ],
+              },
+            },
+            "parcel-fill"
+          );
+
+          map.addLayer(
+            {
+              id: "hotspot-outline",
+              type: "line",
+              source: "hotspots",
+              paint: {
+                "line-color": hotspotColorExpression,
+                "line-width": 1,
+                "line-opacity": 0.6,
+              },
+            },
+            "parcel-fill"
+          );
+        }
 
         for (const alert of alerts) {
           const parcel = parcels.find((p) => p.id === alert.parcel_id);

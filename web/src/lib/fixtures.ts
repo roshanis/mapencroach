@@ -4,7 +4,25 @@
 // the waterbody-encroachment storyline.
 
 import type { Persona } from "./api";
-import type { Alert, Case, Parcel, ParcelContext } from "./types";
+import type { Alert, Case, HotspotCell, Parcel, ParcelContext } from "./types";
+
+/** A rough (non-authoritative) H3-like hexagon, close enough for demo display. */
+function hexagon(
+  centerLng: number,
+  centerLat: number,
+  radiusDeg: number
+): GeoJSON.Polygon {
+  const ring: [number, number][] = [];
+  for (let i = 0; i < 6; i += 1) {
+    const angle = (Math.PI / 180) * (60 * i - 30);
+    ring.push([
+      centerLng + radiusDeg * Math.cos(angle),
+      centerLat + radiusDeg * Math.sin(angle),
+    ]);
+  }
+  ring.push(ring[0]);
+  return { type: "Polygon", coordinates: [ring] };
+}
 
 function square(
   centerLng: number,
@@ -342,6 +360,51 @@ export const FIXTURE_ALERTS: Alert[] = [
     area_m2: 980,
     status: "open",
     detected_at: "2026-05-02T02:15:00Z",
+  },
+];
+
+// Illustrative resolution-8 alert-density hexagons for the demo area, so the
+// operational map's hotspot overlay renders even with no backend configured.
+export const FIXTURE_HOTSPOTS: HotspotCell[] = [
+  {
+    cell: "88ded4b501fffff",
+    alert_count: 5,
+    red_alerts: 3,
+    total_area_m2: 8400,
+    parcel_count: 4,
+    boundary: hexagon(78.03, 29.915, 0.006),
+  },
+  {
+    cell: "88ded4b503fffff",
+    alert_count: 3,
+    red_alerts: 1,
+    total_area_m2: 5200,
+    parcel_count: 2,
+    boundary: hexagon(78.045, 29.905, 0.006),
+  },
+  {
+    cell: "88ded4b50bfffff",
+    alert_count: 4,
+    red_alerts: 2,
+    total_area_m2: 6100,
+    parcel_count: 3,
+    boundary: hexagon(78.1, 29.94, 0.006),
+  },
+  {
+    cell: "88ded4b513fffff",
+    alert_count: 2,
+    red_alerts: 0,
+    total_area_m2: 2100,
+    parcel_count: 1,
+    boundary: hexagon(78.06, 29.93, 0.006),
+  },
+  {
+    cell: "88ded4b52bfffff",
+    alert_count: 1,
+    red_alerts: 0,
+    total_area_m2: 900,
+    parcel_count: 1,
+    boundary: hexagon(78.15, 29.92, 0.006),
   },
 ];
 

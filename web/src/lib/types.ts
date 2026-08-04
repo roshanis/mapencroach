@@ -279,3 +279,21 @@ export interface AlertFilters {
   tier?: AlertTier;
   status?: AlertStatus;
 }
+
+/** One H3 cell's alert-density rollup, as returned by GET /analytics/hotspots. */
+export interface HotspotCell {
+  /** H3 cell id (hex string), e.g. "8842d0...". */
+  cell: string;
+  alert_count: number;
+  red_alerts: number;
+  total_area_m2: number;
+  parcel_count: number;
+  /** GeoJSON Polygon geometry of the H3 cell boundary (lng/lat pairs). */
+  boundary: GeoJSON.Polygon;
+}
+
+/** GET /analytics/hotspots response — cells are sorted hottest-first. */
+export interface HotspotsResponse {
+  resolution: number;
+  cells: HotspotCell[];
+}

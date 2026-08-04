@@ -4,6 +4,7 @@ import {
   getAlerts,
   getCase,
   getCases,
+  getHotspots,
   getParcel,
   getParcelContext,
   getParcels,
@@ -16,6 +17,7 @@ import {
 import {
   FIXTURE_ALERTS,
   FIXTURE_CASES,
+  FIXTURE_HOTSPOTS,
   FIXTURE_PARCELS,
   FIXTURE_PARCEL_CONTEXTS,
 } from "./fixtures";
@@ -732,5 +734,116 @@ describe("getScenes", () => {
     const scenes = await getScenes();
 
     expect(scenes).toEqual([]);
+  });
+});
+
+describe("getHotspots", () => {
+  const HOTSPOT = {
+    cell: "8842d0abcfffff",
+    alert_count: 3,
+    red_alerts: 1,
+    total_area_m2: 1234.5,
+    parcel_count: 2,
+    boundary: {
+      type: "Polygon" as const,
+      coordinates: [
+        [
+          [78.0, 29.9],
+          [78.01, 29.9],
+          [78.01, 29.91],
+          [78.0, 29.91],
+          [78.0, 29.9],
+        ],
+      ],
+    },
+  };
+
+  it("falls back to fixture hotspots when no backend is configured", async () => {
+    delete process.env.NEXT_PUBLIC_API_URL;
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const hotspots = await getHotspots();
+
+    expect(hotspots).toEqual(FIXTURE_HOTSPOTS);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("fetches the hotspot cell list from the resolution-scoped endpoint", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({ resolution: 8, cells: [HOTSPOT] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const hotspots = await getHotspots("tok-1");
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://api.example.test/analytics/hotspots?resolution=8"
+    );
+    expect(fetchMock.mock.calls[0][1]).toEqual({
+      headers: { Authorization: "Bearer tok-1" },
+    });
+    expect(hotspots).toEqual([HOTSPOT]);
+  });
+
+  it("honors a custom resolution argument", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({ resolution: 9, cells: [] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getHotspots(undefined, 9);
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://api.example.test/analytics/hotspots?resolution=9"
+    );
+  });
+
+  it("returns [] on a 401 unauthenticated request", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      statusText: "Unauthorized",
+      json: async () => ({ detail: "unauthenticated" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const hotspots = await getHotspots();
+
+    expect(hotspots).toEqual([]);
+  });
+
+  it("returns [] on a 403 forbidden request", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      statusText: "Forbidden",
+      json: async () => ({ detail: "forbidden" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const hotspots = await getHotspots();
+
+    expect(hotspots).toEqual([]);
+  });
+
+  it("returns [] when fetch throws (network failure)", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockRejectedValue(new Error("network down"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const hotspots = await getHotspots();
+
+    expect(hotspots).toEqual([]);
   });
 });

@@ -30,4 +30,11 @@ describe("MapLegend", () => {
     expect(screen.getByText("Green")).toBeInTheDocument();
     expect(screen.getByText("Legacy")).toBeInTheDocument();
   });
+
+  it("renders the hotspot density swatch row", () => {
+    render(<MapLegend categories={["forest"]} />);
+    expect(screen.getByText("Hotspot density")).toBeInTheDocument();
+    expect(screen.getByText("Elevated alerts")).toBeInTheDocument();
+    expect(screen.getByText("Red alerts present")).toBeInTheDocument();
+  });
 });
