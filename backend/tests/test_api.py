@@ -1458,17 +1458,39 @@ class TestCaseTransitionLegalGating:
     def test_case_officer_cannot_unilaterally_close_a_case(
         self, client: TestClient, store: Store
     ):
-        case_id = next(
-            cid for cid, c in store.cases.items() if c.case.state.value == "SHOW_CAUSE_ISSUED"
-        )
-        case = store.cases[case_id]
+        # Walk the case to ACTION_TAKEN -- the only state from which CLOSED
+        # is sequence-legal -- so this pins the authority rule itself, not
+        # the sequence guard (an out-of-order CLOSED is a 409; see
+        # TestTransitionCheckOrdering).
+        case_id, case = self._advance_to_hearing_scheduled(client, store)
+        legal = token_for("gating-legal-3", Role.LEGAL_OFFICER, case.jurisdiction_id)
         officer = token_for("gating-officer-3", Role.CASE_OFFICER, case.jurisdiction_id)
+        for to_state, artifacts, token in (
+            ("HEARING_HELD", {"hearing_record": "hr.pdf"}, legal),
+            ("ORDER_ISSUED", {"reasoned_order": "order.pdf"}, legal),
+            ("ACTION_TAKEN", {"action_report": "action.pdf"}, officer),
+        ):
+            advance = client.post(
+                f"/cases/{case_id}/transitions",
+                headers=auth_headers(token),
+                json={"to_state": to_state, "artifacts": artifacts},
+            )
+            assert advance.status_code == 201, (to_state, advance.json())
+
         resp = client.post(
             f"/cases/{case_id}/transitions",
             headers=auth_headers(officer),
-            json={"to_state": "CLOSED"},
+            json={"to_state": "CLOSED", "artifacts": {"closure_note": "done.pdf"}},
         )
         assert resp.status_code == 403
+        assert "legal authority" in resp.json()["detail"]
+
+        closed = client.post(
+            f"/cases/{case_id}/transitions",
+            headers=auth_headers(legal),
+            json={"to_state": "CLOSED", "artifacts": {"closure_note": "done.pdf"}},
+        )
+        assert closed.status_code == 201
 
 
 class TestAlertCreateValidation:
@@ -1904,3 +1926,107 @@ class TestImageryScenes:
         assert seed.status_code == 201
         resp = client.get("/imagery/scenes/scene-alpha")
         assert resp.status_code == 401
+
+
+class TestTransitionCheckOrdering:
+    """The transitions endpoint checks sequence before authority: an
+    illegal jump is a 409 with the engine's own wording for every role
+    (the demo script's signature refusal), and 403 legal-authority
+    refusals fire only for moves the engine would otherwise allow --
+    leaving state and the audit chain untouched either way."""
+
+    def _case_at_show_cause(self, store: Store):
+        return next(
+            (cid, c)
+            for cid, c in store.cases.items()
+            if c.case.state.value == "SHOW_CAUSE_ISSUED"
+        )
+
+    def test_illegal_jump_by_case_officer_is_409_sequence_not_403(
+        self, client: TestClient, store: Store
+    ):
+        case_id, record = self._case_at_show_cause(store)
+        officer = token_for("ordering-officer", Role.CASE_OFFICER, record.jurisdiction_id)
+        resp = client.post(
+            f"/cases/{case_id}/transitions",
+            headers=auth_headers(officer),
+            json={"to_state": "ORDER_ISSUED"},
+        )
+        assert resp.status_code == 409
+        assert (
+            resp.json()["detail"]
+            == "cannot transition from SHOW_CAUSE_ISSUED to ORDER_ISSUED"
+        )
+
+    def test_refused_authority_leaves_state_and_audit_untouched(
+        self, client: TestClient, store: Store
+    ):
+        case_id, record = self._case_at_show_cause(store)
+        state_before = record.case.state
+        audit_len_before = len(store.audit_chain)
+        officer = token_for("ordering-officer-2", Role.CASE_OFFICER, record.jurisdiction_id)
+        resp = client.post(
+            f"/cases/{case_id}/transitions",
+            headers=auth_headers(officer),
+            json={
+                "to_state": "DISMISSED_FALSE_POSITIVE",
+                "artifacts": {"dismissal_reason": "no violation found"},
+            },
+        )
+        assert resp.status_code == 403
+        assert "requires legal authority" in resp.json()["detail"]
+        assert record.case.state == state_before
+        assert len(store.audit_chain) == audit_len_before
+
+    def test_officer_non_legal_transition_still_works(
+        self, client: TestClient, store: Store
+    ):
+        case_id, record = self._case_at_show_cause(store)
+        officer = token_for("ordering-officer-3", Role.CASE_OFFICER, record.jurisdiction_id)
+        resp = client.post(
+            f"/cases/{case_id}/transitions",
+            headers=auth_headers(officer),
+            json={"to_state": "RESPONSE_WINDOW"},
+        )
+        assert resp.status_code == 201
+
+
+class TestLegalOfficerPersona:
+    """The demo roster includes a statewide legal officer, so the
+    legal-authority transition gate is demonstrable rather than a wall."""
+
+    def _demo_client(self, store: Store, monkeypatch) -> TestClient:
+        monkeypatch.delenv("MAPENCROACH_JWT_SECRET", raising=False)
+        monkeypatch.setenv("MAPENCROACH_DEMO", "1")
+        return TestClient(create_app(store))
+
+    def test_legal_officer_persona_is_listed_statewide(self, store: Store, monkeypatch):
+        app_client = self._demo_client(store, monkeypatch)
+        personas = app_client.get("/demo/personas").json()
+        legal = next((p for p in personas if p["id"] == "legal-hrda"), None)
+        assert legal is not None
+        assert legal["role"] == "legal_officer"
+        assert legal["jurisdiction_id"] == "state"
+
+    def test_legal_officer_login_can_perform_a_legal_transition(
+        self, store: Store, monkeypatch
+    ):
+        app_client = self._demo_client(store, monkeypatch)
+        login = app_client.post("/demo/login", json={"persona_id": "legal-hrda"})
+        assert login.status_code == 200
+        token = login.json()["token"]
+        case_id = next(
+            cid
+            for cid, c in store.cases.items()
+            if c.case.state.value == "SHOW_CAUSE_ISSUED"
+        )
+        resp = app_client.post(
+            f"/cases/{case_id}/transitions",
+            headers=auth_headers(token),
+            json={
+                "to_state": "DISMISSED_FALSE_POSITIVE",
+                "artifacts": {"dismissal_reason": "training demo dismissal"},
+            },
+        )
+        assert resp.status_code == 201
+        assert resp.json()["to_state"] == "DISMISSED_FALSE_POSITIVE"

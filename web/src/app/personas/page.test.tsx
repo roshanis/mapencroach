@@ -60,6 +60,16 @@ describe("PersonasPage", () => {
     expect(button).toBeDisabled();
   });
 
+  it("fixture roster mirrors the six backend demo personas, including the legal officer", () => {
+    // GET /demo/personas serves six personas; fixture mode must not silently
+    // present a smaller cast (the legal officer demonstrates the
+    // legal-authority transition gate).
+    expect(FIXTURE_PERSONAS).toHaveLength(6);
+    const legal = FIXTURE_PERSONAS.find((persona) => persona.role === "legal_officer");
+    expect(legal).toBeDefined();
+    expect(legal?.id).toBe("legal-hrda");
+  });
+
   it("renders cards from getPersonas when the backend returns personas", async () => {
     vi.mocked(usePathname).mockReturnValue("/personas");
     vi.mocked(getPersonas).mockResolvedValue([

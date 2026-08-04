@@ -112,8 +112,13 @@ Open **case-1**:
 > "Watch — I'm trying to jump straight to a demolition order."
 
 The red banner shows the engine's own words: *cannot transition from
-SHOW_CAUSE_ISSUED to ORDER_ISSUED*. Try "DISMISSED FALSE POSITIVE" after blanking
-the evidence field — refused again, naming the missing dismissal reason.
+SHOW_CAUSE_ISSUED to ORDER_ISSUED* — the **sequence guard**. Now try "DISMISSED
+FALSE POSITIVE" with the evidence field filled in: refused again, but for a
+different reason this time — the **authority guard**: a case officer cannot
+end a case unilaterally, even with the paperwork in hand; only a Legal Officer
+or System Administrator may. Three independent guards on one state machine:
+sequence (can't skip a step), authority (some outcomes need legal sign-off),
+evidence (can't skip the paperwork).
 
 Open **Notice preparation**. The warning and preview watermark make the legal
 boundary explicit: this is a training draft, not an approved form and not for
@@ -149,9 +154,9 @@ they *don't exist* for this officer (direct URLs 404 too). Then view as
 
 > "The Vice Chairman sees everything — and can change nothing."
 
-The tag is refused with the role message on screen. Five demo personas cover the
+The tag is refused with the role message on screen. Six demo personas cover the
 spread: statewide viewer, district case officer, district survey officer,
-taluk-level case officer, statewide data admin. "Exit persona" in the banner
+taluk-level case officer, statewide data admin, statewide legal officer. "Exit persona" in the banner
 returns to the default officer.
 
 For a survey handoff, switch to **Survey Officer, Roorkee**, open
@@ -168,20 +173,26 @@ The refusals from Stop 4 are also demonstrable at the raw API level — same
 engine, no UI in between:
 
 ```bash
-# Skip straight to a demolition order → refused
+# Skip straight to a demolition order → refused (sequence guard)
 curl -s -X POST http://localhost:8000/cases/case-1/transitions \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"to_state":"ORDER_ISSUED"}'
 # → 409 "cannot transition from SHOW_CAUSE_ISSUED to ORDER_ISSUED"
 
-# Dismiss a case without stating why → refused
+# Dismiss a case, officer token → refused (authority guard: only a Legal
+# Officer or System Administrator may end a case, with or without evidence)
 curl -s -X POST http://localhost:8000/cases/case-1/transitions \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"to_state":"DISMISSED_FALSE_POSITIVE"}'
-# → 409 "missing required artifact(s): dismissal_reason"
+# → 403 "transitioning a case to 'DISMISSED_FALSE_POSITIVE' requires legal
+#   authority; role 'case_officer' is not permitted"
+# The same call with a legal-officer token clears the authority guard and
+# hits the evidence guard instead:
+# → 409 "transition to DISMISSED_FALSE_POSITIVE missing required
+#   artifact(s): dismissal_reason"
 ```
 
-Worth mentioning: 687 backend tests at ~99% coverage; every mutation lands in a
+Worth mentioning: 720+ backend tests at ~99% coverage; every mutation lands in a
 tamper-evident hash-chained audit log (editing or reordering any entry breaks
 verification; dropping entries off the end is caught by verifying against a
 retained head anchor — built for evidence-integrity requirements under BSA 2023

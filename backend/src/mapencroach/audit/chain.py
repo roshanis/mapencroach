@@ -2,10 +2,12 @@
 
 Every entry links to the previous entry's row_hash, so editing, reordering,
 or deleting an entry from the *interior* of the chain breaks verification
-from that point on. Payloads are canonicalized before hashing: keys are
-sorted (so hashing is independent of dict ordering) and every non-JSON-
-native value is type-tagged (so, e.g., a `datetime` and the string it
-happens to render as never canonicalize to the same bytes).
+from that point on. Payloads are canonicalized before hashing into an
+injective constructor-tagged encoding: keys are sorted (so hashing is
+independent of dict ordering), every node carries its category tag, and
+non-JSON-native values carry their type name -- so, e.g., a `datetime`,
+the string it renders as, and a hand-crafted dict imitating the encoder's
+own tag wrapper all canonicalize to different bytes.
 
 Internal verification alone cannot see a dropped *tail*: any prefix of a
 valid chain re-verifies as a valid (shorter) chain, so an actor with
@@ -48,34 +50,41 @@ class ChainVerification:
 
 
 def _canonicalize(value: Any) -> Any:
-    """Recursively convert `value` into a JSON-safe, type-injective form.
+    """Recursively convert `value` into a JSON-safe, injective encoding.
+
+    Every node is wrapped in a constructor tag -- ["map", ...], ["list",
+    ...], ["val", <scalar>], or ["obj", <type name>, <str form>] -- so no
+    plain payload value can imitate the encoding of a differently-typed
+    one: a genuine dict or list shaped like a tag wrapper is itself
+    wrapped in its own constructor first, and therefore never collides
+    with the node it mimics. Map entries are emitted as explicitly sorted
+    [key, value] pairs, keeping hashes independent of dict ordering.
+
+    Two deliberate equivalences, both matching what JSON itself can
+    express: tuples normalize to their list form (JSON has one sequence
+    type, so a payload that round-trips through JSON storage must
+    re-verify against the same hash), and any non-JSON-native leaf is
+    reduced to its type name plus `str()` form under the "obj" tag (which
+    still keeps, e.g., a `datetime` distinct from the plain string it
+    renders as).
 
     Dict keys must be strings -- a non-string key raises TypeError naming
     the offending key, rather than surfacing as an opaque failure from
-    `json.dumps(..., sort_keys=True)` when it tries to compare mismatched
-    key types mid-write.
-
-    Every value that isn't already a JSON-native scalar (str, int, float,
-    bool, None) or a plain container (dict, list, tuple) is wrapped as
-    `{"__type__": <type name>, "value": <str>}` so it can never collide
-    with the plain string that happens to render the same way -- e.g. a
-    `datetime` and its `str()` form hash differently.
+    `json.dumps` when it tries to compare mismatched key types mid-write.
     """
     if isinstance(value, Mapping):
-        canonical = {}
-        for key, sub in value.items():
+        for key in value:
             if not isinstance(key, str):
                 raise TypeError(
                     f"audit payload keys must be strings, got {key!r} "
                     f"({type(key).__name__})"
                 )
-            canonical[key] = _canonicalize(sub)
-        return canonical
+        return ["map", [[key, _canonicalize(value[key])] for key in sorted(value)]]
     if isinstance(value, (list, tuple)):
-        return [_canonicalize(item) for item in value]
+        return ["list", [_canonicalize(item) for item in value]]
     if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    return {"__type__": type(value).__name__, "value": str(value)}
+        return ["val", value]
+    return ["obj", type(value).__name__, str(value)]
 
 
 def compute_row_hash(payload: Mapping[str, Any], prev_hash: str) -> str:
@@ -92,6 +101,74 @@ def append_entry(chain: list[AuditEntry], payload: Mapping[str, Any]) -> AuditEn
     )
     chain.append(entry)
     return entry
+
+
+def _canonicalize_legacy(value: Any) -> Any:
+    """The retired version-1 canonicalization, kept only so state files
+    written before the constructor-tagged encoding can be verified during
+    migration (see `mapencroach.persistence`). Not injective -- a
+    hand-crafted {"__type__": ...} dict imitates a typed value, which is
+    why it was replaced -- but a chain written under it can only be
+    checked under it.
+    """
+    if isinstance(value, Mapping):
+        canonical = {}
+        for key, sub in value.items():
+            if not isinstance(key, str):
+                raise TypeError(
+                    f"audit payload keys must be strings, got {key!r} "
+                    f"({type(key).__name__})"
+                )
+            canonical[key] = _canonicalize_legacy(sub)
+        return canonical
+    if isinstance(value, (list, tuple)):
+        return [_canonicalize_legacy(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return {"__type__": type(value).__name__, "value": str(value)}
+
+
+def compute_row_hash_legacy(payload: Mapping[str, Any], prev_hash: str) -> str:
+    """Row hash under the retired version-1 canonicalization. Used only to
+    verify pre-migration state files; new hashes always come from
+    `compute_row_hash`."""
+    canonical = json.dumps(
+        _canonicalize_legacy(payload), sort_keys=True, separators=(",", ":")
+    )
+    return hashlib.sha256(f"{prev_hash}:{canonical}".encode()).hexdigest()
+
+
+def verify_legacy_chain(entries: Sequence[AuditEntry]) -> ChainVerification:
+    """`verify_chain` for chains hashed under the version-1 encoding.
+
+    No head/length anchors: this exists solely for one-time migration of a
+    persisted version-1 state file, where the file itself is the only
+    anchor available.
+    """
+    prev_hash = GENESIS_HASH
+    for index, entry in enumerate(entries):
+        if entry.prev_hash != prev_hash:
+            return ChainVerification(ok=False, first_bad_index=index)
+        if compute_row_hash_legacy(entry.payload, entry.prev_hash) != entry.row_hash:
+            return ChainVerification(ok=False, first_bad_index=index)
+        prev_hash = entry.row_hash
+    return ChainVerification(ok=True)
+
+
+def rehash_chain(entries: Sequence[AuditEntry]) -> list[AuditEntry]:
+    """Rebuild a chain's links and hashes under the current encoding,
+    preserving payload content and order.
+
+    Migration helper: verify the chain with `verify_legacy_chain` FIRST --
+    rehashing takes the payloads on faith, so rehashing an unverified
+    chain would launder tampering into a freshly consistent chain. The
+    head hash changes; any externally recorded anchor (see `current_head`)
+    must be re-captured after migration.
+    """
+    migrated: list[AuditEntry] = []
+    for entry in entries:
+        append_entry(migrated, entry.payload)
+    return migrated
 
 
 def current_head(entries: Sequence[AuditEntry]) -> str:

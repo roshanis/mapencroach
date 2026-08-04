@@ -791,3 +791,109 @@ class TestPersistenceIsOptIn:
         monkeypatch.setenv("MAPENCROACH_STATE_PATH", str(tmp_path / "state.json"))
         Store.seed_demo()
         assert not (tmp_path / "state.json").exists()
+
+
+class TestStateVersionMigration:
+    """Version-1 state files (audit hashes under the retired sorted-keys
+    canonicalization) must load: verified under the encoding they were
+    written with, then rehashed in memory to the constructor-tagged
+    encoding so the next save writes version 2. Unknown versions are
+    refused rather than guessed at."""
+
+    @staticmethod
+    def _v1_chain(payloads: list[dict]) -> list[AuditEntry]:
+        from mapencroach.audit.chain import GENESIS_HASH, compute_row_hash_legacy
+
+        chain: list[AuditEntry] = []
+        prev = GENESIS_HASH
+        for payload in payloads:
+            row = compute_row_hash_legacy(payload, prev)
+            chain.append(AuditEntry(payload=dict(payload), prev_hash=prev, row_hash=row))
+            prev = row
+        return chain
+
+    @staticmethod
+    def _write_v1_file(path: Path, chain: list[AuditEntry]) -> None:
+        path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "watchlist": [],
+                    "scene_records": [],
+                    "audit_chain": [
+                        {
+                            "payload": dict(e.payload),
+                            "prev_hash": e.prev_hash,
+                            "row_hash": e.row_hash,
+                        }
+                        for e in chain
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def _payloads(self) -> list[dict]:
+        return [
+            {"actor": "officer-1", "action": "case.transition", "at": "2026-01-05T12:00:00Z"},
+            {"actor": "officer-1", "action": "tag.add", "tag": "court-monitored"},
+            {"actor": "system", "action": "alert.create", "severity": 60},
+        ]
+
+    def test_version_1_file_loads_and_migrates(self, tmp_path):
+        chain = self._v1_chain(self._payloads())
+        state_path = tmp_path / "state.json"
+        self._write_v1_file(state_path, chain)
+
+        loaded = StatePersister(state_path).load()
+
+        assert loaded is not None
+        assert [dict(e.payload) for e in loaded.audit_chain] == self._payloads()
+        # Migrated chain verifies under the CURRENT encoding...
+        assert verify_chain(loaded.audit_chain).ok is True
+        # ...and its hashes genuinely changed (the legacy head is retired).
+        assert loaded.audit_chain[-1].row_hash != chain[-1].row_hash
+
+    def test_tampered_version_1_file_is_refused(self, tmp_path):
+        chain = self._v1_chain(self._payloads())
+        state_path = tmp_path / "state.json"
+        tampered = list(chain)
+        tampered[1] = AuditEntry(
+            payload={"actor": "intruder", "action": "tag.add", "tag": "court-monitored"},
+            prev_hash=chain[1].prev_hash,
+            row_hash=chain[1].row_hash,
+        )
+        self._write_v1_file(state_path, tampered)
+
+        with pytest.raises(StateCorruptionError, match="version-1"):
+            StatePersister(state_path).load()
+
+    def test_unsupported_version_is_refused(self, tmp_path):
+        state_path = tmp_path / "state.json"
+        state_path.write_text(
+            json.dumps(
+                {"version": 99, "watchlist": [], "scene_records": [], "audit_chain": []}
+            ),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(StateCorruptionError, match="unsupported version"):
+            StatePersister(state_path).load()
+
+    def test_migrated_state_saves_as_version_2(self, tmp_path):
+        chain = self._v1_chain(self._payloads())
+        state_path = tmp_path / "state.json"
+        self._write_v1_file(state_path, chain)
+        persister = StatePersister(state_path)
+        loaded = persister.load()
+        assert loaded is not None
+
+        store = Store()
+        store.audit_chain.extend(loaded.audit_chain)
+        persister.save(store)
+
+        on_disk = json.loads(state_path.read_text(encoding="utf-8"))
+        assert on_disk["version"] == 2
+        reloaded = persister.load()
+        assert reloaded is not None
+        assert verify_chain(reloaded.audit_chain).ok is True
