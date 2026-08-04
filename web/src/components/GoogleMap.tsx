@@ -101,6 +101,13 @@ export default function GoogleMap({
           mapTypeControl: false,
           streetViewControl: false,
           zoomControl: true,
+          // "auto" (the default) sometimes decides a map that doesn't
+          // dominate the viewport — e.g. next to the alert sidebar on an
+          // iPad — needs two fingers to pan, to avoid stealing page
+          // scroll. This map's page never scrolls around it, so a single
+          // finger should always drag the map; "greedy" makes that
+          // unconditional instead of heuristic.
+          gestureHandling: "greedy",
         });
         mapRef.current = map;
 
@@ -203,7 +210,7 @@ export default function GoogleMap({
           Loading Google map...
         </div>
       ) : null}
-      <div className="absolute left-3 top-3 z-10">
+      <div className="absolute left-[max(0.75rem,env(safe-area-inset-left,0px))] top-[max(0.75rem,env(safe-area-inset-top,0px))] z-10">
         <BasemapToggle mode={mode} onChange={handleBasemapChange} />
       </div>
     </div>

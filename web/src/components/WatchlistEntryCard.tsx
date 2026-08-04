@@ -87,7 +87,7 @@ export function WatchlistEntryCard({ initialEntry }: WatchlistEntryCardProps) {
             aria-label={`Run due captures now for ${entry.parcel_id} (${dueCount} due)`}
             onClick={() => void handleRunCaptures()}
             disabled={submitting || dueCount === 0}
-            className="inline-flex items-center justify-center rounded-md bg-gov px-3 py-2 text-sm font-semibold text-white hover:bg-gov-dark disabled:opacity-50"
+            className="inline-flex min-h-11 items-center justify-center rounded-md bg-gov px-3 py-2 text-sm font-semibold text-white hover:bg-gov-dark disabled:opacity-50"
           >
             {submitting ? "Running…" : `Run due captures now (${dueCount})`}
           </button>

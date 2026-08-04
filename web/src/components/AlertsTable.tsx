@@ -25,6 +25,106 @@ const STATUS_OPTIONS: (AlertStatus | "all")[] = [
   "closed",
 ];
 
+/**
+ * Every display value for one alert, computed once so the desktop `<table>`
+ * row and the mobile card render identical data/formatting instead of two
+ * copies that can drift apart. Only the surrounding markup differs between
+ * AlertTableRow and AlertCard below — this holds the shared derivation.
+ */
+interface AlertRowFields {
+  parcelHref: string;
+  parcelId: string;
+  severity: number;
+  areaLabel: string;
+  statusLabel: string;
+  statusTitle: string;
+  ageLabel: string;
+}
+
+function deriveAlertRow(alert: Alert): AlertRowFields {
+  return {
+    parcelHref: `/parcels/${alert.parcel_id}`,
+    parcelId: alert.parcel_id,
+    severity: alert.severity_score,
+    areaLabel: alert.area_m2.toLocaleString(),
+    statusLabel: alert.status.replace("_", " "),
+    statusTitle: ALERT_STATUS_DESCRIPTIONS[alert.status],
+    ageLabel: ageFromNow(alert.detected_at),
+  };
+}
+
+const PARCEL_LINK_CLASSES =
+  "text-gov underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-gov/30";
+
+function AlertTableRow({ alert }: { alert: Alert }) {
+  const f = deriveAlertRow(alert);
+  return (
+    <tr
+      data-testid="alert-row"
+      data-alert-id={alert.id}
+      className="border-t border-gray-100 hover:bg-gray-50"
+    >
+      <td className="px-4 py-2">
+        <TierChip tier={alert.tier} />
+      </td>
+      <td className="px-4 py-2 font-medium">
+        <Link href={f.parcelHref} className={PARCEL_LINK_CLASSES}>
+          {f.parcelId}
+        </Link>
+      </td>
+      <td className="px-4 py-2">{f.severity}</td>
+      <td className="px-4 py-2">{f.areaLabel}</td>
+      <td className="px-4 py-2 capitalize" title={f.statusTitle}>
+        {f.statusLabel}
+      </td>
+      <td className="px-4 py-2 text-gray-500">{f.ageLabel}</td>
+    </tr>
+  );
+}
+
+/** One alert's card presentation for narrow screens (< sm). Uses the same
+ * `deriveAlertRow` values as AlertTableRow so every column the table shows
+ * is reachable here too — nothing is dropped on mobile, just re-laid-out as
+ * a labeled list instead of table cells. */
+function AlertCard({ alert }: { alert: Alert }) {
+  const f = deriveAlertRow(alert);
+  return (
+    <li
+      data-testid="alert-card"
+      data-alert-id={alert.id}
+      className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-col items-start gap-1.5">
+          <TierChip tier={alert.tier} />
+          <Link href={f.parcelHref} className={`text-base font-semibold ${PARCEL_LINK_CLASSES}`}>
+            {f.parcelId}
+          </Link>
+        </div>
+        <span className="shrink-0 text-xs text-gray-500">{f.ageLabel}</span>
+      </div>
+      <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
+        <div>
+          <dt className="text-xs uppercase tracking-wide text-gray-500" title={SEVERITY_EXPLANATION}>
+            Severity
+          </dt>
+          <dd className="font-medium text-gray-900">{f.severity}</dd>
+        </div>
+        <div>
+          <dt className="text-xs uppercase tracking-wide text-gray-500">Area (m²)</dt>
+          <dd className="font-medium text-gray-900">{f.areaLabel}</dd>
+        </div>
+        <div className="col-span-2">
+          <dt className="text-xs uppercase tracking-wide text-gray-500">Status</dt>
+          <dd className="capitalize font-medium text-gray-900" title={f.statusTitle}>
+            {f.statusLabel}
+          </dd>
+        </div>
+      </dl>
+    </li>
+  );
+}
+
 export function AlertsTable({ alerts }: AlertsTableProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -165,62 +265,51 @@ export function AlertsTable({ alerts }: AlertsTableProps) {
         Showing {filtered.length} of {alerts.length} alerts
       </p>
 
-      <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
-      <table className="min-w-[44rem] w-full border-collapse text-sm">
-        <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
-          <tr>
-            <th className="px-4 py-2">Tier</th>
-            <th className="px-4 py-2">Parcel</th>
-            <th className="px-4 py-2" title={SEVERITY_EXPLANATION}>
-              Severity
-            </th>
-            <th className="px-4 py-2">Area (m²)</th>
-            <th className="px-4 py-2">Status</th>
-            <th className="px-4 py-2">Age</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filtered.map((alert) => (
-            <tr
-              key={alert.id}
-              data-testid="alert-row"
-              data-alert-id={alert.id}
-              className="border-t border-gray-100 hover:bg-gray-50"
-            >
-              <td className="px-4 py-2">
-                <TierChip tier={alert.tier} />
-              </td>
-              <td className="px-4 py-2 font-medium">
-                <Link
-                  href={`/parcels/${alert.parcel_id}`}
-                  className="text-gov underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-gov/30"
-                >
-                  {alert.parcel_id}
-                </Link>
-              </td>
-              <td className="px-4 py-2">{alert.severity_score}</td>
-              <td className="px-4 py-2">{alert.area_m2.toLocaleString()}</td>
-              <td
-                className="px-4 py-2 capitalize"
-                title={ALERT_STATUS_DESCRIPTIONS[alert.status]}
-              >
-                {alert.status.replace("_", " ")}
-              </td>
-              <td className="px-4 py-2 text-gray-500">
-                {ageFromNow(alert.detected_at)}
-              </td>
-            </tr>
-          ))}
-          {filtered.length === 0 && (
+      {/* Real <table> for sm and up. Below sm, dragging through ~700px of
+          table to read one row is unusable, so a stacked card list (below)
+          takes over — both render from the same `filtered` array and the
+          same per-alert `deriveAlertRow` values, so nothing is dropped and
+          nothing can drift between the two presentations. */}
+      <div className="hidden overflow-x-auto rounded-lg border border-gray-200 bg-white sm:block">
+        <table className="min-w-[44rem] w-full border-collapse text-sm">
+          <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
             <tr>
-              <td colSpan={6} className="px-4 py-6 text-center text-gray-400">
-                No alerts match the current filters.
-              </td>
+              <th className="px-4 py-2">Tier</th>
+              <th className="px-4 py-2">Parcel</th>
+              <th className="px-4 py-2" title={SEVERITY_EXPLANATION}>
+                Severity
+              </th>
+              <th className="px-4 py-2">Area (m²)</th>
+              <th className="px-4 py-2">Status</th>
+              <th className="px-4 py-2">Age</th>
             </tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {filtered.map((alert) => (
+              <AlertTableRow key={alert.id} alert={alert} />
+            ))}
+            {filtered.length === 0 && (
+              <tr>
+                <td colSpan={6} className="px-4 py-6 text-center text-gray-400">
+                  No alerts match the current filters.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
+
+      <ul data-testid="alerts-card-list" className="flex flex-col gap-3 sm:hidden">
+        {filtered.map((alert) => (
+          <AlertCard key={alert.id} alert={alert} />
+        ))}
+        {filtered.length === 0 && (
+          <li className="rounded-lg border border-gray-200 bg-white px-4 py-6 text-center text-gray-400">
+            No alerts match the current filters.
+          </li>
+        )}
+      </ul>
+
       <p data-testid="severity-footnote" className="text-xs text-gray-400">
         {SEVERITY_EXPLANATION}
       </p>

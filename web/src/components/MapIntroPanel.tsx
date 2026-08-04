@@ -58,7 +58,7 @@ export function MapIntroPanel() {
           persistDismissed(false);
           setDismissed(false);
         }}
-        className="absolute right-3 top-3 z-10 rounded-full bg-white/90 px-3 py-1.5 text-xs text-gray-600 shadow hover:text-gov lg:top-24 2xl:top-3"
+        className="absolute right-[max(0.75rem,env(safe-area-inset-right,0px))] top-[max(0.75rem,env(safe-area-inset-top,0px))] z-10 flex min-h-11 items-center rounded-full bg-white/90 px-3 text-xs text-gray-600 shadow hover:text-gov lg:top-24 2xl:top-[max(0.75rem,env(safe-area-inset-top,0px))]"
       >
         ? What am I looking at?
       </button>
@@ -68,7 +68,7 @@ export function MapIntroPanel() {
   return (
     <div
       data-testid="map-intro-panel"
-      className="absolute right-3 top-3 z-10 w-80 max-w-[calc(100vw-1.5rem)] rounded-lg border border-gray-200 bg-white/95 p-4 shadow-md lg:top-24 2xl:top-3"
+      className="absolute right-[max(0.75rem,env(safe-area-inset-right,0px))] top-[max(0.75rem,env(safe-area-inset-top,0px))] z-10 w-80 max-w-[calc(100vw-1.5rem)] rounded-lg border border-gray-200 bg-white/95 p-4 shadow-md lg:top-24 2xl:top-[max(0.75rem,env(safe-area-inset-top,0px))]"
     >
       <p className="text-sm font-semibold text-gray-900">
         What am I looking at?
@@ -85,7 +85,7 @@ export function MapIntroPanel() {
           persistDismissed(true);
           setDismissed(true);
         }}
-        className="mt-3 rounded bg-gov px-3 py-1.5 text-xs font-medium text-white"
+        className="mt-3 flex min-h-11 items-center rounded bg-gov px-3 text-xs font-medium text-white"
       >
         Got it
       </button>

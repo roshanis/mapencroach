@@ -33,4 +33,41 @@ describe("AlertSidebar", () => {
 
     expect(screen.getByText("No unresolved alerts in this jurisdiction.")).toBeInTheDocument();
   });
+
+  describe("mobile overlay backdrop", () => {
+    it("renders no backdrop when the mobile queue is closed (the default)", () => {
+      render(<AlertSidebar alerts={FIXTURE_ALERTS} />);
+
+      expect(
+        screen.queryByTestId("alert-sidebar-backdrop")
+      ).not.toBeInTheDocument();
+    });
+
+    it("renders a backdrop behind the panel once the mobile queue is open", () => {
+      render(
+        <AlertSidebar
+          alerts={FIXTURE_ALERTS}
+          mobileOpen
+          onMobileClose={vi.fn()}
+        />
+      );
+
+      expect(screen.getByTestId("alert-sidebar-backdrop")).toBeInTheDocument();
+    });
+
+    it("closes the queue when the backdrop is clicked, same as the × button", () => {
+      const onMobileClose = vi.fn();
+      render(
+        <AlertSidebar
+          alerts={FIXTURE_ALERTS}
+          mobileOpen
+          onMobileClose={onMobileClose}
+        />
+      );
+
+      fireEvent.click(screen.getByTestId("alert-sidebar-backdrop"));
+
+      expect(onMobileClose).toHaveBeenCalledOnce();
+    });
+  });
 });

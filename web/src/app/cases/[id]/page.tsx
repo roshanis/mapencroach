@@ -121,7 +121,12 @@ export default async function CaseDetailPage({
                     {event.artifacts.map((artifact) => (
                       <li
                         key={artifact}
-                        className="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-600"
+                        // break-all: artifact references (file names, refs)
+                        // are officer-entered free text with no guaranteed
+                        // break points — on a narrow phone an unbroken long
+                        // one would otherwise force the whole page to
+                        // scroll horizontally instead of wrapping in place.
+                        className="max-w-full break-all rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-600"
                       >
                         {artifact}
                       </li>

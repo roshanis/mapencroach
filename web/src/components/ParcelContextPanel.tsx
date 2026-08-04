@@ -237,7 +237,13 @@ export function ParcelContextPanel({ context }: ParcelContextPanelProps) {
                           href={source.source_url}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-xs font-medium text-gov hover:underline"
+                          // -m-3.5 p-3.5 expands the tappable area to
+                          // Apple HIG's 44x44pt floor (14px padding around
+                          // a ~16px line box) without enlarging the visible
+                          // text — the extra padding is offset by an equal
+                          // negative margin, so the link's visual position
+                          // and size are unchanged.
+                          className="-m-3.5 inline-flex items-center p-3.5 text-xs font-medium text-gov hover:underline"
                         >
                           Source documentation
                         </a>

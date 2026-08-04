@@ -110,7 +110,7 @@ export function HistoricalImageryTimeline({ parcel }: { parcel: Parcel }) {
                 type="button"
                 aria-pressed={selected}
                 onClick={() => setSelectedId(scene.id)}
-                className={`rounded-md px-3 py-2 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-gov focus:ring-offset-1 ${
+                className={`min-h-11 rounded-md px-3 py-2 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-gov focus:ring-offset-1 ${
                   selected
                     ? "bg-gov text-white shadow-sm"
                     : "text-gray-600 hover:bg-white hover:text-gray-900"

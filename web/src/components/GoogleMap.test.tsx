@@ -80,6 +80,7 @@ describe("GoogleMap", () => {
         zoom: 11,
         mapId: "map-id",
         mapTypeId: "hybrid",
+        gestureHandling: "greedy",
       })
     );
     expect(addGeoJson).toHaveBeenCalledWith(

@@ -10,7 +10,21 @@ export interface TopBarProps {
 export function TopBar({ jurisdiction = "All Jurisdictions" }: TopBarProps) {
   return (
     <>
-      <header className="relative flex h-14 shrink-0 items-center justify-between border-b border-gray-200 bg-gov px-3 text-white sm:px-4">
+      <header
+        className={
+          // `min-h-14` (not `h-14`) so the safe-area top padding can grow
+          // the header on a notched/home-indicator device without
+          // clipping its contents; on devices with no inset it renders
+          // identically to a fixed h-14. Horizontal padding uses
+          // `max(base, inset)` so the notch in landscape widens the
+          // padding instead of stacking with it.
+          "relative flex min-h-14 shrink-0 items-center justify-between " +
+          "border-b border-gray-200 bg-gov pl-[max(0.75rem,env(safe-area-inset-left,0px))] " +
+          "pr-[max(0.75rem,env(safe-area-inset-right,0px))] pt-[env(safe-area-inset-top,0px)] " +
+          "text-white sm:pl-[max(1rem,env(safe-area-inset-left,0px))] " +
+          "sm:pr-[max(1rem,env(safe-area-inset-right,0px))]"
+        }
+      >
         <div className="flex min-w-0 items-center gap-3 sm:gap-4">
           <Link
             href="/"
@@ -34,7 +48,7 @@ export function TopBar({ jurisdiction = "All Jurisdictions" }: TopBarProps) {
           <PersonaSwitcher />
           <Link
             href="/personas"
-            className="hidden rounded border border-white/25 px-2.5 py-1 text-xs text-white/80 hover:bg-white/10 hover:text-white sm:inline-flex"
+            className="hidden min-h-11 items-center rounded border border-white/25 px-2.5 text-xs text-white/80 hover:bg-white/10 hover:text-white sm:inline-flex"
           >
             Demo roles
           </Link>

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { useRouter } from "next/navigation";
 import { CasesTable } from "./CasesTable";
 import type { Case } from "@/lib/types";
@@ -136,8 +136,16 @@ describe("CasesTable", () => {
 
     render(<CasesTable cases={cases} />);
 
-    // HEARING_SCHEDULED is index 6 (0-based) of 11 -> Step 7 of 11
-    expect(screen.getByText("Step 7 of 11")).toBeInTheDocument();
+    // HEARING_SCHEDULED is index 6 (0-based) of 11 -> Step 7 of 11.
+    // Checked in both the table row and the mobile card: they share the
+    // same StageProgress sub-component, so the step text must appear in
+    // both presentations, not just the table.
+    expect(
+      within(screen.getByTestId("case-row")).getByText("Step 7 of 11")
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("case-card")).getByText("Step 7 of 11")
+    ).toBeInTheDocument();
   });
 
   it('renders "—" for what-can-happen-next when allowed_transitions is undefined', () => {
@@ -165,9 +173,11 @@ describe("CasesTable", () => {
 
     render(<CasesTable cases={cases} />);
 
-    expect(screen.getByText("RESPONSE WINDOW")).toBeInTheDocument();
-    expect(screen.getByText("DISMISSED FALSE POSITIVE")).toBeInTheDocument();
-    expect(screen.getByText("+2 more")).toBeInTheDocument();
+    // The table and the mobile card each render their own NextSteps chips
+    // from the same transitions array — expect one match per presentation.
+    expect(screen.getAllByText("RESPONSE WINDOW")).toHaveLength(2);
+    expect(screen.getAllByText("DISMISSED FALSE POSITIVE")).toHaveLength(2);
+    expect(screen.getAllByText("+2 more")).toHaveLength(2);
   });
 
   it("uses a real link to navigate to the case", () => {
@@ -175,7 +185,11 @@ describe("CasesTable", () => {
 
     render(<CasesTable cases={cases} />);
 
-    expect(screen.getByRole("link", { name: "CASE-9001" })).toHaveAttribute(
+    // Scoped to the desktop <table>: the mobile card also links to the
+    // case with the same accessible name, so an unscoped query would be
+    // ambiguous.
+    const table = screen.getByRole("table");
+    expect(within(table).getByRole("link", { name: "CASE-9001" })).toHaveAttribute(
       "href",
       "/cases/CASE-9001"
     );
@@ -188,8 +202,9 @@ describe("CasesTable", () => {
 
     render(<CasesTable cases={cases} />);
 
-    expect(screen.getByText("CASE-1")).toBeInTheDocument();
-    expect(screen.getByText("PCL-77")).toBeInTheDocument();
+    const row = screen.getByTestId("case-row");
+    expect(within(row).getByText("CASE-1")).toBeInTheDocument();
+    expect(within(row).getByText("PCL-77")).toBeInTheDocument();
   });
 
   it("places every case in exactly one section (no duplicates across sections)", () => {
@@ -307,5 +322,89 @@ describe("CasesTable", () => {
       "true"
     );
     expect(screen.getAllByTestId("case-row")).toHaveLength(1);
+  });
+});
+
+describe("CasesTable — mobile card presentation", () => {
+  it("renders one card per case alongside the table rows, from the same sorted data", () => {
+    const cases: Case[] = [
+      makeCase({ id: "A", state: "NEW", state_since: daysAgoIso(1) }),
+      makeCase({ id: "B", state: "TRIAGED", state_since: daysAgoIso(20) }),
+      makeCase({ id: "C", state: "INSPECTED", state_since: daysAgoIso(5) }),
+    ];
+
+    render(<CasesTable cases={cases} />);
+
+    const rows = screen.getAllByTestId("case-row");
+    const cards = screen.getAllByTestId("case-card");
+    expect(rows).toHaveLength(3);
+    expect(cards).toHaveLength(3);
+    // Same days-in-stage-descending order in both presentations.
+    expect(cards.map((c) => c.getAttribute("data-case-id"))).toEqual(
+      rows.map((r) => r.getAttribute("data-case-id"))
+    );
+    expect(cards.map((c) => c.getAttribute("data-case-id"))).toEqual([
+      "B",
+      "C",
+      "A",
+    ]);
+  });
+
+  it("keeps every column's information reachable in the card layout — case link, parcel, stage, time in stage, and next steps", () => {
+    const cases: Case[] = [
+      makeCase({
+        id: "CASE-1",
+        parcel_id: "PCL-77",
+        state: "SHOW_CAUSE_ISSUED",
+        state_since: daysAgoIso(4),
+        allowed_transitions: ["RESPONSE_WINDOW", "DISMISSED_FALSE_POSITIVE"],
+      }),
+    ];
+
+    render(<CasesTable cases={cases} />);
+
+    const card = screen.getByTestId("case-card");
+    expect(within(card).getByRole("link", { name: "CASE-1" })).toHaveAttribute(
+      "href",
+      "/cases/CASE-1"
+    );
+    expect(within(card).getByText("PCL-77")).toBeInTheDocument();
+    expect(within(card).getByTestId("case-state-chip")).toHaveTextContent(
+      "Show Cause Issued"
+    );
+    expect(card).toHaveTextContent("4 days");
+    expect(within(card).getByText("RESPONSE WINDOW")).toBeInTheDocument();
+    expect(within(card).getByText("DISMISSED FALSE POSITIVE")).toBeInTheDocument();
+  });
+
+  it("filters and buckets the card list the same way it filters the table", () => {
+    const cases: Case[] = [
+      makeCase({ id: "CASE-1", parcel_id: "PCL-ALPHA", state: "NEW" }),
+      makeCase({ id: "CASE-2", parcel_id: "PCL-BETA", state: "NEW" }),
+    ];
+
+    render(<CasesTable cases={cases} />);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search cases" }), {
+      target: { value: "BETA" },
+    });
+
+    const cards = screen.getAllByTestId("case-card");
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toHaveAttribute("data-case-id", "CASE-2");
+  });
+
+  it("places every case's card in exactly one section, matching the table", () => {
+    const cases: Case[] = [
+      makeCase({ id: "1", state: "NEW" }),
+      makeCase({ id: "2", state: "STAYED_BY_COURT" }),
+      makeCase({ id: "3", state: "CLOSED" }),
+    ];
+
+    render(<CasesTable cases={cases} />);
+
+    const cards = screen.getAllByTestId("case-card");
+    expect(cards).toHaveLength(3);
+    const ids = cards.map((c) => c.getAttribute("data-case-id"));
+    expect(new Set(ids).size).toBe(3);
   });
 });

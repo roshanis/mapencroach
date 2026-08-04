@@ -12,7 +12,7 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
       <dt className="text-xs uppercase tracking-wide text-gray-500">
         {label}
       </dt>
-      <dd className="text-sm font-medium text-gray-900">{value}</dd>
+      <dd className="break-words text-sm font-medium text-gray-900">{value}</dd>
     </div>
   );
 }

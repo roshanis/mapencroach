@@ -7,6 +7,9 @@ export interface BasemapToggleProps {
 
 const ACTIVE_CLASSES = "bg-gov text-white";
 const INACTIVE_CLASSES = "text-gray-600 hover:bg-gray-100";
+// 44px is the iOS HIG tap-target floor; the text stays text-xs, only the
+// button's hit area grows.
+const BUTTON_CLASSES = "flex min-h-11 items-center rounded px-3 font-medium";
 
 export function BasemapToggle({ mode, onChange }: BasemapToggleProps) {
   return (
@@ -18,7 +21,7 @@ export function BasemapToggle({ mode, onChange }: BasemapToggleProps) {
         type="button"
         data-testid="basemap-satellite"
         onClick={() => onChange("satellite")}
-        className={`rounded px-2 py-1 font-medium ${
+        className={`${BUTTON_CLASSES} ${
           mode === "satellite" ? ACTIVE_CLASSES : INACTIVE_CLASSES
         }`}
       >
@@ -28,7 +31,7 @@ export function BasemapToggle({ mode, onChange }: BasemapToggleProps) {
         type="button"
         data-testid="basemap-streets"
         onClick={() => onChange("streets")}
-        className={`rounded px-2 py-1 font-medium ${
+        className={`${BUTTON_CLASSES} ${
           mode === "streets" ? ACTIVE_CLASSES : INACTIVE_CLASSES
         }`}
       >

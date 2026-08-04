@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { AlertsTable } from "./AlertsTable";
 import {
   ALERT_STATUS_DESCRIPTIONS,
@@ -49,7 +49,10 @@ const ALERTS: Alert[] = [
 describe("AlertsTable — explainability (WP6)", () => {
   it("sets a title on the Severity header cell explaining the scoring formula", () => {
     render(<AlertsTable alerts={ALERTS} />);
-    const header = screen.getByText("Severity");
+    // Scoped to the desktop <table>: the mobile card list also labels a
+    // field "Severity", so an unscoped query would be ambiguous.
+    const table = screen.getByRole("table");
+    const header = within(table).getByText("Severity");
     expect(header).toHaveAttribute("title", SEVERITY_EXPLANATION);
   });
 
@@ -123,7 +126,8 @@ describe("AlertsTable — explainability (WP6)", () => {
   it("uses real parcel links instead of pointer-only table rows", () => {
     render(<AlertsTable alerts={ALERTS} />);
 
-    expect(screen.getByRole("link", { name: "PCL-1" })).toHaveAttribute(
+    const table = screen.getByRole("table");
+    expect(within(table).getByRole("link", { name: "PCL-1" })).toHaveAttribute(
       "href",
       "/parcels/PCL-1"
     );
@@ -154,5 +158,63 @@ describe("AlertsTable — explainability (WP6)", () => {
 
     expect(screen.getByTestId("tier-filter")).toHaveValue("red");
     expect(screen.getAllByTestId("alert-row")).toHaveLength(1);
+  });
+});
+
+describe("AlertsTable — mobile card presentation", () => {
+  it("renders one card per alert alongside the table rows, from the same filtered data", () => {
+    render(<AlertsTable alerts={ALERTS} />);
+
+    const rows = screen.getAllByTestId("alert-row");
+    const cards = screen.getAllByTestId("alert-card");
+    expect(rows).toHaveLength(ALERTS.length);
+    expect(cards).toHaveLength(ALERTS.length);
+    expect(cards.map((c) => c.getAttribute("data-alert-id"))).toEqual(
+      rows.map((r) => r.getAttribute("data-alert-id"))
+    );
+  });
+
+  it("keeps every column's information reachable in the card layout — tier, parcel, severity, area, status, and age", () => {
+    render(<AlertsTable alerts={ALERTS} />);
+
+    const card = screen
+      .getAllByTestId("alert-card")
+      .find((c) => c.getAttribute("data-alert-id") === "ALT-1")!;
+
+    expect(within(card).getByTestId("tier-chip")).toHaveTextContent("Red");
+    expect(within(card).getByRole("link", { name: "PCL-1" })).toHaveAttribute(
+      "href",
+      "/parcels/PCL-1"
+    );
+    expect(within(card).getByText("92")).toBeInTheDocument(); // severity
+    expect(within(card).getByText((1000).toLocaleString())).toBeInTheDocument(); // area
+    const statusValue = within(card).getByText("open");
+    expect(statusValue).toHaveAttribute("title", ALERT_STATUS_DESCRIPTIONS.open);
+    expect(card).toHaveTextContent("ago"); // age (relative, e.g. "Xd ago")
+  });
+
+  it("filters the card list the same way it filters the table", () => {
+    render(<AlertsTable alerts={ALERTS} />);
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search alerts" }), {
+      target: { value: "PCL-2" },
+    });
+
+    const cards = screen.getAllByTestId("alert-card");
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toHaveAttribute("data-alert-id", "ALT-2");
+  });
+
+  it("shows the same no-results message in the card list as the table when filters exclude everything", () => {
+    render(<AlertsTable alerts={ALERTS} />);
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search alerts" }), {
+      target: { value: "no-such-alert" },
+    });
+
+    expect(screen.queryAllByTestId("alert-card")).toHaveLength(0);
+    // "No alerts match..." appears once in the table body and once in the
+    // card list fallback.
+    expect(screen.getAllByText("No alerts match the current filters.")).toHaveLength(2);
   });
 });

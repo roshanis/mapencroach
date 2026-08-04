@@ -74,7 +74,7 @@ export function PersonaSwitcher() {
         onChange={(e) => {
           if (e.target.value) handleSelect(e.target.value);
         }}
-        className="rounded border border-white/30 bg-gov px-2 py-1 text-xs text-white"
+        className="min-h-11 rounded border border-white/30 bg-gov px-2 text-xs text-white"
       >
         <option value="" disabled>
           Switch persona…
@@ -91,7 +91,7 @@ export function PersonaSwitcher() {
           data-testid="persona-reset"
           title="Reset to default officer"
           onClick={handleReset}
-          className="rounded px-1 text-white/70 hover:text-white"
+          className="flex min-h-11 min-w-11 items-center justify-center rounded px-1 text-white/70 hover:text-white"
         >
           ×
         </button>

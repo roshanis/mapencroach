@@ -88,7 +88,7 @@ export default function CommandMapPage() {
 
   if (loadState !== "ready") {
     return (
-      <div className="flex min-h-screen flex-col bg-slate-50">
+      <div className="flex min-h-screen-safe flex-col bg-slate-50">
         <TopBar jurisdiction="Haridwar–Roorkee Development Authority" />
         <main className="flex flex-1 items-center justify-center p-6">
           <div className="max-w-md rounded-lg border border-slate-200 bg-white p-6 text-center shadow-sm">
@@ -123,7 +123,7 @@ export default function CommandMapPage() {
   }
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-screen-safe flex-col">
       <TopBar jurisdiction="Haridwar–Roorkee Development Authority" />
       <div className="flex flex-1 overflow-hidden">
         <AlertSidebar
@@ -151,18 +151,24 @@ export default function CommandMapPage() {
             onAlertClick={handleAlertMarkerClick}
             selectedAlertId={selectedAlertId}
           />
-          <button
-            type="button"
-            onClick={() => setMobileQueueOpen(true)}
-            className="absolute bottom-4 left-1/2 z-20 -translate-x-1/2 rounded-full bg-gov px-4 py-2 text-sm font-semibold text-white shadow-lg md:hidden"
-          >
-            Open work queue
-          </button>
+          {/* Hidden once the queue is already open: it sits behind the
+              sidebar's overlay (lower z-index) at that point, so leaving it
+              mounted would keep a focusable-but-invisible button in the tab
+              order for no benefit — the same panel is already open. */}
+          {!mobileQueueOpen && (
+            <button
+              type="button"
+              onClick={() => setMobileQueueOpen(true)}
+              className="absolute bottom-[calc(1rem_+_env(safe-area-inset-bottom,0px))] left-1/2 z-20 flex min-h-11 -translate-x-1/2 items-center rounded-full bg-gov px-4 py-2 text-sm font-semibold text-white shadow-lg md:hidden"
+            >
+              Open work queue
+            </button>
+          )}
           <MapIntroPanel />
           <div className="pointer-events-none absolute left-1/2 top-3 hidden -translate-x-1/2 lg:block">
             <KpiStrip parcels={parcels} alerts={alerts} cases={cases} />
           </div>
-          <div className="absolute bottom-3 left-3">
+          <div className="absolute bottom-[calc(0.75rem_+_env(safe-area-inset-bottom,0px))] left-[calc(0.75rem_+_env(safe-area-inset-left,0px))]">
             <MapLegend categories={parcels.map((parcel) => parcel.land_category)} />
           </div>
           {selectedAlert && selectedParcel && (

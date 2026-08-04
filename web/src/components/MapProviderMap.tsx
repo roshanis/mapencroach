@@ -14,7 +14,7 @@ function FallbackMap({
       <MapLibreMap {...props} />
       <div
         role="status"
-        className="absolute bottom-7 left-3 z-10 max-w-xs rounded border border-amber-300 bg-amber-50/95 px-3 py-2 text-xs font-medium text-amber-950 shadow"
+        className="absolute bottom-7 left-[max(0.75rem,env(safe-area-inset-left,0px))] z-10 max-w-xs rounded border border-amber-300 bg-amber-50/95 px-3 py-2 text-xs font-medium text-amber-950 shadow"
       >
         {reason}
       </div>

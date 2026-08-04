@@ -2,6 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import type * as MapLibreGL from "maplibre-gl";
+// Without this, maplibre-gl never gets its own CSS: no `touch-action`
+// rules on the canvas container (so its own pinch/pan gesture handling
+// fights the browser's native ones on touch), and the built-in
+// zoom/attribution controls render unstyled/unpositioned.
+import "maplibre-gl/dist/maplibre-gl.css";
 import { LAND_CATEGORY_COLORS } from "@/lib/types";
 import { createAlertMarkerElement, styleAlertMarker } from "./alertMarker";
 import { BasemapToggle, type BasemapMode } from "./BasemapToggle";
@@ -131,9 +136,17 @@ export default function MapLibreMap({
         },
         center,
         zoom,
+        // This is a flat, top-down parcel map with no compass/reset
+        // control, so letting a two-finger touch twist (or a desktop
+        // right-drag) rotate it would leave someone stuck looking at an
+        // off-north map with no way back. Pinch-to-zoom and one-finger
+        // pan/drag are unaffected.
+        dragRotate: false,
+        touchPitch: false,
       });
       mapInstance = map;
       mapRef.current = map;
+      map.touchZoomRotate.disableRotation();
 
       map.on("load", () => {
         if (cancelled) return;
@@ -221,7 +234,7 @@ export default function MapLibreMap({
         data-testid="maplibre-container"
         className="h-full w-full"
       />
-      <div className="absolute left-3 top-3 z-10">
+      <div className="absolute left-[max(0.75rem,env(safe-area-inset-left,0px))] top-[max(0.75rem,env(safe-area-inset-top,0px))] z-10">
         <BasemapToggle mode={mode} onChange={handleBasemapChange} />
       </div>
     </div>

@@ -63,7 +63,8 @@ function buildSections(cases: Case[]): Section[] {
 
   // In due process: sort by days-in-stage descending; break ties on case id
   // for deterministic, repeatable ordering (matters when state_since is
-  // absent for several cases).
+  // absent for several cases). This ordering feeds both the table and the
+  // mobile card list below — there is exactly one sort, not one per layout.
   const sortedActive = [...active].sort((a, b) => {
     const diff =
       (daysInStage(b.state_since) ?? -1) - (daysInStage(a.state_since) ?? -1);
@@ -121,6 +122,95 @@ function StageProgress({ state }: { state: Case["state"] }) {
         Step {index + 1} of {CASE_STATE_CHAIN.length}
       </span>
     </div>
+  );
+}
+
+/** Formats days-in-stage the same way for the table cell and the card. */
+function daysLabel(days: number | null): string {
+  return days === null ? "—" : `${days} days`;
+}
+
+const CASE_LINK_CLASSES =
+  "text-gov underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-gov/30";
+
+/** One case's `<tr>`. Every value it renders (days label, state chip,
+ * progress, next steps) is also rendered by CaseCard below from the same
+ * `c` — the two presentations share the data and the sub-components
+ * (CaseStateChip, StageProgress, NextSteps), so there is one place that
+ * knows how to render a case, not two drifting copies. */
+function CaseTableRow({ c }: { c: Case }) {
+  const days = daysInStage(c.state_since);
+  return (
+    <tr
+      data-testid="case-row"
+      data-case-id={c.id}
+      className="border-t border-gray-100 hover:bg-gray-50"
+    >
+      <td className="px-4 py-2 font-medium">
+        <Link href={`/cases/${c.id}`} className={CASE_LINK_CLASSES}>
+          {c.id}
+        </Link>
+      </td>
+      <td className="px-4 py-2 text-gray-700">{c.parcel_id}</td>
+      <td className="px-4 py-2">
+        <CaseStateChip state={c.state} />
+        <StageProgress state={c.state} />
+      </td>
+      <td className="px-4 py-2 text-gray-500">{daysLabel(days)}</td>
+      <td className="px-4 py-2">
+        <NextSteps transitions={c.allowed_transitions} />
+      </td>
+    </tr>
+  );
+}
+
+/** One case's card presentation for narrow screens (< sm). Shows the same
+ * five columns as CaseTableRow — case, parcel, stage (+ progress), time in
+ * stage, and next steps — just laid out as a labeled stack instead of table
+ * cells, so nothing is dropped on mobile. */
+function CaseCard({ c }: { c: Case }) {
+  const days = daysInStage(c.state_since);
+  return (
+    <li
+      data-testid="case-card"
+      data-case-id={c.id}
+      className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <dl>
+            <dt className="text-xs uppercase tracking-wide text-gray-500">Case</dt>
+            <dd>
+              <Link href={`/cases/${c.id}`} className={`text-base font-semibold ${CASE_LINK_CLASSES}`}>
+                {c.id}
+              </Link>
+            </dd>
+          </dl>
+        </div>
+        <span className="shrink-0 text-xs text-gray-500">{daysLabel(days)}</span>
+      </div>
+      <dl className="mt-3 flex flex-col gap-3 text-sm">
+        <div>
+          <dt className="text-xs uppercase tracking-wide text-gray-500">Parcel</dt>
+          <dd className="font-medium text-gray-900">{c.parcel_id}</dd>
+        </div>
+        <div>
+          <dt className="text-xs uppercase tracking-wide text-gray-500">Stage</dt>
+          <dd className="mt-1">
+            <CaseStateChip state={c.state} />
+            <StageProgress state={c.state} />
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs uppercase tracking-wide text-gray-500">
+            What can happen next
+          </dt>
+          <dd className="mt-1">
+            <NextSteps transitions={c.allowed_transitions} />
+          </dd>
+        </div>
+      </dl>
+    </li>
   );
 }
 
@@ -213,7 +303,7 @@ export function CasesTable({ cases }: CasesTableProps) {
                 setBucketFilter(bucket.key);
                 persistFilters({ bucket: bucket.key });
               }}
-              className={`rounded-full px-3 py-1.5 text-xs font-medium ring-1 ring-inset ${
+              className={`inline-flex min-h-11 items-center justify-center rounded-full px-3 py-1.5 text-xs font-medium ring-1 ring-inset ${
                 bucketFilter === bucket.key
                   ? "bg-gov text-white ring-gov"
                   : "bg-white text-slate-600 ring-slate-300 hover:bg-slate-50"
@@ -234,52 +324,37 @@ export function CasesTable({ cases }: CasesTableProps) {
           <h3 className="text-xs uppercase tracking-wide text-gray-500">
             {section.title}
           </h3>
-          <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
-          <table className="min-w-[48rem] w-full border-collapse text-sm">
-            <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
-              <tr>
-                <th className="px-4 py-2">Case</th>
-                <th className="px-4 py-2">Parcel</th>
-                <th className="px-4 py-2">Stage</th>
-                <th className="px-4 py-2">Time in stage</th>
-                <th className="px-4 py-2">What can happen next</th>
-              </tr>
-            </thead>
-            <tbody>
-              {section.cases.map((c) => {
-                const days = daysInStage(c.state_since);
-                return (
-                  <tr
-                    key={c.id}
-                    data-testid="case-row"
-                    data-case-id={c.id}
-                    className="border-t border-gray-100 hover:bg-gray-50"
-                  >
-                    <td className="px-4 py-2 font-medium">
-                      <Link
-                        href={`/cases/${c.id}`}
-                        className="text-gov underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-gov/30"
-                      >
-                        {c.id}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-2 text-gray-700">{c.parcel_id}</td>
-                    <td className="px-4 py-2">
-                      <CaseStateChip state={c.state} />
-                      <StageProgress state={c.state} />
-                    </td>
-                    <td className="px-4 py-2 text-gray-500">
-                      {days === null ? "—" : `${days} days`}
-                    </td>
-                    <td className="px-4 py-2">
-                      <NextSteps transitions={c.allowed_transitions} />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+
+          {/* Real <table> for sm and up; a stacked card list takes over
+              below sm (see AlertsTable for the same pattern). Both read
+              from `section.cases` — the same already-sorted array — and
+              both delegate per-case rendering to CaseTableRow/CaseCard,
+              so filtering, the days-in-stage sort, and every column stay
+              identical between the two presentations. */}
+          <div className="hidden overflow-x-auto rounded-lg border border-gray-200 bg-white sm:block">
+            <table className="min-w-[48rem] w-full border-collapse text-sm">
+              <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
+                <tr>
+                  <th className="px-4 py-2">Case</th>
+                  <th className="px-4 py-2">Parcel</th>
+                  <th className="px-4 py-2">Stage</th>
+                  <th className="px-4 py-2">Time in stage</th>
+                  <th className="px-4 py-2">What can happen next</th>
+                </tr>
+              </thead>
+              <tbody>
+                {section.cases.map((c) => (
+                  <CaseTableRow key={c.id} c={c} />
+                ))}
+              </tbody>
+            </table>
           </div>
+
+          <ul data-testid="case-card-list" className="flex flex-col gap-3 sm:hidden">
+            {section.cases.map((c) => (
+              <CaseCard key={c.id} c={c} />
+            ))}
+          </ul>
         </div>
       ))}
       {sections.length === 0 && (

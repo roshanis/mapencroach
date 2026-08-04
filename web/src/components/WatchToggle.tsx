@@ -135,7 +135,7 @@ export function WatchToggle({ alert }: WatchToggleProps) {
         aria-pressed={watching}
         onClick={watching ? handleStop : handleStart}
         disabled={submitting}
-        className={`inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-semibold disabled:opacity-50 ${
+        className={`inline-flex min-h-11 items-center justify-center rounded-md px-3 py-2 text-sm font-semibold disabled:opacity-50 ${
           watching
             ? "border border-gray-300 text-gray-700 hover:bg-gray-50"
             : "bg-gov text-white hover:bg-gov-dark"

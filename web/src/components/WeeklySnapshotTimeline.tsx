@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { CSSProperties } from "react";
 import { authHeaders } from "@/lib/api";
 import type { CaptureAttempt, CaptureStatus } from "@/lib/types";
 
@@ -147,6 +148,21 @@ function abbreviateHash(sha256: string): string {
 const THUMBNAIL_WIDTH = 160;
 const THUMBNAIL_HEIGHT = 90;
 
+/** Shared box sizing for every one of CapturedWeekEvidence's image-state
+ * boxes (see THUMBNAIL_WIDTH/HEIGHT above for why they must all match).
+ * `maxWidth: 100%` plus a matching `aspectRatio` lets the box shrink below
+ * its usual 160px on very narrow viewports (so it never forces the row to
+ * overflow horizontally) while keeping the thumbnail's proportions —
+ * rather than a fixed pixel box that simply overflows its container. */
+function thumbnailBoxStyle(): CSSProperties {
+  return {
+    width: THUMBNAIL_WIDTH,
+    height: THUMBNAIL_HEIGHT,
+    maxWidth: "100%",
+    aspectRatio: `${THUMBNAIL_WIDTH} / ${THUMBNAIL_HEIGHT}`,
+  };
+}
+
 /**
  * Outcomes for fetching a captured week's scene image.
  *
@@ -275,13 +291,13 @@ function CapturedWeekEvidence({
   const { state: imageState, retry } = useCapturedImage(attempt.image_url);
 
   return (
-    <div className="mt-1.5 flex flex-wrap items-start gap-3">
+    <div className="mt-1.5 flex min-w-0 flex-wrap items-start gap-3">
       {imageState.status === "loading" && (
         <div
           data-testid="snapshot-week-thumbnail-loading"
           role="status"
           aria-label={`Loading satellite image for week ${weekKey} (week of ${dateLabel}), parcel ${parcelId}`}
-          style={{ width: THUMBNAIL_WIDTH, height: THUMBNAIL_HEIGHT }}
+          style={thumbnailBoxStyle()}
           className="flex shrink-0 items-center justify-center rounded border border-gray-200 bg-gray-50 text-[11px] text-gray-500"
         >
           Loading image…
@@ -312,7 +328,7 @@ function CapturedWeekEvidence({
             alt={`Satellite image captured for week ${weekKey} (week of ${dateLabel}), parcel ${parcelId}`}
             width={THUMBNAIL_WIDTH}
             height={THUMBNAIL_HEIGHT}
-            style={{ width: THUMBNAIL_WIDTH, height: THUMBNAIL_HEIGHT }}
+            style={thumbnailBoxStyle()}
             className="object-cover"
           />
         </a>
@@ -331,7 +347,7 @@ function CapturedWeekEvidence({
           data-testid="snapshot-week-not-retained"
           role="note"
           aria-label={`Image not retained for week ${weekKey} (week of ${dateLabel}), parcel ${parcelId} — hash on record only`}
-          style={{ width: THUMBNAIL_WIDTH, height: THUMBNAIL_HEIGHT }}
+          style={thumbnailBoxStyle()}
           className="flex shrink-0 flex-col items-start justify-center gap-0.5 rounded border border-dashed border-gray-300 bg-gray-50 px-2.5 py-2"
         >
           <span className="text-xs font-semibold text-gray-700">
@@ -351,7 +367,7 @@ function CapturedWeekEvidence({
           data-testid="snapshot-week-unauthorized"
           role="note"
           aria-label={`Image not authorized for week ${weekKey} (week of ${dateLabel}), parcel ${parcelId} — the scene is retained but this session could not be authorized to view it`}
-          style={{ width: THUMBNAIL_WIDTH, height: THUMBNAIL_HEIGHT }}
+          style={thumbnailBoxStyle()}
           className="flex shrink-0 flex-col items-start justify-center gap-0.5 rounded border border-dashed border-amber-300 bg-amber-50 px-2.5 py-2"
         >
           <span className="text-xs font-semibold text-amber-800">
@@ -369,7 +385,7 @@ function CapturedWeekEvidence({
           data-testid="snapshot-week-load-error"
           role="alert"
           aria-label={`Image could not be loaded for week ${weekKey} (week of ${dateLabel}), parcel ${parcelId}`}
-          style={{ width: THUMBNAIL_WIDTH, height: THUMBNAIL_HEIGHT }}
+          style={thumbnailBoxStyle()}
           className="flex shrink-0 flex-col items-start justify-center gap-1 rounded border border-dashed border-red-300 bg-red-50 px-2.5 py-2"
         >
           <span className="text-xs font-semibold text-red-800">
@@ -386,7 +402,7 @@ function CapturedWeekEvidence({
         </div>
       )}
 
-      <div className="flex flex-col gap-1 pt-0.5 text-xs text-gray-600">
+      <div className="flex min-w-0 flex-col gap-1 pt-0.5 text-xs text-gray-600">
         {attempt.cloud_pct != null && (
           <span>{formatCloudPct(attempt.cloud_pct)}</span>
         )}
@@ -394,7 +410,11 @@ function CapturedWeekEvidence({
           <span
             data-testid="snapshot-week-sha256"
             title={attempt.sha256}
-            className="font-mono"
+            // The hash is already abbreviated (abbreviateHash), but
+            // break-all is a defensive backstop: an unbroken monospace
+            // string is exactly the shape that forces horizontal overflow
+            // on a narrow phone if a longer value ever slips through.
+            className="break-all font-mono"
           >
             sha256:{abbreviateHash(attempt.sha256)}
           </span>
