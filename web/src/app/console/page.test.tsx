@@ -253,8 +253,12 @@ describe("CommandMapPage", () => {
     });
     const map = screen.getByTestId("operational-map");
     const resolution = screen.getByRole("combobox", { name: "H3 resolution" });
+    const positioner = screen.getByTestId("h3-grid-control").parentElement;
 
     expect(toggle).not.toBeChecked();
+    expect(positioner?.className).toContain(
+      "top-[calc(4rem_+_env(safe-area-inset-top,0px))]"
+    );
     expect(map).toHaveAttribute("data-h3-visible", "false");
     expect(map).toHaveAttribute("data-h3-resolution", "11");
     expect(resolution).toBeDisabled();
