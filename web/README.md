@@ -8,8 +8,8 @@ CSS, Google Maps JavaScript API, and a MapLibre GL JS fallback.
 
 - `/` — Public product landing page.
 - `/console` — Command map: full-height Google map with parcel boundaries
-  (colored by land category) and alert markers (colored by tier), plus a
-  severity-sorted alert sidebar.
+  (colored by land category), an optional H3 analytical grid, and alert markers
+  (colored by tier), plus a severity-sorted alert sidebar.
 - `/parcels/[id]` — Parcel profile: attributes card, mini map, historical
   imagery comparison, linked alerts and cases, and a role-gated boundary-grade
   review control.
@@ -62,6 +62,18 @@ NEXT_PUBLIC_GOOGLE_MAP_ID=your_javascript_map_id
 If either value is missing, or Google cannot load, the interface explicitly
 falls back to the existing MapLibre satellite/street map. Restrict the browser
 key by website referrer and to the Maps JavaScript API; do not commit it.
+
+## H3 analytical grid
+
+Open `/console` and turn on **H3 analytical grid** in the upper-left map
+controls. Resolution 11 is the default; resolutions 9 and 10 show progressively
+larger cells. The cell count and map geometry update when the resolution
+changes, on both Google Maps and the MapLibre fallback.
+
+The grid is generated in the browser from the parcel geometries currently
+loaded in the console. It is screening and aggregation context only: an H3 cell
+is not a cadastral or parcel boundary, and it does not establish ownership,
+encroachment, authorization status, or legal evidence.
 
 ## Historical imagery
 

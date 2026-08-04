@@ -42,16 +42,26 @@ vi.mock("@/components/MapView", () => ({
   default: ({
     alerts,
     onAlertClick,
+    h3Cells,
+    h3Visible,
   }: {
     alerts: typeof FIXTURE_ALERTS;
     onAlertClick?: (id: string) => void;
+    h3Cells?: GeoJSON.FeatureCollection<GeoJSON.Polygon>;
+    h3Visible?: boolean;
   }) => (
-    <button
-      type="button"
-      onClick={() => alerts[0] && onAlertClick?.(alerts[0].id)}
+    <div
+      data-testid="operational-map"
+      data-h3-visible={String(Boolean(h3Visible))}
+      data-h3-resolution={h3Cells?.features[0]?.properties?.resolution}
     >
-      Select first map alert
-    </button>
+      <button
+        type="button"
+        onClick={() => alerts[0] && onAlertClick?.(alerts[0].id)}
+      >
+        Select first map alert
+      </button>
+    </div>
   ),
 }));
 
@@ -233,5 +243,30 @@ describe("CommandMapPage", () => {
     expect(compactWrapper.className).not.toContain("absolute");
 
     expect(screen.getAllByTestId("kpi-strip")).toHaveLength(2);
+  });
+
+  it("shows an off-by-default H3 control and updates the live map without replacing parcels", async () => {
+    render(<CommandMapPage />);
+
+    const toggle = await screen.findByRole("checkbox", {
+      name: "H3 analytical grid",
+    });
+    const map = screen.getByTestId("operational-map");
+    const resolution = screen.getByRole("combobox", { name: "H3 resolution" });
+
+    expect(toggle).not.toBeChecked();
+    expect(map).toHaveAttribute("data-h3-visible", "false");
+    expect(map).toHaveAttribute("data-h3-resolution", "11");
+    expect(resolution).toBeDisabled();
+
+    fireEvent.click(toggle);
+    expect(map).toHaveAttribute("data-h3-visible", "true");
+    expect(resolution).toBeEnabled();
+    expect(screen.getByText(/\d+ cells/)).toBeInTheDocument();
+
+    fireEvent.change(resolution, { target: { value: "10" } });
+    await waitFor(() => {
+      expect(map).toHaveAttribute("data-h3-resolution", "10");
+    });
   });
 });

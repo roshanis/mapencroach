@@ -30,4 +30,16 @@ describe("MapLegend", () => {
     expect(screen.getByText("Green")).toBeInTheDocument();
     expect(screen.getByText("Legacy")).toBeInTheDocument();
   });
+
+  it("labels H3 cells separately from legal parcel boundaries only while visible", () => {
+    const { rerender } = render(
+      <MapLegend categories={["forest"]} h3Visible />
+    );
+
+    expect(screen.getByText("H3 analytical cells")).toBeInTheDocument();
+    expect(screen.getByText("Not parcel boundaries")).toBeInTheDocument();
+
+    rerender(<MapLegend categories={["forest"]} h3Visible={false} />);
+    expect(screen.queryByText("H3 analytical cells")).not.toBeInTheDocument();
+  });
 });

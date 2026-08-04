@@ -358,3 +358,10 @@ Nits: Sentinel-1B is dead (constellation = 1A+1C); Phase 0 of 2–4 weeks unreal
 ### PR description: updated on PR #1
 ### Sign-offs: Claude-Reviewer APPROVED (2026-08-02T18:32Z) · Codex APPROVED (2026-08-02, entry at log line ~338)
 ### Next: commit delta, merge PR #1, then reconcile PR #2 and redeploy demo
+
+## [AGENT: Claude] [2026-08-04T03:53Z]
+### Action: Completed and hardened the user's uncommitted H3 analytical-grid feature
+### Files changed: `web/src/lib/h3-grid.ts` (created via Sonnet 5 subagent against the pre-existing test contract; NOTE: a user-authored version of this file appeared on disk mid-task and was rewritten in place — parcelIds now first-encountered order instead of Set+sort, an untested isSafeInteger(maxCells) guard was dropped, DEFAULT_MAX_H3_CELLS 5000→4000; both versions satisfied the tests); `web/src/components/MapLibreMap.tsx` + `MapLibreMap.test.tsx` (red-first fix: H3 visibility/data effects no longer gate on isStyleLoaded(), which reports false while tiles stream after pan/zoom and silently dropped updates; h3LayersReadyRef alone is the correct guard)
+### Diff summary: buildH3Grid covers parcel polygons via polygonToCells (GeoJSON lng/lat), centroid-cell fallback for sub-cell parcels, cross-parcel dedup with contributing parcel ids, UNSUPPORTED_RESOLUTION/MAX_CELLS_EXCEEDED UI-safe errors with no partial output. Reviewed the user's uncommitted H3 wiring across console page, both map providers, MapLegend, map-types: sound apart from the fixed dropped-update window. Also confirmed commit 229b3c5 cleared all four Codex merge blockers plus web CI and AGENTS.md.
+### Verification: web 381 passed across 52 files (was 361 + 2 unloadable), ESLint clean, tsc clean. Backend untouched since 229b3c5.
+### Recommendations / Next steps: User to confirm or restore their own h3-grid.ts choices (order/guard/5000 constant). Commit the H3 batch on request; branch is otherwise merge-ready per Codex's blocker list.

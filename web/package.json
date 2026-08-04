@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@googlemaps/js-api-loader": "^2.1.1",
+    "h3-js": "^4.5.0",
     "maplibre-gl": "^4.7.1",
     "next": "^15.1.6",
     "react": "^19.0.0",

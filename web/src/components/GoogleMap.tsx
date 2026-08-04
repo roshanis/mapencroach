@@ -13,11 +13,23 @@ export interface GoogleMapProps extends OperationalMapProps {
   onProviderError: () => void;
 }
 
+const H3_STYLE: google.maps.Data.StyleOptions = {
+  clickable: false,
+  fillColor: "#06b6d4",
+  fillOpacity: 0.14,
+  strokeColor: "#0891b2",
+  strokeOpacity: 0.9,
+  strokeWeight: 1.5,
+  zIndex: 1,
+};
+
 export default function GoogleMap({
   apiKey,
   mapId,
   parcels,
   alerts,
+  h3Cells,
+  h3Visible = false,
   center = [78.03, 29.92],
   zoom = 11,
   onReady,
@@ -27,6 +39,9 @@ export default function GoogleMap({
 }: GoogleMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<google.maps.Map | null>(null);
+  const h3LayerRef = useRef<google.maps.Data | null>(null);
+  const h3CellsRef = useRef(h3Cells);
+  const h3VisibleRef = useRef(h3Visible);
   const markerElementsRef = useRef<
     Map<string, { setSelected: (selected: boolean) => void }>
   >(new Map());
@@ -80,6 +95,23 @@ export default function GoogleMap({
   // remove stale, matching MapLibreMap's marker Map<id, element> pattern),
   // and center/zoom via explicit map.panTo/map.setZoom calls in their own
   // effect. Do not silently assume props are live without doing this.
+  useEffect(() => {
+    h3CellsRef.current = h3Cells;
+    const layer = h3LayerRef.current;
+    if (!layer) return;
+
+    const previousFeatures: google.maps.Data.Feature[] = [];
+    layer.forEach((feature) => previousFeatures.push(feature));
+    previousFeatures.forEach((feature) => layer.remove(feature));
+    if (h3Cells) layer.addGeoJson(h3Cells);
+  }, [h3Cells]);
+
+  useEffect(() => {
+    h3VisibleRef.current = h3Visible;
+    const layer = h3LayerRef.current;
+    if (layer) layer.setMap(h3Visible ? mapRef.current : null);
+  }, [h3Visible]);
+
   useEffect(() => {
     let cancelled = false;
     const markers: google.maps.marker.AdvancedMarkerElement[] = [];
@@ -147,6 +179,14 @@ export default function GoogleMap({
           };
         });
 
+        // Keep H3 screening cells isolated from the parcel overlay so
+        // visibility and restyling cannot alter parcel behavior.
+        const h3Layer = new google.maps.Data();
+        h3LayerRef.current = h3Layer;
+        h3Layer.setStyle(H3_STYLE);
+        if (h3CellsRef.current) h3Layer.addGeoJson(h3CellsRef.current);
+        h3Layer.setMap(h3VisibleRef.current ? map : null);
+
         for (const alert of alerts) {
           const parcel = parcels.find((candidate) => candidate.id === alert.parcel_id);
           if (!parcel) continue;
@@ -210,6 +250,8 @@ export default function GoogleMap({
         marker.map = null;
       });
       markerElements.clear();
+      h3LayerRef.current?.setMap(null);
+      h3LayerRef.current = null;
       mapRef.current = null;
     };
     // Intentionally mount-only — see the CONSTRAINT comment above this
@@ -219,7 +261,8 @@ export default function GoogleMap({
     // (this effect runs once, deliberately omitting them from its dependency
     // array) -- callers that need to change any of them must remount this
     // component (e.g. by changing its `key`) rather than expect a live
-    // update.
+    // update. H3 data and visibility are the exception and stay live through
+    // the refs/effects above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

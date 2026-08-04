@@ -47,6 +47,11 @@ then use the action card to open its parcel record. The
 satellite/streets toggle is top-left if anyone asks for context. If Google is
 unavailable, the console states that it has switched to the MapLibre fallback.
 
+Optionally turn on **H3 analytical grid** in the upper-left controls and switch
+between resolutions 9, 10, and 11. Point out that the cyan hexagons provide a
+consistent analytical index for screening and aggregation; they are not parcel
+or cadastral boundaries and do not prove an encroachment.
+
 ### Stop 2 — Alert queue (`/alerts`)
 
 > "Officers don't watch a map all day — they work a queue, sorted by severity."

@@ -7,6 +7,7 @@ import {
 
 export interface MapLegendProps {
   categories: LandCategory[];
+  h3Visible?: boolean;
 }
 
 const TIER_DOTS: { label: string; color: string }[] = [
@@ -16,7 +17,7 @@ const TIER_DOTS: { label: string; color: string }[] = [
   { label: "Legacy", color: TIER_COLORS.legacy },
 ];
 
-export function MapLegend({ categories }: MapLegendProps) {
+export function MapLegend({ categories, h3Visible = false }: MapLegendProps) {
   const distinctCategories = categories.filter(
     (category, index) => categories.indexOf(category) === index
   );
@@ -58,6 +59,23 @@ export function MapLegend({ categories }: MapLegendProps) {
           ))}
         </ul>
       </div>
+      {h3Visible ? (
+        <div className="border-t border-gray-200 pt-2">
+          <div className="flex items-start gap-2">
+            <span
+              aria-hidden
+              className="mt-0.5 inline-block h-3 w-3 shrink-0 border-2 border-cyan-700 bg-cyan-100/60"
+              style={{
+                clipPath: "polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%)",
+              }}
+            />
+            <span className="leading-4 text-gray-700">
+              H3 analytical cells
+              <span className="block text-[10px] text-gray-500">Not parcel boundaries</span>
+            </span>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

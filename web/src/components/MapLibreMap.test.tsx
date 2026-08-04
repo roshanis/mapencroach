@@ -2,6 +2,43 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FIXTURE_ALERTS, FIXTURE_PARCELS } from "@/lib/fixtures";
 import MapLibreMap from "./MapLibreMap";
+import type { H3FeatureCollection } from "./map-types";
+
+const H3_CELLS: H3FeatureCollection = {
+  type: "FeatureCollection",
+  features: [
+    {
+      type: "Feature",
+      geometry: {
+        type: "Polygon",
+        coordinates: [
+          [
+            [78.02, 29.91],
+            [78.03, 29.91],
+            [78.035, 29.92],
+            [78.03, 29.93],
+            [78.02, 29.93],
+            [78.015, 29.92],
+            [78.02, 29.91],
+          ],
+        ],
+      },
+      properties: {
+        h3Index: "8b43a1030928fff",
+        resolution: 11,
+        parcelIds: ["parcel-1"],
+      },
+    },
+  ],
+};
+
+const UPDATED_H3_CELLS: H3FeatureCollection = {
+  ...H3_CELLS,
+  features: H3_CELLS.features.map((feature) => ({
+    ...feature,
+    properties: { ...feature.properties, resolution: 10 },
+  })),
+};
 
 // Fake maplibre-gl: a `Map` class that records its constructor args, exposes
 // `on("load", cb)` (capturing the callback so tests can fire it manually), a
@@ -17,6 +54,8 @@ const mapMocks = vi.hoisted(() => {
   const setLayoutProperty = vi.fn();
   const addSource = vi.fn();
   const addLayer = vi.fn();
+  const getSource = vi.fn();
+  const setH3Data = vi.fn();
   const fitBounds = vi.fn();
   const flyTo = vi.fn();
   const remove = vi.fn();
@@ -46,6 +85,10 @@ const mapMocks = vi.hoisted(() => {
     }
     addLayer(...args: unknown[]) {
       addLayer(...args);
+    }
+    getSource(...args: unknown[]) {
+      getSource(...args);
+      return args[0] === "h3-grid" ? { setData: setH3Data } : undefined;
     }
     fitBounds(...args: unknown[]) {
       fitBounds(...args);
@@ -89,6 +132,8 @@ const mapMocks = vi.hoisted(() => {
     setLayoutProperty,
     addSource,
     addLayer,
+    getSource,
+    setH3Data,
     fitBounds,
     flyTo,
     remove,
@@ -132,6 +177,8 @@ describe("MapLibreMap", () => {
     mapMocks.setLayoutProperty.mockClear();
     mapMocks.addSource.mockClear();
     mapMocks.addLayer.mockClear();
+    mapMocks.getSource.mockClear();
+    mapMocks.setH3Data.mockClear();
     mapMocks.fitBounds.mockClear();
     mapMocks.flyTo.mockClear();
     mapMocks.remove.mockClear();
@@ -316,5 +363,136 @@ describe("MapLibreMap", () => {
       "visibility",
       "none"
     );
+  });
+
+  it("renders H3 cells as a distinct analytical layer and updates data and visibility without remounting", async () => {
+    const { rerender } = render(
+      <MapLibreMap
+        parcels={FIXTURE_PARCELS.slice(0, 1)}
+        alerts={[]}
+        h3Cells={H3_CELLS}
+        h3Visible
+      />
+    );
+
+    await waitFor(() => expect(mapMocks.mapConstructor).toHaveBeenCalledOnce());
+    mapMocks.fireLoad();
+
+    expect(mapMocks.addSource).toHaveBeenCalledWith("h3-grid", {
+      type: "geojson",
+      data: H3_CELLS,
+    });
+    expect(mapMocks.addLayer).toHaveBeenCalledWith({
+      id: "h3-grid-fill",
+      type: "fill",
+      source: "h3-grid",
+      layout: { visibility: "visible" },
+      paint: {
+        "fill-color": "#06b6d4",
+        "fill-opacity": 0.14,
+      },
+    });
+    expect(mapMocks.addLayer).toHaveBeenCalledWith({
+      id: "h3-grid-outline",
+      type: "line",
+      source: "h3-grid",
+      layout: { visibility: "visible" },
+      paint: {
+        "line-color": "#0891b2",
+        "line-opacity": 0.9,
+        "line-width": 1.5,
+      },
+    });
+
+    mapMocks.setStyleLoaded(true);
+    mapMocks.setLayoutProperty.mockClear();
+    rerender(
+      <MapLibreMap
+        parcels={FIXTURE_PARCELS.slice(0, 1)}
+        alerts={[]}
+        h3Cells={H3_CELLS}
+        h3Visible={false}
+      />
+    );
+
+    expect(mapMocks.setLayoutProperty).toHaveBeenCalledWith(
+      "h3-grid-fill",
+      "visibility",
+      "none"
+    );
+    expect(mapMocks.setLayoutProperty).toHaveBeenCalledWith(
+      "h3-grid-outline",
+      "visibility",
+      "none"
+    );
+    expect(mapMocks.mapConstructor).toHaveBeenCalledOnce();
+    expect(mapMocks.remove).not.toHaveBeenCalled();
+
+    rerender(
+      <MapLibreMap
+        parcels={FIXTURE_PARCELS.slice(0, 1)}
+        alerts={[]}
+        h3Cells={UPDATED_H3_CELLS}
+        h3Visible={false}
+      />
+    );
+
+    expect(mapMocks.getSource).toHaveBeenCalledWith("h3-grid");
+    expect(mapMocks.setH3Data).toHaveBeenCalledWith(UPDATED_H3_CELLS);
+    expect(mapMocks.mapConstructor).toHaveBeenCalledOnce();
+    expect(mapMocks.remove).not.toHaveBeenCalled();
+  });
+
+  it("applies H3 visibility and data changes while tiles are still streaming (isStyleLoaded false after load)", async () => {
+    const { rerender } = render(
+      <MapLibreMap
+        parcels={FIXTURE_PARCELS.slice(0, 1)}
+        alerts={[]}
+        h3Cells={H3_CELLS}
+        h3Visible={false}
+      />
+    );
+
+    await waitFor(() => expect(mapMocks.mapConstructor).toHaveBeenCalledOnce());
+    mapMocks.fireLoad();
+
+    // Once the initial load event has fired, the H3 source/layers exist and
+    // setLayoutProperty/setData are safe -- but isStyleLoaded() reports
+    // false whenever sources are fetching tiles (e.g. right after a pan or
+    // zoom). A toggle or resolution change in that window must not be
+    // silently dropped.
+    mapMocks.setStyleLoaded(false);
+    mapMocks.setLayoutProperty.mockClear();
+
+    rerender(
+      <MapLibreMap
+        parcels={FIXTURE_PARCELS.slice(0, 1)}
+        alerts={[]}
+        h3Cells={H3_CELLS}
+        h3Visible
+      />
+    );
+
+    expect(mapMocks.setLayoutProperty).toHaveBeenCalledWith(
+      "h3-grid-fill",
+      "visibility",
+      "visible"
+    );
+    expect(mapMocks.setLayoutProperty).toHaveBeenCalledWith(
+      "h3-grid-outline",
+      "visibility",
+      "visible"
+    );
+
+    rerender(
+      <MapLibreMap
+        parcels={FIXTURE_PARCELS.slice(0, 1)}
+        alerts={[]}
+        h3Cells={UPDATED_H3_CELLS}
+        h3Visible
+      />
+    );
+
+    expect(mapMocks.setH3Data).toHaveBeenCalledWith(UPDATED_H3_CELLS);
   });
 });

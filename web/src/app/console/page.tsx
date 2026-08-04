@@ -4,6 +4,10 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import MapView from "@/components/MapView";
 import { AlertSidebar } from "@/components/AlertSidebar";
+import {
+  H3GridControl,
+  type H3Resolution,
+} from "@/components/H3GridControl";
 import { KpiStrip } from "@/components/KpiStrip";
 import { MapIntroPanel } from "@/components/MapIntroPanel";
 import { MapLegend } from "@/components/MapLegend";
@@ -12,6 +16,7 @@ import { TopBar } from "@/components/TopBar";
 import { WorkbenchSummary } from "@/components/WorkbenchSummary";
 import { getAlerts, getCases, getParcels } from "@/lib/api";
 import { PERSONA_META_COOKIE, readCookie } from "@/lib/cookies";
+import { buildH3Grid } from "@/lib/h3-grid";
 import type { Alert, Case, Parcel } from "@/lib/types";
 
 type LoadState = "loading" | "ready" | "error";
@@ -38,6 +43,8 @@ function CommandMapPageContent() {
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [role, setRole] = useState("case_officer");
   const [mobileQueueOpen, setMobileQueueOpen] = useState(false);
+  const [h3Visible, setH3Visible] = useState(false);
+  const [h3Resolution, setH3Resolution] = useState<H3Resolution>(11);
   const [selectedAlertId, setSelectedAlertId] = useState<string | undefined>();
   const [mapReady, setMapReady] = useState(false);
   const mapApiRef = useRef<{ panTo: (lngLat: [number, number]) => void } | null>(
@@ -71,6 +78,12 @@ function CommandMapPageContent() {
     () => new Map(cases.map((item) => [item.alert_id, item])),
     [cases]
   );
+
+  const h3Grid = useMemo(
+    () => buildH3Grid(parcels, h3Resolution),
+    [parcels, h3Resolution]
+  );
+  const canShowH3 = h3Visible && h3Grid.ok;
 
   // On first load, honor a ?alert= deep link once data has arrived. Unknown
   // or stale ids are ignored (no selection, no crash) and this only ever
@@ -214,6 +227,8 @@ function CommandMapPageContent() {
             <MapView
               parcels={parcels}
               alerts={alerts}
+              h3Cells={h3Grid.featureCollection}
+              h3Visible={canShowH3}
               onReady={(api) => {
                 mapApiRef.current = api;
                 setMapReady(true);
@@ -221,6 +236,16 @@ function CommandMapPageContent() {
               onAlertClick={handleAlertMarkerClick}
               selectedAlertId={selectedAlertId}
             />
+            <div className="absolute left-[calc(0.75rem_+_env(safe-area-inset-left,0px))] top-14 z-20">
+              <H3GridControl
+                visible={h3Visible}
+                resolution={h3Resolution}
+                cellCount={h3Grid.featureCollection.features.length}
+                warning={h3Grid.ok ? undefined : h3Grid.error.message}
+                onVisibleChange={setH3Visible}
+                onResolutionChange={setH3Resolution}
+              />
+            </div>
             {/* Hidden once the queue is already open: it sits behind the
                 sidebar's overlay (lower z-index) at that point, so leaving it
                 mounted would keep a focusable-but-invisible button in the tab
@@ -242,7 +267,10 @@ function CommandMapPageContent() {
               <KpiStrip parcels={parcels} alerts={alerts} cases={cases} />
             </div>
             <div className="absolute bottom-[calc(0.75rem_+_env(safe-area-inset-bottom,0px))] left-[calc(0.75rem_+_env(safe-area-inset-left,0px))]">
-              <MapLegend categories={parcels.map((parcel) => parcel.land_category)} />
+              <MapLegend
+                categories={parcels.map((parcel) => parcel.land_category)}
+                h3Visible={canShowH3}
+              />
             </div>
             {selectedAlert && selectedParcel && (
               <SelectedAlertCard

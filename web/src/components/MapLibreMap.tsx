@@ -10,7 +10,12 @@ import type * as MapLibreGL from "maplibre-gl";
 import { LAND_CATEGORY_COLORS } from "@/lib/types";
 import { BasemapToggle, type BasemapMode } from "./BasemapToggle";
 import { collectParcelVertices, createAlertMarkerElement } from "./map-markers";
-import type { OperationalMapProps } from "./map-types";
+import type { H3FeatureCollection, OperationalMapProps } from "./map-types";
+
+const EMPTY_H3_CELLS: H3FeatureCollection = {
+  type: "FeatureCollection",
+  features: [],
+};
 
 function buildLandCategoryMatchExpression(
   fallback: string
@@ -33,6 +38,8 @@ export default function MapLibreMap({
   onReady,
   onAlertClick,
   selectedAlertId,
+  h3Cells,
+  h3Visible = false,
 }: MapLibreMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<import("maplibre-gl").Map | null>(null);
@@ -41,6 +48,9 @@ export default function MapLibreMap({
   >(new Map());
   const onAlertClickRef = useRef(onAlertClick);
   const selectedAlertIdRef = useRef(selectedAlertId);
+  const h3CellsRef = useRef(h3Cells);
+  const h3VisibleRef = useRef(h3Visible);
+  const h3LayersReadyRef = useRef(false);
   const [mode, setMode] = useState<BasemapMode>("satellite");
   const modeRef = useRef(mode);
 
@@ -100,6 +110,36 @@ export default function MapLibreMap({
   // `selectedAlertId` above), and center/zoom via an explicit
   // `map.jumpTo({ center, zoom })` call in their own effect. Do not
   // silently assume props are live without doing this.
+  useEffect(() => {
+    h3CellsRef.current = h3Cells;
+
+    // h3LayersReadyRef is only set inside the "load" handler after the H3
+    // source/layers are created, so these updates are always safe. Don't
+    // also gate on isStyleLoaded(): it reports false whenever sources are
+    // still fetching tiles (e.g. right after a pan), and bailing there
+    // would silently drop the update.
+    const map = mapRef.current;
+    if (!map || !h3LayersReadyRef.current) return;
+
+    const source = map.getSource("h3-grid");
+    if (source && "setData" in source) {
+      (source as MapLibreGL.GeoJSONSource).setData(
+        h3Cells ?? EMPTY_H3_CELLS
+      );
+    }
+  }, [h3Cells]);
+
+  useEffect(() => {
+    h3VisibleRef.current = h3Visible;
+
+    const map = mapRef.current;
+    if (!map || !h3LayersReadyRef.current) return;
+
+    const visibility = h3Visible ? "visible" : "none";
+    map.setLayoutProperty("h3-grid-fill", "visibility", visibility);
+    map.setLayoutProperty("h3-grid-outline", "visibility", visibility);
+  }, [h3Visible]);
+
   useEffect(() => {
     let cancelled = false;
     let mapInstance: import("maplibre-gl").Map | null = null;
@@ -199,6 +239,11 @@ export default function MapLibreMap({
           },
         });
 
+        map.addSource("h3-grid", {
+          type: "geojson",
+          data: h3CellsRef.current ?? EMPTY_H3_CELLS,
+        });
+
         map.addLayer({
           id: "parcel-fill",
           type: "fill",
@@ -206,6 +251,30 @@ export default function MapLibreMap({
           paint: {
             "fill-color": buildLandCategoryMatchExpression("#999999"),
             "fill-opacity": 0.25,
+          },
+        });
+
+        const h3Visibility = h3VisibleRef.current ? "visible" : "none";
+        map.addLayer({
+          id: "h3-grid-fill",
+          type: "fill",
+          source: "h3-grid",
+          layout: { visibility: h3Visibility },
+          paint: {
+            "fill-color": "#06b6d4",
+            "fill-opacity": 0.14,
+          },
+        });
+
+        map.addLayer({
+          id: "h3-grid-outline",
+          type: "line",
+          source: "h3-grid",
+          layout: { visibility: h3Visibility },
+          paint: {
+            "line-color": "#0891b2",
+            "line-opacity": 0.9,
+            "line-width": 1.5,
           },
         });
 
@@ -218,6 +287,7 @@ export default function MapLibreMap({
             "line-width": 2.5,
           },
         });
+        h3LayersReadyRef.current = true;
 
         for (const alert of alerts) {
           const parcel = parcels.find((p) => p.id === alert.parcel_id);
@@ -271,6 +341,7 @@ export default function MapLibreMap({
       cancelled = true;
       markers.forEach((m) => m.remove());
       markerElements.clear();
+      h3LayersReadyRef.current = false;
       mapInstance?.remove();
       mapRef.current = null;
     };
@@ -279,8 +350,8 @@ export default function MapLibreMap({
     // `alerts`, `center`, and `zoom` from its dependency array: they are
     // intentionally captured only at mount time. Callers that need to change
     // any of them must remount this component (e.g. by changing its `key`)
-    // rather than expect a live update. Selection and callbacks stay live via
-    // refs above.
+    // rather than expect a live update. H3 cells, H3 visibility, selection,
+    // and callbacks stay live via refs/effects above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
