@@ -42,10 +42,27 @@ console falls back to MapLibre when either value is absent or Google cannot
 load; never commit the API key, and restrict it to approved web referrers and
 the Maps JavaScript API.
 
+## Real Sentinel-2 scenes over a parcel
+
+The API discovers real Sentinel-2 imagery for any parcel via the public
+[Earth Search](https://earth-search.aws.element84.com/v1) STAC catalog
+(AWS open data, free, no account needed):
+
+```bash
+curl -H "Authorization: Bearer <token>" \
+  "http://localhost:8000/parcels/parcel-9/scenes?days=90&max_cloud_pct=40&limit=8"
+```
+
+Each scene includes a browsable `thumbnail_href` and a `visual_href`
+(10 m true-colour COG). Discovery is separate from ingestion: a scene
+only enters the hash-on-ingest registry once its bytes are downloaded
+and sha256-hashed (`mapencroach.imagery.stac_search.ingest_candidate`).
+Point at a different STAC catalog with `MAPENCROACH_STAC_URL`.
+
 ## Tests
 
 ```bash
-cd backend && .venv/bin/pytest --cov && .venv/bin/ruff check .   # 200 tests
+cd backend && .venv/bin/pytest --cov && .venv/bin/ruff check .   # 278 tests
 cd web && npm test && npm run build                              # 24 tests
 ```
 

@@ -69,6 +69,7 @@ class SceneRegistry:
         cloud_pct: float,
         source: str,
         href: str,
+        stac_item: dict[str, Any] | None = None,
     ) -> SceneRecord:
         sha256 = hashlib.sha256(data).hexdigest()
 
@@ -85,7 +86,9 @@ class SceneRegistry:
             resolution_m=resolution_m,
             cloud_pct=cloud_pct,
             source=source,
-            stac_item=_build_stac_item(scene_id, captured_at, cloud_pct, resolution_m, href),
+            stac_item=stac_item
+            if stac_item is not None
+            else _build_stac_item(scene_id, captured_at, cloud_pct, resolution_m, href),
         )
         self._by_id[scene_id] = record
         self._by_hash[sha256] = record
