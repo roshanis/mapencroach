@@ -27,6 +27,7 @@ from mapencroach.domain.geography import (
     ParcelContext,
 )
 from mapencroach.domain.jurisdiction import JurisdictionTree
+from mapencroach.imagery.registry import SceneRegistry
 
 _PARCEL_SIZE_DEG = 0.001  # ~110m square at this latitude
 
@@ -92,6 +93,7 @@ class Store:
     cases: dict[str, CaseRecord] = field(default_factory=dict)
     parcel_contexts: dict[str, ParcelContext] = field(default_factory=dict)
     audit_chain: list[AuditEntry] = field(default_factory=list)
+    scene_registry: SceneRegistry = field(default_factory=SceneRegistry)
 
     root_jurisdiction_id: str = "state"
     district_a_id: str = "dist-a"

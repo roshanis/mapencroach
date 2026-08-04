@@ -11,6 +11,7 @@ vi.mock("./api", () => ({
   getAlerts: vi.fn(),
   getCase: vi.fn(),
   getCases: vi.fn(),
+  getJurisdictions: vi.fn(),
   getParcel: vi.fn(),
   getParcelContext: vi.fn(),
   getParcels: vi.fn(),

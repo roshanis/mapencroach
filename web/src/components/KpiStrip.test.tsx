@@ -50,6 +50,7 @@ function makeCase(id: string, state: Case["state"]): Case {
     id,
     alert_id: "ALT-1",
     parcel_id: "PCL-1",
+    jurisdiction_id: "UK-URBAN-01",
     state,
     events: [],
   };

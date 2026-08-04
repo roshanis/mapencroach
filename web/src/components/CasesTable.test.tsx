@@ -22,6 +22,7 @@ function makeCase(overrides: Partial<Case> & { id: string }): Case {
   return {
     alert_id: `ALT-${overrides.id}`,
     parcel_id: `PCL-${overrides.id}`,
+    jurisdiction_id: "UK-URBAN-01",
     state: "NEW",
     events: [],
     ...overrides,
