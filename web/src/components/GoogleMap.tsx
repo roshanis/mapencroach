@@ -2,25 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { LAND_CATEGORY_COLORS } from "@/lib/types";
-import type { AlertTier } from "@/lib/types";
 import { BasemapToggle, type BasemapMode } from "./BasemapToggle";
-import { loadGoogleMapLibraries } from "./googleMapsLoader";
+import { loadGoogleMapLibraries, onGoogleMapsAuthFailure } from "./googleMapsLoader";
+import { collectParcelVertices, createAlertMarkerElement } from "./map-markers";
 import type { OperationalMapProps } from "./map-types";
-
-const TIER_COLORS: Record<AlertTier, string> = {
-  green: "#1e8f4e",
-  amber: "#c98a12",
-  red: "#c4321f",
-  legacy: "#7b3fa0",
-};
-
-function styleAlertMarker(element: HTMLButtonElement, selected: boolean) {
-  element.dataset.selected = String(selected);
-  element.style.transform = selected ? "scale(1.45)" : "scale(1)";
-  element.style.boxShadow = selected
-    ? "0 0 0 4px rgba(255,255,255,0.9), 0 0 0 7px rgba(28,79,140,0.65)"
-    : "0 0 0 1px rgba(0,0,0,0.25)";
-}
 
 export interface GoogleMapProps extends OperationalMapProps {
   apiKey: string;
@@ -28,11 +13,23 @@ export interface GoogleMapProps extends OperationalMapProps {
   onProviderError: () => void;
 }
 
+const H3_STYLE: google.maps.Data.StyleOptions = {
+  clickable: false,
+  fillColor: "#06b6d4",
+  fillOpacity: 0.14,
+  strokeColor: "#0891b2",
+  strokeOpacity: 0.9,
+  strokeWeight: 1.5,
+  zIndex: 1,
+};
+
 export default function GoogleMap({
   apiKey,
   mapId,
   parcels,
   alerts,
+  h3Cells,
+  h3Visible = false,
   center = [78.03, 29.92],
   zoom = 11,
   onReady,
@@ -42,15 +39,26 @@ export default function GoogleMap({
 }: GoogleMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<google.maps.Map | null>(null);
-  const markerElementsRef = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const h3LayerRef = useRef<google.maps.Data | null>(null);
+  const h3CellsRef = useRef(h3Cells);
+  const h3VisibleRef = useRef(h3Visible);
+  const markerElementsRef = useRef<
+    Map<string, { setSelected: (selected: boolean) => void }>
+  >(new Map());
   const onAlertClickRef = useRef(onAlertClick);
   const selectedAlertIdRef = useRef(selectedAlertId);
   const onProviderErrorRef = useRef(onProviderError);
   const [mode, setMode] = useState<BasemapMode>("satellite");
   const [loading, setLoading] = useState(true);
+  const modeRef = useRef(mode);
 
   function handleBasemapChange(newMode: BasemapMode) {
+    modeRef.current = newMode;
     setMode(newMode);
+    // While `loading` is true the Map hasn't been constructed yet, so
+    // mapRef.current is null and this is a silent no-op on the map itself.
+    // modeRef.current is already updated above, and the Map constructor
+    // below reads it to pick the correct initial mapTypeId once it runs.
     mapRef.current?.setMapTypeId(newMode === "satellite" ? "hybrid" : "roadmap");
   }
 
@@ -64,16 +72,58 @@ export default function GoogleMap({
 
   useEffect(() => {
     selectedAlertIdRef.current = selectedAlertId;
-    markerElementsRef.current.forEach((element, alertId) => {
-      styleAlertMarker(element, alertId === selectedAlertId);
+    markerElementsRef.current.forEach((marker, alertId) => {
+      marker.setSelected(alertId === selectedAlertId);
     });
   }, [selectedAlertId]);
+
+  // CONSTRAINT: `parcels`, `alerts`, `center`, and `zoom` are read once, at
+  // mount, by the effect below (empty dep array) — they are a snapshot, not
+  // a live binding. A parent that re-renders this component with new
+  // parcels/alerts/center/zoom after the initial mount will NOT see the map
+  // update; the Google Data layer and AdvancedMarkerElements created here
+  // are never rebuilt. This is currently safe only because MapView mounts
+  // this component once data is already loaded and fully remounts it (fresh
+  // key) on retry — so in practice the values never change under a mounted
+  // instance today. `selectedAlertId`, `onAlertClick`, and `onProviderError`
+  // are the only props that ARE live, via the ref pattern below.
+  //
+  // Before adding any feature that streams updated parcels/alerts/center/
+  // zoom into an already-mounted map, this effect needs real sync, not a
+  // fresh mount: parcels via clearing + re-adding map.data (or diffing
+  // features), alerts via reconciling AdvancedMarkerElements (add new,
+  // remove stale, matching MapLibreMap's marker Map<id, element> pattern),
+  // and center/zoom via explicit map.panTo/map.setZoom calls in their own
+  // effect. Do not silently assume props are live without doing this.
+  useEffect(() => {
+    h3CellsRef.current = h3Cells;
+    const layer = h3LayerRef.current;
+    if (!layer) return;
+
+    const previousFeatures: google.maps.Data.Feature[] = [];
+    layer.forEach((feature) => previousFeatures.push(feature));
+    previousFeatures.forEach((feature) => layer.remove(feature));
+    if (h3Cells) layer.addGeoJson(h3Cells);
+  }, [h3Cells]);
+
+  useEffect(() => {
+    h3VisibleRef.current = h3Visible;
+    const layer = h3LayerRef.current;
+    if (layer) layer.setMap(h3Visible ? mapRef.current : null);
+  }, [h3Visible]);
 
   useEffect(() => {
     let cancelled = false;
     const markers: google.maps.marker.AdvancedMarkerElement[] = [];
-    const markerClickCleanups: Array<() => void> = [];
     const markerElements = markerElementsRef.current;
+
+    // An invalid key, referrer restriction, or disabled billing all resolve
+    // importLibrary() successfully — the catch block below never fires.
+    // Google instead reports these through the gm_authFailure global; wire
+    // it to the same fallback path so a permanently gray map still recovers.
+    const unsubscribeAuthFailure = onGoogleMapsAuthFailure(() => {
+      if (!cancelled) onProviderErrorRef.current();
+    });
 
     async function init() {
       try {
@@ -84,12 +134,19 @@ export default function GoogleMap({
           center: { lat: center[1], lng: center[0] },
           zoom,
           mapId,
-          mapTypeId: "hybrid",
+          mapTypeId: modeRef.current === "satellite" ? "hybrid" : "roadmap",
           clickableIcons: false,
           fullscreenControl: true,
           mapTypeControl: false,
           streetViewControl: false,
           zoomControl: true,
+          // "auto" (the default) sometimes decides a map that doesn't
+          // dominate the viewport — e.g. next to the alert sidebar on an
+          // iPad — needs two fingers to pan, to avoid stealing page
+          // scroll. This map's page never scrolls around it, so a single
+          // finger should always drag the map; "greedy" makes that
+          // unconditional instead of heuristic.
+          gestureHandling: "greedy",
         });
         mapRef.current = map;
 
@@ -122,40 +179,55 @@ export default function GoogleMap({
           };
         });
 
+        // Keep H3 screening cells isolated from the parcel overlay so
+        // visibility and restyling cannot alter parcel behavior.
+        const h3Layer = new google.maps.Data();
+        h3LayerRef.current = h3Layer;
+        h3Layer.setStyle(H3_STYLE);
+        if (h3CellsRef.current) h3Layer.addGeoJson(h3CellsRef.current);
+        h3Layer.setMap(h3VisibleRef.current ? map : null);
+
         for (const alert of alerts) {
           const parcel = parcels.find((candidate) => candidate.id === alert.parcel_id);
           if (!parcel) continue;
 
-          const element = document.createElement("button");
-          element.type = "button";
-          element.style.width = "14px";
-          element.style.height = "14px";
-          element.style.borderRadius = "50%";
-          element.style.border = "2px solid white";
-          element.style.backgroundColor = TIER_COLORS[alert.tier];
-          element.style.cursor = "pointer";
-          element.style.padding = "0";
-          element.style.transition = "transform 150ms ease, box-shadow 150ms ease";
-          element.setAttribute("data-testid", "alert-marker");
-          element.setAttribute("data-alert-id", alert.id);
-          element.setAttribute("aria-label", `Select alert ${alert.id}`);
-          styleAlertMarker(element, alert.id === selectedAlertIdRef.current);
-          markerElements.set(alert.id, element);
+          const { wrapper, setSelected } = createAlertMarkerElement({
+            alert,
+            parcelLabel: parcel.survey_no,
+            selected: alert.id === selectedAlertIdRef.current,
+            onClick: (alertId) => onAlertClickRef.current?.(alertId),
+          });
+          markerElements.set(alert.id, { setSelected });
 
-          const clickHandler = () => onAlertClickRef.current?.(alert.id);
-          element.addEventListener("click", clickHandler);
-          markerClickCleanups.push(() =>
-            element.removeEventListener("click", clickHandler)
-          );
-
+          // AdvancedMarkerElement wraps whatever `content` we give it in its
+          // own positioning container, so it never overwrites styles on our
+          // wrapper directly -- but we still hand it the wrapper (not the
+          // button) to stay consistent with MapLibreMap and keep the
+          // button's own aria-label/selection styling fully self-contained.
           const marker = new AdvancedMarkerElement({
             map,
             position: { lat: parcel.centroid[1], lng: parcel.centroid[0] },
-            content: element,
+            content: wrapper,
             title: `Alert ${alert.id}`,
           });
           markers.push(marker);
         }
+
+        const vertices = collectParcelVertices(parcels);
+        if (vertices.length > 0) {
+          const bounds = new google.maps.LatLngBounds();
+          for (const [lng, lat] of vertices) {
+            bounds.extend({ lat, lng });
+          }
+          map.fitBounds(bounds, {
+            top: 130,
+            right: 130,
+            bottom: 110,
+            left: 90,
+          } as google.maps.Padding);
+        }
+        // When there are no parcels, the initial `center`/`zoom` props above
+        // remain in effect as the fallback camera.
 
         onReady?.({
           panTo: (lngLat) => {
@@ -173,15 +245,24 @@ export default function GoogleMap({
 
     return () => {
       cancelled = true;
-      markerClickCleanups.forEach((cleanup) => cleanup());
+      unsubscribeAuthFailure();
       markers.forEach((marker) => {
         marker.map = null;
       });
       markerElements.clear();
+      h3LayerRef.current?.setMap(null);
+      h3LayerRef.current = null;
       mapRef.current = null;
     };
-    // The provider owns one immutable map instance; selection and callbacks are
-    // kept current through refs above.
+    // Intentionally mount-only — see the CONSTRAINT comment above this
+    // effect. The provider owns one immutable map instance; selection and
+    // callbacks are kept current through refs above. `parcels`, `alerts`,
+    // `center`, and `zoom` are intentionally captured only at mount time
+    // (this effect runs once, deliberately omitting them from its dependency
+    // array) -- callers that need to change any of them must remount this
+    // component (e.g. by changing its `key`) rather than expect a live
+    // update. H3 data and visibility are the exception and stay live through
+    // the refs/effects above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -201,7 +282,7 @@ export default function GoogleMap({
           Loading Google map...
         </div>
       ) : null}
-      <div className="absolute left-3 top-3 z-10">
+      <div className="absolute left-[max(0.75rem,env(safe-area-inset-left,0px))] top-[max(0.75rem,env(safe-area-inset-top,0px))] z-10">
         <BasemapToggle mode={mode} onChange={handleBasemapChange} />
       </div>
     </div>

@@ -2,7 +2,17 @@ import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { StateRail } from "./StateRail";
 import { STATE_DESCRIPTIONS } from "@/lib/explanations";
-import { CASE_STATE_CHAIN } from "@/lib/types";
+import { CASE_STATE_CHAIN, type CaseEvent } from "@/lib/types";
+
+function makeEvent(overrides: Partial<CaseEvent> & { to_state: CaseEvent["to_state"] }): CaseEvent {
+  return {
+    from_state: null,
+    actor: "system:test",
+    occurred_at: "2026-06-01T00:00:00Z",
+    artifacts: [],
+    ...overrides,
+  };
+}
 
 describe("StateRail", () => {
   it("renders every state in the due-process chain in order", () => {
@@ -82,6 +92,62 @@ describe("StateRail", () => {
     expect(
       screen.queryByTestId("state-rail-special-banner")
     ).not.toBeInTheDocument();
+  });
+
+  it("shows progress reached before the pause when events are supplied for a paused case", () => {
+    const events: CaseEvent[] = [
+      makeEvent({ to_state: "NEW" }),
+      makeEvent({ from_state: "NEW", to_state: "TRIAGED" }),
+      makeEvent({ from_state: "TRIAGED", to_state: "INSPECTION_ASSIGNED" }),
+      makeEvent({ from_state: "INSPECTION_ASSIGNED", to_state: "INSPECTED" }),
+    ];
+
+    render(<StateRail currentState="SURVEY_REQUESTED" events={events} />);
+
+    const steps = screen.getAllByTestId("state-rail-step");
+    const doneStates = steps
+      .filter((s) => s.querySelector("span")?.className.includes("bg-gov/10"))
+      .map((s) => s.getAttribute("data-state"));
+
+    // NEW..INSPECTED (indices 0-3) reached before the pause; nothing after.
+    expect(doneStates).toEqual(["NEW", "TRIAGED", "INSPECTION_ASSIGNED", "INSPECTED"]);
+    // No chain step is "current" while paused — the pause target is off-chain.
+    expect(
+      steps.filter((s) => s.getAttribute("data-current") === "true")
+    ).toHaveLength(0);
+  });
+
+  it("falls back to no progress shown for a paused case when events are omitted", () => {
+    render(<StateRail currentState="SURVEY_REQUESTED" />);
+
+    const steps = screen.getAllByTestId("state-rail-step");
+    const doneStates = steps.filter((s) =>
+      s.querySelector("span")?.className.includes("bg-gov/10")
+    );
+    expect(doneStates).toHaveLength(0);
+  });
+
+  it("falls back to no progress shown for a paused case when no event reached a chain state", () => {
+    render(<StateRail currentState="STAYED_BY_COURT" events={[]} />);
+
+    const steps = screen.getAllByTestId("state-rail-step");
+    const doneStates = steps.filter((s) =>
+      s.querySelector("span")?.className.includes("bg-gov/10")
+    );
+    expect(doneStates).toHaveLength(0);
+  });
+
+  it("lays out all steps in a single horizontally scrollable row (no wrapping)", () => {
+    render(<StateRail currentState="NEW" />);
+    const rail = screen.getByTestId("state-rail");
+    expect(rail.className).toContain("overflow-x-auto");
+    expect(rail.className).not.toContain("flex-col");
+    expect(rail.className).not.toContain("flex-wrap");
+
+    const steps = screen.getAllByTestId("state-rail-step");
+    steps.forEach((step) => {
+      expect(step.className).toContain("shrink-0");
+    });
   });
 
   it("sets a title on each step from STATE_DESCRIPTIONS (spot check NEW and SHOW_CAUSE_ISSUED)", () => {

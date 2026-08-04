@@ -1,4 +1,5 @@
 import geopandas as gpd
+from pyproj import CRS
 from shapely.geometry import MultiPolygon, Point, box
 
 from mapencroach.cadastral.ingestion import load_parcels
@@ -6,6 +7,32 @@ from mapencroach.cadastral.ingestion import load_parcels
 SQUARE_LEFT = box(0, 0, 1, 1)
 SQUARE_RIGHT = box(1, 0, 2, 1)
 SQUARE_OVERLAPPING = box(0.5, 0, 1.5, 1)
+
+# Realistic EPSG:4326 coordinates near Haridwar, India -- used where a
+# test asserts something about the *meaning* of an area or threshold,
+# since topology QA computes area geodesically and the toy 1-degree
+# squares above span roughly 100km and don't stand in for real parcels.
+_LON0, _LAT0 = 78.1642, 29.9457
+_M_PER_DEG_LAT = 110_852.0
+_M_PER_DEG_LON = 96_486.0
+
+
+def _deg_lon(metres: float) -> float:
+    return metres / _M_PER_DEG_LON
+
+
+def _deg_lat(metres: float) -> float:
+    return metres / _M_PER_DEG_LAT
+
+
+_DLON = _deg_lon(100.0)
+_DLAT = _deg_lat(100.0)
+
+REAL_PARCEL_A = box(_LON0, _LAT0, _LON0 + _DLON, _LAT0 + _DLAT)  # ~100m x 100m
+REAL_PARCEL_B = box(_LON0 + _DLON, _LAT0, _LON0 + 2 * _DLON, _LAT0 + _DLAT)  # adjacent, no overlap
+
+# Coordinates that look like UTM easting/northing (metres), not lon/lat.
+_UTM_LIKE_BOUNDARY = box(500_000, 2_600_000, 500_300, 2_600_100)
 
 
 def _write_geojson(tmp_path, gdf, name="parcels.geojson"):
@@ -290,3 +317,98 @@ class TestNullGeometry:
         assert result.status == "rejected"
         assert result.parcels == []
         assert any("id=2" in error and "missing" in error for error in result.errors)
+
+
+class TestCrsWithoutEpsgCode:
+    def test_geographic_crs_with_no_epsg_mapping_is_handled_not_crashed(self, tmp_path):
+        # A valid geographic CRS (custom ellipsoid) that pyproj cannot map
+        # to any EPSG code: to_epsg() returns None for it. Reprojection
+        # must be decided by comparing the CRS itself, not by requiring an
+        # EPSG code to exist.
+        custom_wgs84_like = CRS.from_wkt(
+            'GEOGCRS["Custom Geographic",'
+            'DATUM["Custom Datum",'
+            'ELLIPSOID["Custom Ellipsoid",6378137.1,298.2572235]],'
+            'PRIMEM["Greenwich",0],'
+            "CS[ellipsoidal,2],"
+            'AXIS["longitude",east],'
+            'AXIS["latitude",north],'
+            'ANGLEUNIT["degree",0.0174532925199433]]'
+        )
+        assert custom_wgs84_like.to_epsg() is None
+
+        gdf = gpd.GeoDataFrame(
+            {"parcel_id": ["1"], "geometry": [REAL_PARCEL_A]}, crs=custom_wgs84_like
+        )
+        path = _write_gpkg(tmp_path, gdf)
+
+        result = load_parcels(path, id_column="parcel_id")
+
+        assert result.status == "accepted"
+        record = result.parcels[0]
+        minx, miny, maxx, maxy = record.geometry.bounds
+        assert -180 <= minx <= 180
+        assert -90 <= miny <= 90
+        # Reprojection was effectively a no-op (near-identical ellipsoid),
+        # so coordinates should still be close to the originals.
+        assert abs(minx - REAL_PARCEL_A.bounds[0]) < 1e-6
+        assert abs(miny - REAL_PARCEL_A.bounds[1]) < 1e-6
+
+
+class TestBoundaryCrsValidation:
+    def test_boundary_in_a_projected_looking_crs_is_rejected_not_mismeasured(self, tmp_path):
+        # boundary is supplied directly by the caller and is never
+        # reprojected -- if it looks projected (UTM-scale coordinates)
+        # rather than EPSG:4326 lon/lat, it must be rejected rather than
+        # silently producing a nonsense gap area.
+        gdf = _clean_gdf(ids=("1", "2"), geoms=(REAL_PARCEL_A, REAL_PARCEL_B))
+        path = _write_geojson(tmp_path, gdf)
+
+        result = load_parcels(path, id_column="parcel_id", boundary=_UTM_LIKE_BOUNDARY)
+
+        assert result.status == "rejected"
+        assert result.parcels == []
+        assert any("4326" in error for error in result.errors)
+
+    def test_boundary_in_plausible_lon_lat_range_is_accepted(self, tmp_path):
+        gdf = _clean_gdf(ids=("1", "2"), geoms=(REAL_PARCEL_A, REAL_PARCEL_B))
+        path = _write_geojson(tmp_path, gdf)
+        boundary = box(_LON0, _LAT0, _LON0 + 2 * _DLON, _LAT0 + _DLAT)
+
+        result = load_parcels(path, id_column="parcel_id", boundary=boundary)
+
+        assert result.status == "accepted"
+
+
+class TestAreaThresholdsAreSquareMetres:
+    def test_reported_gap_area_is_meaningful_square_metres(self, tmp_path):
+        gdf = _clean_gdf(ids=("1", "2"), geoms=(REAL_PARCEL_A, REAL_PARCEL_B))
+        path = _write_geojson(tmp_path, gdf)
+        # a third ~100m strip beyond REAL_PARCEL_B is left uncovered
+        boundary = box(_LON0, _LAT0, _LON0 + 3 * _DLON, _LAT0 + _DLAT)
+
+        result = load_parcels(path, id_column="parcel_id", boundary=boundary)
+
+        assert result.status == "accepted"
+        gap_issues = [issue for issue in result.report.issues if issue.kind == "gap"]
+        assert len(gap_issues) == 1
+        # ~100m x 100m of real uncovered land, not ~1.0 square degree.
+        assert 9000 <= gap_issues[0].area <= 11000
+
+    def test_small_real_overlap_is_quarantined_under_the_m2_default(self, tmp_path):
+        # A ~3m x 3m overlap (~9 m^2) would have passed silently under the
+        # old 1e-9-square-degree default (~11-12 m^2 of real land); the
+        # new m^2-based default (1.0 m^2) still quarantines it.
+        sliver = box(
+            _LON0 + _DLON,
+            _LAT0,
+            _LON0 + _DLON + _deg_lon(3.0),
+            _LAT0 + _deg_lat(3.0),
+        )
+        gdf = _clean_gdf(ids=("1", "2"), geoms=(REAL_PARCEL_B, sliver))
+        path = _write_geojson(tmp_path, gdf)
+
+        result = load_parcels(path, id_column="parcel_id")
+
+        assert result.status == "quarantined"
+        assert result.report.blocking

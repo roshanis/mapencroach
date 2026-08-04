@@ -5,21 +5,46 @@ import {
   SPECIAL_STATE_LABELS,
   STATE_LABELS,
   type AnyCaseState,
+  type CaseEvent,
   type SpecialCaseState,
 } from "@/lib/types";
 
 export interface StateRailProps {
   currentState: AnyCaseState;
+  /**
+   * The case's event history. When `currentState` is a paused special state
+   * (SURVEY_REQUESTED/STAYED_BY_COURT), this is used to find the last
+   * on-chain step reached before the pause, so the rail can show that
+   * progress instead of resetting every step to not-done — matching the
+   * banner's promise that "the chain resumes where it stopped".
+   */
+  events?: CaseEvent[];
 }
 
 function isSpecialState(state: AnyCaseState): state is SpecialCaseState {
   return state in SPECIAL_STATE_LABELS;
 }
 
-export function StateRail({ currentState }: StateRailProps) {
+/** The most recent chain step the event history actually reached, in order —
+ * i.e. the step a paused case will resume from. */
+function lastChainStateReached(
+  events: CaseEvent[] | undefined
+): (typeof CASE_STATE_CHAIN)[number] | undefined {
+  if (!events) return undefined;
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const { to_state } = events[i];
+    if ((CASE_STATE_CHAIN as string[]).includes(to_state)) return to_state;
+  }
+  return undefined;
+}
+
+export function StateRail({ currentState, events }: StateRailProps) {
   const special = isSpecialState(currentState);
+  const resumeState = special ? lastChainStateReached(events) : undefined;
   const currentIndex = special
-    ? -1
+    ? resumeState
+      ? CASE_STATE_CHAIN.indexOf(resumeState)
+      : -1
     : CASE_STATE_CHAIN.indexOf(currentState);
 
   return (
@@ -45,21 +70,27 @@ export function StateRail({ currentState }: StateRailProps) {
       )}
       <ol
         data-testid="state-rail"
-        className="flex flex-col gap-0 sm:flex-row sm:flex-wrap sm:items-start"
+        className="flex items-start gap-0 overflow-x-auto pb-2"
       >
         {CASE_STATE_CHAIN.map((state, index) => {
           const isCurrent = !special && state === currentState;
-          const isDone = !special && index < currentIndex;
+          // For a paused case there is no "current" chain step (the pause
+          // target is off-chain) — everything up to and including the step
+          // reached before pausing counts as done, showing the progress the
+          // banner promises is preserved.
+          const isDone = special
+            ? index <= currentIndex
+            : index < currentIndex;
           return (
             <li
               key={state}
               data-testid="state-rail-step"
               data-state={state}
               data-current={isCurrent}
-              className="flex items-center sm:flex-col sm:items-center sm:text-center"
+              className="flex shrink-0 items-start"
             >
               <div
-                className="flex items-center sm:flex-col"
+                className="flex w-[5.5rem] shrink-0 flex-col items-center gap-1.5 text-center"
                 title={STATE_DESCRIPTIONS[state]}
               >
                 <span
@@ -74,7 +105,7 @@ export function StateRail({ currentState }: StateRailProps) {
                   {index + 1}
                 </span>
                 <span
-                  className={`ml-2 whitespace-nowrap text-xs sm:ml-0 sm:mt-1 ${
+                  className={`line-clamp-2 break-words text-[11px] leading-tight ${
                     isCurrent
                       ? "font-semibold text-gov"
                       : isDone
@@ -88,7 +119,7 @@ export function StateRail({ currentState }: StateRailProps) {
               {index < CASE_STATE_CHAIN.length - 1 && (
                 <div
                   aria-hidden
-                  className={`mx-2 h-4 w-px sm:mt-3 sm:h-px sm:w-8 ${
+                  className={`mt-3 h-px w-6 shrink-0 ${
                     isDone ? "bg-gov/40" : "bg-gray-300"
                   }`}
                 />

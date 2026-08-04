@@ -8,13 +8,16 @@ CSS, Google Maps JavaScript API, and a MapLibre GL JS fallback.
 
 - `/` — Public product landing page.
 - `/console` — Command map: full-height Google map with parcel boundaries
-  (colored by land category) and alert markers (colored by tier), plus a
-  severity-sorted alert sidebar.
+  (colored by land category), an optional H3 analytical grid, and alert markers
+  (colored by tier), plus a severity-sorted alert sidebar.
 - `/parcels/[id]` — Parcel profile: attributes card, mini map, historical
-  imagery timeline, linked alerts and cases.
+  imagery comparison, linked alerts and cases, and a role-gated boundary-grade
+  review control.
 - `/alerts` — Alert queue: filterable (tier, status), severity-sorted table.
 - `/cases/[id]` — Case detail: due-process state rail, event history,
-  evidence packet placeholder.
+  non-authoritative notice drafting, and evidence review.
+- `/cases/[id]/evidence-packet` — Print-ready case, parcel, event, and artifact
+  packet with explicit legal-review and signature-readiness status.
 
 ## Getting started
 
@@ -60,12 +63,26 @@ If either value is missing, or Google cannot load, the interface explicitly
 falls back to the existing MapLibre satellite/street map. Restrict the browser
 key by website referrer and to the Maps JavaScript API; do not commit it.
 
+## H3 analytical grid
+
+Open `/console` and turn on **H3 analytical grid** in the upper-left map
+controls. Resolution 11 is the default; resolutions 9 and 10 show progressively
+larger cells. The cell count and map geometry update when the resolution
+changes, on both Google Maps and the MapLibre fallback.
+
+The grid is generated in the browser from the parcel geometries currently
+loaded in the console. It is screening and aggregation context only: an H3 cell
+is not a cadastral or parcel boundary, and it does not establish ownership,
+encroachment, authorization status, or legal evidence.
+
 ## Historical imagery
 
 The parcel profile requests true-color historical context directly from the
-public NASA Global Imagery Browse Services (GIBS) WMS. The timeline currently
-offers Landsat WELD 30 m annual mosaics for 1990 and 2000 and a MODIS Terra
-250 m observation from 2010. The 1985 choice is retained as an explicit
+public NASA Global Imagery Browse Services (GIBS) WMS. The timeline offers
+Landsat WELD 30 m annual mosaics for 1990 and 2000 and a MODIS Terra 250 m
+observation from 2010. Compare mode places the 1990 and 2000 scenes over the
+same WMS extent, adds a drag-to-reveal control, and keeps the parcel boundary
+fixed over both images. The 1985 choice is retained as an explicit
 coverage gap because NASA GIBS does not return a usable scene for the demo
 area and date.
 
@@ -97,11 +114,20 @@ The client (`src/lib/api.ts`) then expects:
   `land_category`, `boundary_grade`, `jurisdiction_id`.
 - `GET {NEXT_PUBLIC_API_URL}/parcels/{id}` — a single GeoJSON `Feature` with
   the same properties.
+- `PATCH {NEXT_PUBLIC_API_URL}/parcels/{id}/boundary-grade` — update the
+  boundary grade with `{ grade, survey_reference }`; restricted to survey and
+  data-administration roles and recorded in the audit chain.
 - `GET {NEXT_PUBLIC_API_URL}/alerts` — JSON list of `{ id, parcel_id, tier,
   severity_score, area_m2, status, detected_at }`.
 - `GET {NEXT_PUBLIC_API_URL}/cases` — JSON list of case summaries.
 - `GET {NEXT_PUBLIC_API_URL}/cases/{id}` — `{ id, alert_id, parcel_id, state,
   events: [{ from_state, to_state, actor, occurred_at, artifacts, note }] }`.
+
+The notice workspace is intentionally a demo-safe drafting surface. Its output
+is marked `DRAFT — NOT FOR SERVICE` and does not replace an approved legal
+template, authoritative evidence, legal review, or an authorized signature.
+Evidence packets are print-ready review artifacts, not digitally signed or
+legally certified records.
 
 An optional `bbox` query parameter (`west,south,east,north`) is appended to
 the `/parcels` request when a bounding box is supplied to `getParcels(bbox)`.
@@ -117,8 +143,11 @@ web/
       parcels/[id]/page.tsx    Parcel profile
       alerts/page.tsx          Alert queue
       cases/[id]/page.tsx      Case detail
+      cases/[id]/
+        evidence-packet/       Print-ready evidence packet
     components/                Shared UI (TierChip, BoundaryGradeBadge,
-                                StateRail, GoogleMap, MapLibreMap, MapView, etc.)
+                                BoundaryGradeEditor, EvidencePacketDocument,
+                                NoticeDraftWorkspace, maps, etc.)
     lib/
       api.ts                   Typed data client (REST or fixtures)
       fixtures.ts               Built-in demo data

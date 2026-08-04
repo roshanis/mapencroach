@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, claude-worktree]
+    branches: [main, claude-worktree, "claude/**"]
   pull_request:
 
 jobs:
@@ -16,6 +16,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
       - name: Install
         run: pip install -e ".[dev]"
       - name: Lint
@@ -24,3 +26,28 @@ jobs:
         run: pytest --cov --cov-report=term-missing
       - name: Dependency audit
         run: pip-audit --skip-editable
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Test
+        run: npm test
+      - name: Build
+        run: npm run build
+      - name: Dependency audit
+        run: npm audit --audit-level=high

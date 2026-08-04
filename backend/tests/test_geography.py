@@ -171,6 +171,40 @@ class TestParcelContext:
                 classification="evidence",
             )
 
+    def test_lineage_edge_from_a_different_parcel_is_rejected(self):
+        # A context for parcel-1 must not be able to carry lineage edges
+        # that actually belong to parcel-2 -- that would let one parcel's
+        # context silently present another parcel's history.
+        foreign_edge = ParcelLineageEdge(
+            related_parcel_id="parcel-legacy-2",
+            relation=LineageRelation.RENUMBERED_FROM,
+            effective_on=date(2024, 4, 1),
+            source="Cadastral mutation register",
+            confidence=0.9,
+            current_parcel_id="parcel-2",
+        )
+        with pytest.raises(ValueError, match="different parcel"):
+            ParcelContext(
+                parcel_id="parcel-1",
+                canonical_id="parcel-1",
+                aliases=(),
+                lineage=(foreign_edge,),
+                geographic_links=(),
+                observations=(),
+                sources=(),
+            )
+
+    def test_lineage_edge_to_dict_includes_current_parcel_id(self):
+        edge = ParcelLineageEdge(
+            related_parcel_id="parcel-legacy-1",
+            relation=LineageRelation.SPLIT_FROM,
+            effective_on=date(2024, 4, 1),
+            source="Cadastral mutation register",
+            confidence=0.9,
+            current_parcel_id="parcel-1",
+        )
+        assert edge.to_dict()["current_parcel_id"] == "parcel-1"
+
     def test_observations_must_reference_a_declared_source(self):
         with pytest.raises(ValueError, match="undeclared source"):
             ParcelContext(
@@ -288,3 +322,28 @@ class TestShrugImportBoundary:
                 confidence=0.78,
                 manifest=manifest,
             )
+
+    def test_import_matches_whitespace_padded_shrid2_after_normalization(self):
+        manifest = ShrugImportManifest.demo(
+            source_id="shrug-compatible-demo",
+            module="Core keys",
+            version="SHRUG-compatible demo",
+        )
+        rows = [
+            {"shrid2": " 11-001-00001 ", "year": 2020, "viirs_annual_mean": 4.2},
+            {"shrid2": "11-001-00099", "year": 2020, "viirs_annual_mean": 99.0},
+        ]
+
+        imported = import_shrug_observations(
+            parcel_id="parcel-1",
+            geographic_unit_id="11-001-00001",
+            rows=rows,
+            indicator_key="viirs_annual_mean",
+            label="Night-light intensity",
+            unit="annual mean radiance",
+            period_field="year",
+            manifest=manifest,
+        )
+
+        assert len(imported.observations) == 1
+        assert imported.observations[0].value == 4.2

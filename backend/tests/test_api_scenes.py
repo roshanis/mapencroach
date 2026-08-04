@@ -9,12 +9,13 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
+from conftest import TEST_JWT_SECRET
 from mapencroach.api.app import create_app
 from mapencroach.api.auth import Role, create_token
 from mapencroach.api.store import Store
 from mapencroach.imagery.stac_search import SceneCandidate, StacSearchError
 
-SECRET = "dev-secret-do-not-deploy"  # noqa: S105 - test fixture default, matches auth.py default
+SECRET = TEST_JWT_SECRET
 
 
 def token_for(sub: str, role: Role, jurisdiction_id: str) -> str:

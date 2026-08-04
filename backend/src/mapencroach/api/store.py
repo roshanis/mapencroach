@@ -8,11 +8,28 @@ PostGIS-backed implementation (SQLAlchemy models already exist in
 mapencroach.db.models) is meant to replace this class behind the same
 interface later; callers should depend only on the attributes/methods
 documented here, not on dict internals.
+
+Concurrency: FastAPI runs sync `def` endpoints in a threadpool, so one
+Store instance is shared across concurrently-executing requests.
+`record_audit`, `next_alert_id`, and `next_case_id` serialize themselves on
+`self.lock` (a re-entrant `threading.RLock`); callers doing a
+read-modify-write across a mutation and its audit entry should hold
+`store.lock` for the whole critical section rather than relying on the
+individual methods alone.
+
+Durability: this class has no opinion of its own about surviving a
+restart -- `state_persister` (see its docstring below) is `None` by
+default, so a bare `Store()`/`Store.seed_demo()` is exactly as ephemeral
+as it always was. `mapencroach.persistence` is where an actual
+`StatePersister` gets built and wired in for a real deployment; see that
+module for what is (and, just as importantly, is not) persisted.
 """
 
+import threading
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
-from typing import Any
+from datetime import UTC, date, datetime, timedelta
+from typing import Any, Protocol
 
 from mapencroach.audit.chain import AuditEntry, append_entry
 from mapencroach.context.shrug import ShrugImportManifest
@@ -25,8 +42,62 @@ from mapencroach.domain.geography import (
     ParcelContext,
 )
 from mapencroach.domain.jurisdiction import JurisdictionTree
+from mapencroach.imagery.blobstore import build_blob_store
+from mapencroach.imagery.capture import CaptureAttempt, ImageryProvider
+from mapencroach.imagery.providers import build_provider
+from mapencroach.imagery.registry import SceneRegistry
+from mapencroach.imagery.schedule import due_weeks
 
 _PARCEL_SIZE_DEG = 0.001  # ~110m square at this latitude
+
+
+class StatePersister(Protocol):
+    """Structural interface for whatever persists a `Store`'s
+    evidence-bearing state to disk (see `mapencroach.persistence`).
+
+    Defined here rather than imported from `mapencroach.persistence` so
+    this module -- and `Store` itself -- has no dependency on how (or
+    whether) persistence is implemented; persistence is opt-in wiring
+    layered on top of `Store`, never a thing `Store` needs to know about
+    beyond "something with a `save` method, or nothing at all".
+    """
+
+    def save(self, store: "Store") -> None: ...
+
+
+def _utc_now() -> datetime:
+    """Default `Store.clock`: real wall-clock time, UTC.
+
+    Centralizing "now" behind a store attribute (rather than reading
+    `datetime.now()` inline in the watchlist handlers) is what lets tests
+    pin "today" deterministically -- swap `store.clock` for a fixed
+    callable and every started_on/due_weeks computation in the request
+    follows it, including across a week boundary.
+    """
+    return datetime.now(UTC)
+
+
+def _default_scene_registry() -> SceneRegistry:
+    """Build the store's shared `SceneRegistry`, wired to retain bytes.
+
+    This is the one place in the app that opts a registry into blob
+    storage -- `SceneRegistry()` on its own still defaults to
+    `blob_store=None` (hash-on-ingest bookkeeping only, nothing
+    retrievable later), which is what every other constructor call
+    (including most of the registry's own test suite) continues to get.
+    """
+    return SceneRegistry(blob_store=build_blob_store())
+
+
+def _ago(now: datetime, days: float, hour: int, minute: int = 0) -> datetime:
+    """`now` shifted back `days` days, with the wall-clock time pinned to
+    `hour`/`minute` so seeded events don't all land at the same hour.
+
+    Seed demo timestamps are computed relative to `now` (captured once at
+    seed time) rather than fixed absolute dates, so the demo never reads as
+    stale no matter when the process boots.
+    """
+    return (now - timedelta(days=days)).replace(hour=hour, minute=minute, second=0, microsecond=0)
 
 
 def _square_polygon(center_lon: float, center_lat: float, half_size: float) -> dict[str, Any]:
@@ -70,6 +141,47 @@ class CaseRecord:
 
 
 @dataclass
+class WatchEntryRecord:
+    """A RED alert under weekly-snapshot watch, plus its capture history.
+
+    `in_flight` records weeks a capture run has claimed but not yet
+    written a `CaptureAttempt` for. It exists so `POST
+    /watchlist/{id}/captures` can release `store.lock` while it does
+    provider I/O (never holding the lock across network calls) without a
+    second concurrent run re-selecting and double-attempting the same
+    week -- see that handler in `api/app.py`. It is bookkeeping only, not
+    part of the public WatchEntry JSON shape, so like the store's other
+    internal-only fields it is excluded from repr/compare.
+    """
+
+    alert_id: str
+    parcel_id: str
+    started_on: date
+    watched_by: str
+    captures: list[CaptureAttempt] = field(default_factory=list)
+    in_flight: set[str] = field(default_factory=set, repr=False, compare=False)
+
+    def to_dict(self, today: date) -> dict[str, Any]:
+        """Render the WatchEntry JSON shape (see the HTTP API contract).
+
+        `due_weeks` is derived fresh from `started_on`/`captures` against
+        the caller-supplied `today` rather than cached, so it's always
+        consistent with whatever the store's clock currently says.
+        """
+        attempted = {c.week for c in self.captures}
+        due = due_weeks(self.started_on, today, attempted)
+        return {
+            "alert_id": self.alert_id,
+            "parcel_id": self.parcel_id,
+            "started_on": self.started_on.isoformat(),
+            "cadence": "weekly",
+            "watched_by": self.watched_by,
+            "captures": [c.to_dict() for c in self.captures],
+            "due_weeks": [week.key for week in due],
+        }
+
+
+@dataclass
 class Store:
     """Mutable in-memory data store shared across a single app instance."""
 
@@ -79,6 +191,7 @@ class Store:
     cases: dict[str, CaseRecord] = field(default_factory=dict)
     parcel_contexts: dict[str, ParcelContext] = field(default_factory=dict)
     audit_chain: list[AuditEntry] = field(default_factory=list)
+    watchlist: dict[str, WatchEntryRecord] = field(default_factory=dict)
 
     root_jurisdiction_id: str = "state"
     district_a_id: str = "dist-a"
@@ -87,10 +200,47 @@ class Store:
     _next_alert_seq: int = 0
     _next_case_seq: int = 0
 
+    # Weekly-snapshot watch state. `scene_registry` is the hash-on-ingest
+    # evidence anchor and must stay a single shared instance for the life
+    # of the store -- a per-request registry would defeat both dedup and
+    # hash-chain continuity. It is built (via `_default_scene_registry`)
+    # with a real `BlobStore` attached, so captures made through this
+    # store actually retain their bytes and can be served back later --
+    # `SceneRegistry()` on its own still defaults to no retention.
+    # `imagery_provider` is env-selected via
+    # `build_provider()` (falls back to the deterministic demo provider
+    # with no credentials configured) and can be swapped for a fake in
+    # tests that need to force provider_error/no_usable_scene outcomes
+    # without touching the network. `clock` centralizes "now" so watch
+    # start dates and due-week math are deterministic under test control
+    # (see `_utc_now`).
+    scene_registry: SceneRegistry = field(default_factory=_default_scene_registry)
+    imagery_provider: ImageryProvider = field(default_factory=build_provider)
+    clock: Callable[[], datetime] = field(default_factory=lambda: _utc_now)
+
+    # Durability is opt-in and OFF by default: plain `Store()` /
+    # `Store.seed_demo()` construction (every existing test, every
+    # ephemeral demo) never touches disk, exactly as before this field
+    # existed. Something external (see `mapencroach.persistence.build_store`,
+    # wired in automatically by `create_app()`'s no-store "real deploy"
+    # path) opts a given store into persistence by setting this field --
+    # at that point `persist_now()` below stops being a no-op.
+    state_persister: StatePersister | None = field(default=None, repr=False, compare=False)
+
     def __post_init__(self) -> None:
         self._tree: JurisdictionTree | None = None
         if self.jurisdiction_rows:
             self._tree = JurisdictionTree(self.jurisdiction_rows)
+        # Sync endpoints run in FastAPI's threadpool, so every mutating
+        # operation on this shared instance must be serialized -- without a
+        # lock, concurrent requests can interleave append_entry's non-atomic
+        # read-prev-hash-then-append (corrupting the hash chain) or the id
+        # counters' non-atomic increment (handing out duplicate ids). Public
+        # (`store.lock`, not `_lock`) and re-entrant because app.py handlers
+        # routinely hold it across a read-modify-write that itself calls
+        # `record_audit` (which also takes it), and `record_audit` is in
+        # turn called from within other locked store methods.
+        self.lock = threading.RLock()
 
     @property
     def tree(self) -> JurisdictionTree:
@@ -106,24 +256,69 @@ class Store:
     def dist_b_scope(self) -> set[str]:
         return self.tree.scope_ids(self.district_b_id)
 
-    def record_audit(self, *, actor: str, action: str, object_type: str, object_id: str) -> None:
-        append_entry(
-            self.audit_chain,
-            {
-                "actor": actor,
-                "action": action,
-                "object_type": object_type,
-                "object_id": object_id,
-            },
-        )
+    def record_audit(
+        self,
+        *,
+        actor: str,
+        action: str,
+        object_type: str,
+        object_id: str,
+        extra: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Append a hash-chained audit entry.
+
+        `extra` merges additional, action-specific fields (e.g. a boundary
+        grade change's survey reference and from/to grades) into the
+        payload -- callers that need to record more than the bare
+        actor/action/object identity pass it rather than dropping that
+        context on the floor.
+
+        Locked so concurrent requests can't both read the same
+        `audit_chain[-1]` and append with the same prev_hash, which would
+        fork the chain instead of extending it.
+        """
+        payload: dict[str, Any] = {
+            "actor": actor,
+            "action": action,
+            "object_type": object_type,
+            "object_id": object_id,
+            "at": datetime.now(UTC).isoformat(),
+        }
+        if extra:
+            payload.update(extra)
+        with self.lock:
+            append_entry(self.audit_chain, payload)
+
+    def persist_now(self) -> None:
+        """Flush the evidence-bearing state (watchlist, scene registry
+        index, audit chain) to disk via `state_persister`, if one is
+        configured. A no-op otherwise -- see the `state_persister` field
+        docstring for why plain `Store()` construction never reaches this.
+
+        Callers (the watch-list/imagery HTTP handlers in `api/app.py`) are
+        expected to call this *after* releasing `store.lock`, not from
+        within a locked block: `state_persister.save` takes the lock
+        itself only long enough to snapshot the state to serialize, then
+        releases it before doing any file I/O, matching the same
+        never-hold-the-lock-across-I/O discipline the capture endpoints
+        use for provider calls.
+        """
+        if self.state_persister is not None:
+            self.state_persister.save(self)
 
     def next_alert_id(self) -> str:
-        self._next_alert_seq += 1
-        return f"alert-{self._next_alert_seq}"
+        """Allocate the next alert id. Locked so concurrent callers can't
+        read-then-increment the same sequence value and collide."""
+        with self.lock:
+            self._next_alert_seq += 1
+            return f"alert-{self._next_alert_seq}"
 
     def next_case_id(self) -> str:
-        self._next_case_seq += 1
-        return f"case-{self._next_case_seq}"
+        """Allocate the next case id. Locked for the same reason as
+        `next_alert_id`."""
+        with self.lock:
+            self._next_case_seq += 1
+            return f"case-{self._next_case_seq}"
 
     def context_for_parcel(self, parcel_id: str) -> ParcelContext:
         """Return canonical identifiers plus any linked context for a parcel."""
@@ -173,6 +368,11 @@ class Store:
             ("taluk-b3", "dist-b"),
         ]
         store = cls(jurisdiction_rows=rows)
+
+        # Captured once so every seeded timestamp below is relative to "now"
+        # at seed/startup time -- the demo should never read as stale no
+        # matter how long it's been running.
+        now = datetime.now(UTC)
 
         seed_tags = {
             "parcel-1": ["court-monitored"],
@@ -343,27 +543,30 @@ class Store:
             actor="system", action="parcel.seed", object_type="parcel", object_id="bulk"
         )
 
+        # detected_days_ago/hour vary per alert so the console shows a mix of
+        # ages instead of a single stale-looking date; the urgent RED alert
+        # (parcel-1) is kept the freshest.
         alert_specs = [
-            ("parcel-1", AlertTier.RED, 6000.0, "OPEN"),
-            ("parcel-3", AlertTier.AMBER, 3000.0, "OPEN"),
+            ("parcel-1", AlertTier.RED, 6000.0, "OPEN", 2, 8, 20),
+            ("parcel-3", AlertTier.AMBER, 3000.0, "OPEN", 6, 13, 45),
             # CLOSED (not RESOLVED) so the console's status filter matches.
-            ("parcel-5", AlertTier.GREEN, 500.0, "CLOSED"),
-            ("parcel-7", AlertTier.LEGACY, 8000.0, "OPEN"),
-            ("parcel-9", AlertTier.RED, 4500.0, "UNDER_REVIEW"),
-            ("parcel-12", AlertTier.AMBER, 2000.0, "ESCALATED"),
-            ("parcel-15", AlertTier.GREEN, 700.0, "OPEN"),
-            ("parcel-20", AlertTier.AMBER, 2500.0, "OPEN"),
-            ("parcel-23", AlertTier.RED, 5200.0, "OPEN"),
-            ("parcel-26", AlertTier.LEGACY, 9000.0, "UNDER_REVIEW"),
+            ("parcel-5", AlertTier.GREEN, 500.0, "CLOSED", 19, 7, 10),
+            ("parcel-7", AlertTier.LEGACY, 8000.0, "OPEN", 21, 16, 30),
+            ("parcel-9", AlertTier.RED, 4500.0, "UNDER_REVIEW", 4, 11, 5),
+            ("parcel-12", AlertTier.AMBER, 2000.0, "ESCALATED", 9, 18, 50),
+            ("parcel-15", AlertTier.GREEN, 700.0, "OPEN", 14, 9, 40),
+            ("parcel-20", AlertTier.AMBER, 2500.0, "OPEN", 11, 15, 15),
+            ("parcel-23", AlertTier.RED, 5200.0, "OPEN", 3, 20, 0),
+            ("parcel-26", AlertTier.LEGACY, 9000.0, "UNDER_REVIEW", 17, 6, 25),
         ]
         alert_ids: list[str] = []
-        detected_at = datetime(2026, 1, 15, tzinfo=UTC)
-        for parcel_id, tier, area_m2, status in alert_specs:
+        for parcel_id, tier, area_m2, status, days_ago, hour, minute in alert_specs:
             parcel = store.parcels[parcel_id]
             alert_id = store.next_alert_id()
             score = severity_score(
                 area_m2, parcel["land_category"], parcel["boundary_grade"], False
             )
+            detected_at = _ago(now, days_ago, hour, minute)
             store.alerts[alert_id] = {
                 "id": alert_id,
                 "parcel_id": parcel_id,
@@ -383,27 +586,32 @@ class Store:
         case1_parcel_id = store.alerts[case1_alert_id]["parcel_id"]
         case1_id = store.next_case_id()
         case1 = Case(case_id=case1_id, state=CaseState.NEW)
-        t0 = datetime(2026, 1, 16, tzinfo=UTC)
-        _advance(case1, CaseState.TRIAGED, "system", t0, {"triage_note": "high severity RED alert"})
+        _advance(
+            case1,
+            CaseState.TRIAGED,
+            "system",
+            _ago(now, 12, 9, 10),
+            {"triage_note": "high severity RED alert"},
+        )
         _advance(
             case1,
             CaseState.INSPECTION_ASSIGNED,
             "system",
-            t0,
+            _ago(now, 10, 14, 0),
             {"inspector_id": "inspector-1"},
         )
         _advance(
             case1,
             CaseState.INSPECTED,
             "inspector-1",
-            t0,
+            _ago(now, 7, 11, 30),
             {"inspection_report": "report-001.pdf"},
         )
         _advance(
             case1,
             CaseState.SHOW_CAUSE_ISSUED,
             "system",
-            t0,
+            _ago(now, 3, 16, 20),
             {"notice_document": "notice-001.pdf", "dispatch_proof": "dispatch-001.pdf"},
         )
         store.cases[case1_id] = CaseRecord(
@@ -421,59 +629,70 @@ class Store:
         case2_parcel_id = store.alerts[case2_alert_id]["parcel_id"]
         case2_id = store.next_case_id()
         case2 = Case(case_id=case2_id, state=CaseState.NEW)
-        t1 = datetime(2025, 12, 1, tzinfo=UTC)
-        _advance(case2, CaseState.TRIAGED, "system", t1, {"triage_note": "minor green alert"})
+        _advance(
+            case2,
+            CaseState.TRIAGED,
+            "system",
+            _ago(now, 75, 9, 0),
+            {"triage_note": "minor green alert"},
+        )
         _advance(
             case2,
             CaseState.INSPECTION_ASSIGNED,
             "system",
-            t1,
+            _ago(now, 72, 13, 20),
             {"inspector_id": "inspector-2"},
         )
         _advance(
             case2,
             CaseState.INSPECTED,
             "inspector-2",
-            t1,
+            _ago(now, 68, 10, 45),
             {"inspection_report": "report-002.pdf"},
         )
         _advance(
             case2,
             CaseState.SHOW_CAUSE_ISSUED,
             "system",
-            t1,
+            _ago(now, 63, 15, 0),
             {"notice_document": "notice-002.pdf", "dispatch_proof": "dispatch-002.pdf"},
         )
-        _advance(case2, CaseState.RESPONSE_WINDOW, "system", t1, {})
+        _advance(case2, CaseState.RESPONSE_WINDOW, "system", _ago(now, 58, 9, 30), {})
         _advance(
             case2,
             CaseState.HEARING_SCHEDULED,
             "system",
-            t1,
-            {"hearing_date": "2025-12-10"},
+            _ago(now, 55, 11, 15),
+            {"hearing_date": _ago(now, 52, 10, 0).date().isoformat()},
         )
         _advance(
             case2,
             CaseState.HEARING_HELD,
             "legal-officer-1",
-            t1,
+            _ago(now, 50, 14, 40),
             {"hearing_record": "hearing-002.pdf"},
         )
         _advance(
             case2,
             CaseState.ORDER_ISSUED,
             "legal-officer-1",
-            t1,
+            _ago(now, 47, 10, 0),
             {"reasoned_order": "order-002.pdf"},
         )
         _advance(
             case2,
             CaseState.ACTION_TAKEN,
             "system",
-            t1,
+            _ago(now, 46, 16, 0),
             {"action_report": "action-002.pdf"},
         )
-        _advance(case2, CaseState.CLOSED, "system", t1, {"closure_note": "resolved, case closed"})
+        _advance(
+            case2,
+            CaseState.CLOSED,
+            "system",
+            _ago(now, 45, 12, 0),
+            {"closure_note": "resolved, case closed"},
+        )
         store.cases[case2_id] = CaseRecord(
             case=case2,
             alert_id=case2_alert_id,
@@ -487,26 +706,39 @@ class Store:
         # Case 3: alert-5 (parcel-9) reached show-cause, then a court stay
         # froze the chain — resumes at SHOW_CAUSE_ISSUED when vacated.
         case3 = Case(case_id=store.next_case_id(), state=CaseState.NEW)
-        t2 = datetime(2026, 2, 10, tzinfo=UTC)
-        _advance(case3, CaseState.TRIAGED, "system", t2, {"triage_note": "red alert, SIDCUL-side"})
         _advance(
-            case3, CaseState.INSPECTION_ASSIGNED, "system", t2, {"inspector_id": "inspector-3"}
+            case3,
+            CaseState.TRIAGED,
+            "system",
+            _ago(now, 24, 10, 0),
+            {"triage_note": "red alert, SIDCUL-side"},
         )
         _advance(
-            case3, CaseState.INSPECTED, "inspector-3", t2, {"inspection_report": "report-003.pdf"}
+            case3,
+            CaseState.INSPECTION_ASSIGNED,
+            "system",
+            _ago(now, 22, 15, 30),
+            {"inspector_id": "inspector-3"},
+        )
+        _advance(
+            case3,
+            CaseState.INSPECTED,
+            "inspector-3",
+            _ago(now, 19, 9, 15),
+            {"inspection_report": "report-003.pdf"},
         )
         _advance(
             case3,
             CaseState.SHOW_CAUSE_ISSUED,
             "system",
-            t2,
+            _ago(now, 15, 13, 45),
             {"notice_document": "notice-003.pdf", "dispatch_proof": "dispatch-003.pdf"},
         )
         _advance(
             case3,
             CaseState.STAYED_BY_COURT,
             "legal-officer-1",
-            datetime(2026, 2, 24, tzinfo=UTC),
+            _ago(now, 6, 11, 0),
             {"stay_order_ref": "WP-1204-2026 (Uttarakhand HC)"},
         )
         store.cases[case3.case_id] = CaseRecord(
@@ -522,19 +754,32 @@ class Store:
         # Case 4: alert-6 (parcel-12) — inspection disputed the boundary, so a
         # ground survey was requested; resumes at INSPECTED with the result.
         case4 = Case(case_id=store.next_case_id(), state=CaseState.NEW)
-        t3 = datetime(2026, 3, 3, tzinfo=UTC)
-        _advance(case4, CaseState.TRIAGED, "system", t3, {"triage_note": "amber alert, Kankhal"})
         _advance(
-            case4, CaseState.INSPECTION_ASSIGNED, "system", t3, {"inspector_id": "inspector-2"}
+            case4,
+            CaseState.TRIAGED,
+            "system",
+            _ago(now, 20, 9, 20),
+            {"triage_note": "amber alert, Kankhal"},
         )
         _advance(
-            case4, CaseState.INSPECTED, "inspector-2", t3, {"inspection_report": "report-004.pdf"}
+            case4,
+            CaseState.INSPECTION_ASSIGNED,
+            "system",
+            _ago(now, 18, 14, 10),
+            {"inspector_id": "inspector-2"},
+        )
+        _advance(
+            case4,
+            CaseState.INSPECTED,
+            "inspector-2",
+            _ago(now, 15, 10, 50),
+            {"inspection_report": "report-004.pdf"},
         )
         _advance(
             case4,
             CaseState.SURVEY_REQUESTED,
             "inspector-2",
-            datetime(2026, 3, 12, tzinfo=UTC),
+            _ago(now, 8, 16, 5),
             {"survey_request_ref": "SRV-2026-014"},
         )
         store.cases[case4.case_id] = CaseRecord(
@@ -550,22 +795,35 @@ class Store:
         # Case 5: alert-9 (parcel-23) — notice served, occupier's response
         # window is running.
         case5 = Case(case_id=store.next_case_id(), state=CaseState.NEW)
-        t4 = datetime(2026, 4, 1, tzinfo=UTC)
-        _advance(case5, CaseState.TRIAGED, "system", t4, {"triage_note": "red alert, canal land"})
         _advance(
-            case5, CaseState.INSPECTION_ASSIGNED, "system", t4, {"inspector_id": "inspector-1"}
+            case5,
+            CaseState.TRIAGED,
+            "system",
+            _ago(now, 16, 8, 45),
+            {"triage_note": "red alert, canal land"},
         )
         _advance(
-            case5, CaseState.INSPECTED, "inspector-1", t4, {"inspection_report": "report-005.pdf"}
+            case5,
+            CaseState.INSPECTION_ASSIGNED,
+            "system",
+            _ago(now, 14, 12, 30),
+            {"inspector_id": "inspector-1"},
+        )
+        _advance(
+            case5,
+            CaseState.INSPECTED,
+            "inspector-1",
+            _ago(now, 11, 9, 0),
+            {"inspection_report": "report-005.pdf"},
         )
         _advance(
             case5,
             CaseState.SHOW_CAUSE_ISSUED,
             "system",
-            t4,
+            _ago(now, 9, 15, 20),
             {"notice_document": "notice-005.pdf", "dispatch_proof": "dispatch-005.pdf"},
         )
-        _advance(case5, CaseState.RESPONSE_WINDOW, "system", datetime(2026, 4, 8, tzinfo=UTC), {})
+        _advance(case5, CaseState.RESPONSE_WINDOW, "system", _ago(now, 2, 10, 0), {})
         store.cases[case5.case_id] = CaseRecord(
             case=case5,
             alert_id="alert-9",

@@ -1,3 +1,5 @@
+import math
+
 import pytest
 
 from mapencroach.domain.alerts import (
@@ -5,6 +7,7 @@ from mapencroach.domain.alerts import (
     AlertTier,
     persistence_check,
     severity_score,
+    tier_for_score,
 )
 
 
@@ -94,6 +97,23 @@ class TestSeverityScore:
         result = severity_score(50_000, "waterbody", "A", repeat_offender=True)
         assert 0.0 <= result <= 100.0
 
+    def test_negative_area_raises_value_error(self):
+        # A negative area is invalid input, not an extreme value to clamp
+        # -- silently coercing it to 0 would hide a caller bug.
+        with pytest.raises(ValueError, match="area_m2"):
+            severity_score(-5_000, "waterbody", "A", repeat_offender=False)
+
+    def test_area_of_zero_returns_zero(self):
+        assert severity_score(0, "waterbody", "A", repeat_offender=False) == 0.0
+
+    def test_nan_area_is_rejected(self):
+        with pytest.raises(ValueError, match="finite"):
+            severity_score(math.nan, "waterbody", "A", repeat_offender=False)
+
+    def test_infinite_area_is_rejected(self):
+        with pytest.raises(ValueError, match="finite"):
+            severity_score(math.inf, "waterbody", "A", repeat_offender=False)
+
 
 class TestPersistenceCheck:
     def test_one_observation_is_insufficient_with_default_required(self):
@@ -116,3 +136,53 @@ class TestPersistenceCheck:
 
     def test_custom_required_of_one(self):
         assert persistence_check(1, required=1) is True
+
+    def test_required_of_zero_is_rejected(self):
+        # required=0 would let an alert with zero observations pass
+        # immediately, disabling the single-observation-noise protection
+        # this function exists to provide.
+        with pytest.raises(ValueError, match="at least 1"):
+            persistence_check(0, required=0)
+
+    def test_negative_required_is_rejected(self):
+        with pytest.raises(ValueError, match="at least 1"):
+            persistence_check(5, required=-1)
+
+
+class TestTierForScore:
+    def test_high_score_is_red(self):
+        assert tier_for_score(100.0) == AlertTier.RED
+        assert tier_for_score(70.0) == AlertTier.RED
+
+    def test_mid_score_is_amber(self):
+        assert tier_for_score(69.9) == AlertTier.AMBER
+        assert tier_for_score(30.0) == AlertTier.AMBER
+
+    def test_low_score_is_green(self):
+        assert tier_for_score(29.9) == AlertTier.GREEN
+        assert tier_for_score(0.0) == AlertTier.GREEN
+
+    def test_legacy_is_never_derived_from_a_score(self):
+        for score in (0.0, 25.0, 50.0, 75.0, 100.0):
+            assert tier_for_score(score) != AlertTier.LEGACY
+
+    def test_score_outside_documented_range_is_rejected(self):
+        with pytest.raises(ValueError, match="0-100"):
+            tier_for_score(100.1)
+        with pytest.raises(ValueError, match="0-100"):
+            tier_for_score(-0.1)
+
+    def test_non_finite_score_is_rejected(self):
+        with pytest.raises(ValueError, match="0-100"):
+            tier_for_score(math.nan)
+
+    def test_severity_score_output_always_maps_to_a_tier(self):
+        # Every score severity_score can actually return must be a valid
+        # input to tier_for_score -- that's the point of the mapping.
+        for area, category, grade, repeat in [
+            (0, "revenue", "C", False),
+            (10_000, "waterbody", "A", True),
+            (3_333, "housing", "B", False),
+        ]:
+            score = severity_score(area, category, grade, repeat)
+            assert tier_for_score(score) in (AlertTier.RED, AlertTier.AMBER, AlertTier.GREEN)

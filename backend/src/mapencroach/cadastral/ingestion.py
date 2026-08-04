@@ -1,6 +1,9 @@
 """Cadastral file ingestion: schema validation and topology QA for parcel layers.
 
-Any format geopandas can read is accepted. Schema errors (missing file,
+Any format geopandas can read is accepted, including layers whose CRS has
+no mapped EPSG code (custom ellipsoids, PROJ4-only definitions, etc.) --
+reprojection is decided by comparing the CRS itself, not by round-tripping
+through an EPSG code that may not exist. Schema errors (missing file,
 missing/duplicate/null ids, absent CRS, non-polygonal geometry) reject the
 batch outright and topology QA never runs. Once schema-valid, geometries are
 reprojected to EPSG:4326 and normalized to MultiPolygon before topology QA
@@ -12,12 +15,14 @@ from pathlib import Path
 from typing import Any
 
 import geopandas as gpd
+from pyproj import CRS
 from shapely.geometry import MultiPolygon, Polygon
 from shapely.geometry.base import BaseGeometry
 
-from mapencroach.cadastral.topology import TopologyReport, run_qa
+from mapencroach.cadastral.topology import TopologyReport, assert_wgs84_bounds, run_qa
 
 _WGS84 = "EPSG:4326"
+_WGS84_CRS = CRS.from_epsg(4326)
 
 
 @dataclass(frozen=True)
@@ -49,9 +54,21 @@ def load_parcels(
     path: str | Path,
     id_column: str,
     boundary: BaseGeometry | None = None,
-    min_overlap_area: float = 1e-9,
-    min_gap_area: float = 1e-9,
+    min_overlap_area: float = 1.0,
+    min_gap_area: float = 1.0,
 ) -> IngestionResult:
+    """Load, schema-validate, and topology-QA a parcel layer.
+
+    `boundary`, if given, must already be in EPSG:4326 (longitude,
+    latitude in degrees). Unlike the parcel layer read from `path`, it is
+    supplied directly by the caller rather than read from a file with its
+    own CRS, so it cannot be reprojected automatically -- it is validated
+    against plausible lon/lat bounds instead, and the batch is rejected
+    (not silently mis-measured) if it looks like it's in a different CRS.
+
+    `min_overlap_area` and `min_gap_area` are square metres (see
+    `cadastral.topology` for how area is computed).
+    """
     path = Path(path)
     if not path.exists():
         return _rejected([f"file not found: {path}"])
@@ -91,7 +108,18 @@ def load_parcels(
     if errors:
         return _rejected(errors)
 
-    if gdf.crs.to_epsg() != 4326:
+    if boundary is not None:
+        try:
+            assert_wgs84_bounds(boundary, label="boundary")
+        except ValueError as exc:
+            return _rejected([str(exc)])
+
+    # Compare CRS objects directly rather than gdf.crs.to_epsg() == 4326:
+    # some valid CRS definitions (custom ellipsoids, PROJ4-only strings)
+    # have no EPSG mapping, so to_epsg() can return None for a CRS that
+    # either is or isn't WGS84 -- .equals() answers that without needing
+    # an EPSG code to exist at all.
+    if not CRS(gdf.crs).equals(_WGS84_CRS):
         gdf = gdf.to_crs(_WGS84)
 
     parcels: dict[str, BaseGeometry] = {}

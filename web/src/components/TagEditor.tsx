@@ -25,8 +25,14 @@ export function TagEditor({ parcelId, initialTags }: TagEditorProps) {
         setTags(result.tags ?? tags);
         setInput("");
       } else {
-        setError(`Refused (HTTP ${result.status}): ${result.detail}`);
+        setError(
+          result.status === 0
+            ? result.detail ?? "Tag service could not be reached. Try again."
+            : `Refused (HTTP ${result.status}): ${result.detail}`
+        );
       }
+    } catch {
+      setError("Tag service could not be reached. The tag was not saved — try again.");
     } finally {
       setSubmitting(false);
     }
@@ -40,8 +46,14 @@ export function TagEditor({ parcelId, initialTags }: TagEditorProps) {
       if (result.ok) {
         setTags(result.tags ?? tags);
       } else {
-        setError(`Refused (HTTP ${result.status}): ${result.detail}`);
+        setError(
+          result.status === 0
+            ? result.detail ?? "Tag service could not be reached. Try again."
+            : `Refused (HTTP ${result.status}): ${result.detail}`
+        );
       }
+    } catch {
+      setError("Tag service could not be reached. The tag was not removed — try again.");
     } finally {
       setSubmitting(false);
     }
@@ -54,15 +66,18 @@ export function TagEditor({ parcelId, initialTags }: TagEditorProps) {
           <span
             key={tag}
             data-testid="tag-chip"
-            className="flex items-center gap-1 rounded-full bg-gray-100 px-3 py-1 text-xs text-gray-700"
+            className="flex min-h-11 items-center gap-1 rounded-full bg-gray-100 px-3 py-1 text-xs text-gray-700 sm:min-h-0"
           >
             {tag}
+            {/* Grows to a 44px target on touch instead of being expanded by
+                negative margins, which would push each chip's hit area over
+                its neighbour's and make "remove" land on the wrong tag. */}
             <button
               type="button"
               data-testid={`tag-remove-${tag}`}
               onClick={() => handleRemove(tag)}
               disabled={submitting}
-              className="text-gray-400 hover:text-gray-700 disabled:opacity-50"
+              className="flex min-h-11 min-w-11 items-center justify-center text-gray-400 hover:text-gray-700 disabled:opacity-50 sm:min-h-0 sm:min-w-0"
               aria-label={`Remove tag ${tag}`}
             >
               ×
@@ -75,25 +90,26 @@ export function TagEditor({ parcelId, initialTags }: TagEditorProps) {
         <input
           type="text"
           data-testid="tag-input"
+          aria-label="Add tag"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="add-tag-like-this"
           disabled={submitting}
-          className="rounded border border-gray-300 px-2 py-1 text-sm disabled:opacity-50"
+          className="min-h-11 rounded border border-gray-300 px-2 py-1 text-sm disabled:opacity-50 sm:min-h-0"
         />
         <button
           type="button"
           data-testid="tag-add"
           onClick={handleAdd}
           disabled={submitting}
-          className="rounded bg-gov px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+          className="inline-flex min-h-11 items-center justify-center rounded bg-gov px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50 sm:min-h-0"
         >
           Add tag
         </button>
       </div>
 
       {error && (
-        <p data-testid="tag-error" className="text-xs text-red-600">
+        <p data-testid="tag-error" role="alert" className="text-xs text-red-600">
           {error}
         </p>
       )}

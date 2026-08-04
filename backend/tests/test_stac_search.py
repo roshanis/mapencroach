@@ -181,8 +181,10 @@ class TestIngestCandidate:
         assert registry.get(candidate.scene_id) is record
         assert registry.verify(candidate.scene_id, b"downloaded-scene-bytes")
         assert record.sensor == "sentinel-2b"
-        # provenance: the catalog's own STAC item, not a synthesized one
-        assert record.stac_item is candidate.stac_item
+        # provenance: the catalog's own STAC item (deep-frozen on
+        # registration), not a synthesized one
+        assert record.stac_item["id"] == candidate.scene_id
+        assert record.stac_item["properties"]["platform"] == "sentinel-2b"
 
     def test_dedup_still_enforced_on_reingest(self):
         [candidate] = parse_items([stac_feature()], source="earth-search")

@@ -85,6 +85,7 @@ class ParcelLineageEdge:
             "effective_on": _date_value(self.effective_on),
             "source": self.source,
             "confidence": self.confidence,
+            "current_parcel_id": self.current_parcel_id,
         }
 
 
@@ -188,6 +189,16 @@ class ParcelContext:
     def __post_init__(self) -> None:
         if self.classification != "context_only" or self.disclaimer != CONTEXT_DISCLAIMER:
             raise ValueError("parcel context must preserve the context-only boundary")
+        foreign_edges = [
+            edge.related_parcel_id
+            for edge in self.lineage
+            if edge.current_parcel_id != self.parcel_id
+        ]
+        if foreign_edges:
+            raise ValueError(
+                f"lineage edge belongs to a different parcel than this context "
+                f"(context parcel_id={self.parcel_id!r}): {sorted(foreign_edges)}"
+            )
         source_ids = {source.id for source in self.sources}
         referenced_ids = {
             *(link.source_id for link in self.geographic_links),

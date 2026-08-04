@@ -1,15 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { useRouter } from "next/navigation";
 import { CasesTable } from "./CasesTable";
 import type { Case } from "@/lib/types";
 
 const replaceMock = vi.fn();
+const pushMock = vi.fn();
+let currentSearchParams = new URLSearchParams();
 
 vi.mock("next/navigation", () => ({
   useRouter: vi.fn(),
   usePathname: () => "/cases",
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => currentSearchParams,
 }));
 
 function daysAgoIso(days: number): string {
@@ -21,6 +23,7 @@ function makeCase(overrides: Partial<Case> & { id: string }): Case {
   return {
     alert_id: `ALT-${overrides.id}`,
     parcel_id: `PCL-${overrides.id}`,
+    jurisdiction_id: "UK-URBAN-01",
     state: "NEW",
     events: [],
     ...overrides,
@@ -32,12 +35,16 @@ beforeEach(() => {
   vi.setSystemTime(new Date("2026-07-13T12:00:00Z"));
   vi.mocked(useRouter).mockReturnValue({
     replace: replaceMock,
+    push: pushMock,
   } as unknown as ReturnType<typeof useRouter>);
 });
 
 afterEach(() => {
   vi.useRealTimers();
   replaceMock.mockReset();
+  pushMock.mockReset();
+  currentSearchParams = new URLSearchParams();
+  vi.restoreAllMocks();
 });
 
 describe("CasesTable", () => {
@@ -133,8 +140,16 @@ describe("CasesTable", () => {
 
     render(<CasesTable cases={cases} />);
 
-    // HEARING_SCHEDULED is index 6 (0-based) of 11 -> Step 7 of 11
-    expect(screen.getByText("Step 7 of 11")).toBeInTheDocument();
+    // HEARING_SCHEDULED is index 6 (0-based) of 11 -> Step 7 of 11.
+    // Checked in both the table row and the mobile card: they share the
+    // same StageProgress sub-component, so the step text must appear in
+    // both presentations, not just the table.
+    expect(
+      within(screen.getByTestId("case-row")).getByText("Step 7 of 11")
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("case-card")).getByText("Step 7 of 11")
+    ).toBeInTheDocument();
   });
 
   it('renders "—" for what-can-happen-next when allowed_transitions is undefined', () => {
@@ -146,7 +161,7 @@ describe("CasesTable", () => {
     expect(row).toHaveTextContent("—");
   });
 
-  it("renders up to 2 allowed_transitions as chips plus a +n more chip", () => {
+  it("renders up to 2 allowed_transitions as chips plus a +n more chip, using human transition labels", () => {
     const cases: Case[] = [
       makeCase({
         id: "1",
@@ -162,9 +177,37 @@ describe("CasesTable", () => {
 
     render(<CasesTable cases={cases} />);
 
-    expect(screen.getByText("RESPONSE WINDOW")).toBeInTheDocument();
-    expect(screen.getByText("DISMISSED FALSE POSITIVE")).toBeInTheDocument();
-    expect(screen.getByText("+2 more")).toBeInTheDocument();
+    // The table and the mobile card each render their own NextSteps chips
+    // from the same transitions array, using the same human transition
+    // labels — expect one match per presentation.
+    expect(screen.getAllByText("Open response window")).toHaveLength(2);
+    expect(screen.getAllByText("Dismiss false positive")).toHaveLength(2);
+    expect(screen.getAllByText("+2 more")).toHaveLength(2);
+  });
+
+  it("labels an in-chain next step using its STATE_LABELS text (not the raw enum)", () => {
+    const cases: Case[] = [
+      makeCase({ id: "1", state: "NEW", allowed_transitions: ["TRIAGED"] }),
+    ];
+
+    render(<CasesTable cases={cases} />);
+
+    // Scoped to the desktop <table>: the mobile card renders the same
+    // NextSteps chip, so an unscoped query would be ambiguous.
+    expect(
+      within(screen.getByRole("table")).getByText("Triaged")
+    ).toBeInTheDocument();
+  });
+
+  it("renders time in stage in coarser units once it crosses 60 days", () => {
+    const cases: Case[] = [
+      makeCase({ id: "1", state: "NEW", state_since: daysAgoIso(200) }),
+    ];
+
+    render(<CasesTable cases={cases} />);
+
+    // 200 days / 30, rounded -> 7 months.
+    expect(screen.getByTestId("case-row")).toHaveTextContent("7 months");
   });
 
   it("uses a real link to navigate to the case", () => {
@@ -172,7 +215,11 @@ describe("CasesTable", () => {
 
     render(<CasesTable cases={cases} />);
 
-    expect(screen.getByRole("link", { name: "CASE-9001" })).toHaveAttribute(
+    // Scoped to the desktop <table>: the mobile card also links to the
+    // case with the same accessible name, so an unscoped query would be
+    // ambiguous.
+    const table = screen.getByRole("table");
+    expect(within(table).getByRole("link", { name: "CASE-9001" })).toHaveAttribute(
       "href",
       "/cases/CASE-9001"
     );
@@ -185,8 +232,9 @@ describe("CasesTable", () => {
 
     render(<CasesTable cases={cases} />);
 
-    expect(screen.getByText("CASE-1")).toBeInTheDocument();
-    expect(screen.getByText("PCL-77")).toBeInTheDocument();
+    const row = screen.getByTestId("case-row");
+    expect(within(row).getByText("CASE-1")).toBeInTheDocument();
+    expect(within(row).getByText("PCL-77")).toBeInTheDocument();
   });
 
   it("places every case in exactly one section (no duplicates across sections)", () => {
@@ -240,6 +288,7 @@ describe("CasesTable", () => {
   });
 
   it("filters by workflow bucket with visible counts", () => {
+    const replaceStateSpy = vi.spyOn(window.history, "replaceState");
     const cases: Case[] = [
       makeCase({ id: "1", state: "NEW" }),
       makeCase({ id: "2", state: "STAYED_BY_COURT" }),
@@ -250,8 +299,182 @@ describe("CasesTable", () => {
     fireEvent.click(screen.getByRole("button", { name: "Paused (1)" }));
 
     expect(screen.getAllByTestId("case-row")).toHaveLength(1);
-    expect(replaceMock).toHaveBeenCalledWith("/cases?view=paused", {
-      scroll: false,
+    expect(replaceStateSpy).toHaveBeenCalledWith(null, "", "/cases?view=paused");
+    // No RSC navigation — that would force a full server re-fetch.
+    expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it("persists every keystroke in the search box via history.replaceState, never a router navigation (avoids refetching the list per keystroke)", () => {
+    const replaceStateSpy = vi.spyOn(window.history, "replaceState");
+    const cases: Case[] = [
+      makeCase({ id: "CASE-1", parcel_id: "PCL-ALPHA" }),
+      makeCase({ id: "CASE-2", parcel_id: "PCL-BETA" }),
+    ];
+
+    render(<CasesTable cases={cases} />);
+    const input = screen.getByRole("searchbox", { name: "Search cases" });
+    fireEvent.change(input, { target: { value: "B" } });
+    fireEvent.change(input, { target: { value: "BE" } });
+    fireEvent.change(input, { target: { value: "BET" } });
+
+    expect(replaceStateSpy).toHaveBeenCalledTimes(3);
+    expect(replaceStateSpy).toHaveBeenLastCalledWith(null, "", "/cases?q=BET");
+    expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it("falls back to 'all' for an unrecognized ?view= value instead of an unusable filtered-to-zero table", () => {
+    currentSearchParams = new URLSearchParams("view=bogus");
+    const cases: Case[] = [
+      makeCase({ id: "1", state: "NEW" }),
+      makeCase({ id: "2", state: "STAYED_BY_COURT" }),
+    ];
+
+    render(<CasesTable cases={cases} />);
+
+    expect(screen.getByRole("button", { name: "All (2)" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+    expect(screen.getAllByTestId("case-row")).toHaveLength(2);
+  });
+
+  it("still honors a valid ?view= value", () => {
+    currentSearchParams = new URLSearchParams("view=paused");
+    const cases: Case[] = [
+      makeCase({ id: "1", state: "NEW" }),
+      makeCase({ id: "2", state: "STAYED_BY_COURT" }),
+    ];
+
+    render(<CasesTable cases={cases} />);
+
+    expect(screen.getByRole("button", { name: "Paused (1)" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+    expect(screen.getAllByTestId("case-row")).toHaveLength(1);
+  });
+});
+
+describe("CasesTable — mobile card presentation", () => {
+  it("renders one card per case alongside the table rows, from the same sorted data", () => {
+    const cases: Case[] = [
+      makeCase({ id: "A", state: "NEW", state_since: daysAgoIso(1) }),
+      makeCase({ id: "B", state: "TRIAGED", state_since: daysAgoIso(20) }),
+      makeCase({ id: "C", state: "INSPECTED", state_since: daysAgoIso(5) }),
+    ];
+
+    render(<CasesTable cases={cases} />);
+
+    const rows = screen.getAllByTestId("case-row");
+    const cards = screen.getAllByTestId("case-card");
+    expect(rows).toHaveLength(3);
+    expect(cards).toHaveLength(3);
+    // Same days-in-stage-descending order in both presentations.
+    expect(cards.map((c) => c.getAttribute("data-case-id"))).toEqual(
+      rows.map((r) => r.getAttribute("data-case-id"))
+    );
+    expect(cards.map((c) => c.getAttribute("data-case-id"))).toEqual([
+      "B",
+      "C",
+      "A",
+    ]);
+  });
+
+  it("keeps every column's information reachable in the card layout — case link, parcel, stage, time in stage, and next steps", () => {
+    const cases: Case[] = [
+      makeCase({
+        id: "CASE-1",
+        parcel_id: "PCL-77",
+        state: "SHOW_CAUSE_ISSUED",
+        state_since: daysAgoIso(4),
+        allowed_transitions: ["RESPONSE_WINDOW", "DISMISSED_FALSE_POSITIVE"],
+      }),
+    ];
+
+    render(<CasesTable cases={cases} />);
+
+    const card = screen.getByTestId("case-card");
+    expect(within(card).getByRole("link", { name: "CASE-1" })).toHaveAttribute(
+      "href",
+      "/cases/CASE-1"
+    );
+    expect(within(card).getByText("PCL-77")).toBeInTheDocument();
+    expect(within(card).getByTestId("case-state-chip")).toHaveTextContent(
+      "Show Cause Issued"
+    );
+    expect(card).toHaveTextContent("4 days");
+    expect(within(card).getByText("Open response window")).toBeInTheDocument();
+    expect(within(card).getByText("Dismiss false positive")).toBeInTheDocument();
+  });
+
+  it("filters and buckets the card list the same way it filters the table", () => {
+    const cases: Case[] = [
+      makeCase({ id: "CASE-1", parcel_id: "PCL-ALPHA", state: "NEW" }),
+      makeCase({ id: "CASE-2", parcel_id: "PCL-BETA", state: "NEW" }),
+    ];
+
+    render(<CasesTable cases={cases} />);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search cases" }), {
+      target: { value: "BETA" },
+    });
+
+    const cards = screen.getAllByTestId("case-card");
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toHaveAttribute("data-case-id", "CASE-2");
+  });
+
+  it("places every case's card in exactly one section, matching the table", () => {
+    const cases: Case[] = [
+      makeCase({ id: "1", state: "NEW" }),
+      makeCase({ id: "2", state: "STAYED_BY_COURT" }),
+      makeCase({ id: "3", state: "CLOSED" }),
+    ];
+
+    render(<CasesTable cases={cases} />);
+
+    const cards = screen.getAllByTestId("case-card");
+    expect(cards).toHaveLength(3);
+    const ids = cards.map((c) => c.getAttribute("data-case-id"));
+    expect(new Set(ids).size).toBe(3);
+  });
+
+  describe("whole-row navigation", () => {
+    it("navigates to the case when clicking anywhere on the row", () => {
+      const cases: Case[] = [makeCase({ id: "CASE-1", state: "NEW" })];
+      render(<CasesTable cases={cases} />);
+
+      fireEvent.click(screen.getByTestId("case-row"));
+
+      expect(pushMock).toHaveBeenCalledWith("/cases/CASE-1");
+    });
+
+    it("does not double-navigate when the click lands on the inner case link", () => {
+      const cases: Case[] = [makeCase({ id: "CASE-1", state: "NEW" })];
+      render(<CasesTable cases={cases} />);
+
+      // Scoped to the clickable table row: the mobile card renders its own
+      // "CASE-1" link too, so an unscoped query would be ambiguous. The
+      // row's own link is what exercises the closest("a") bail-out below.
+      const row = screen.getByTestId("case-row");
+      fireEvent.click(within(row).getByRole("link", { name: "CASE-1" }));
+
+      expect(pushMock).not.toHaveBeenCalled();
+    });
+
+    it("does not hijack a ctrl-click (or other modified click) on the row", () => {
+      const cases: Case[] = [makeCase({ id: "CASE-1", state: "NEW" })];
+      render(<CasesTable cases={cases} />);
+
+      fireEvent.click(screen.getByTestId("case-row"), { ctrlKey: true });
+
+      expect(pushMock).not.toHaveBeenCalled();
+    });
+
+    it("marks the row as clickable with a pointer cursor", () => {
+      const cases: Case[] = [makeCase({ id: "CASE-1", state: "NEW" })];
+      render(<CasesTable cases={cases} />);
+
+      expect(screen.getByTestId("case-row").className).toContain("cursor-pointer");
     });
   });
 });

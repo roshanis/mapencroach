@@ -29,4 +29,46 @@ describe("ParcelContextPanel", () => {
 
     expect(screen.getByText(/context could not be loaded/i)).toBeInTheDocument();
   });
+
+  it("renders an http(s) source_url as a real link", () => {
+    render(<ParcelContextPanel context={FIXTURE_PARCEL_CONTEXTS["PCL-1001"]} />);
+
+    const link = screen.getByRole("link", { name: "Source documentation" });
+    expect(link).toHaveAttribute(
+      "href",
+      FIXTURE_PARCEL_CONTEXTS["PCL-1001"].sources[0].source_url
+    );
+  });
+
+  it("refuses to render a javascript: source_url as a clickable link", () => {
+    const context = FIXTURE_PARCEL_CONTEXTS["PCL-1001"];
+    const maliciousContext = {
+      ...context,
+      sources: [
+        { ...context.sources[0], source_url: "javascript:alert(document.cookie)" },
+      ],
+    };
+
+    render(<ParcelContextPanel context={maliciousContext} />);
+
+    expect(
+      screen.queryByRole("link", { name: "Source documentation" })
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Source documentation unavailable")).toBeInTheDocument();
+  });
+
+  it("refuses to render an unparsable source_url as a clickable link", () => {
+    const context = FIXTURE_PARCEL_CONTEXTS["PCL-1001"];
+    const brokenContext = {
+      ...context,
+      sources: [{ ...context.sources[0], source_url: "not a url" }],
+    };
+
+    render(<ParcelContextPanel context={brokenContext} />);
+
+    expect(
+      screen.queryByRole("link", { name: "Source documentation" })
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Source documentation unavailable")).toBeInTheDocument();
+  });
 });

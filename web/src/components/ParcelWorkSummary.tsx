@@ -5,6 +5,7 @@ import {
   SPECIAL_STATE_LABELS,
   STATE_LABELS,
   TERMINAL_STATES,
+  TRANSITION_ACTION_LABELS as ACTION_LABELS,
   type Alert,
   type AnyCaseState,
   type Case,
@@ -16,14 +17,6 @@ export interface ParcelWorkSummaryProps {
   alerts: Alert[];
   cases: Case[];
 }
-
-const ACTION_LABELS: Record<string, string> = {
-  RESPONSE_WINDOW: "Open response window",
-  DISMISSED_FALSE_POSITIVE: "Dismiss false positive",
-  LEGACY_REFERRED: "Refer to legacy process",
-  SURVEY_REQUESTED: "Request boundary survey",
-  STAYED_BY_COURT: "Record court stay",
-};
 
 function stateLabel(state: AnyCaseState): string {
   if (state in SPECIAL_STATE_LABELS) {
