@@ -2,6 +2,13 @@
 
 import Image from "next/image";
 import { useState } from "react";
+import {
+  LATEST_IMAGERY_LAYER,
+  LATEST_MAX_OFFSET_DAYS,
+  LATEST_START_OFFSET_DAYS,
+  isoDateDaysAgo,
+  sampleImageBlankness,
+} from "@/lib/latest-imagery";
 import type { Parcel } from "@/lib/types";
 
 interface ImageryScene {
@@ -59,6 +66,16 @@ const IMAGERY_SCENES: ImageryScene[] = [
     endpoint: "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi",
     layer: "MODIS_Terra_CorrectedReflectance_TrueColor",
   },
+  {
+    id: "latest",
+    year: "Latest",
+    date: "most recent clear pass",
+    label: "HLS Sentinel-2",
+    source: "NASA GIBS · Harmonized Landsat Sentinel-2 (HLS S30)",
+    resolution: "30 m, published within days of capture",
+    endpoint: "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi",
+    layer: LATEST_IMAGERY_LAYER,
+  },
 ];
 
 function imageBounds(parcel: Parcel): [number, number, number, number] {
@@ -71,15 +88,24 @@ function imageBounds(parcel: Parcel): [number, number, number, number] {
   ];
 }
 
-function buildWmsImageUrl(scene: ImageryScene, parcel: Parcel) {
+function buildWmsImageUrl(
+  scene: ImageryScene,
+  parcel: Parcel,
+  timeOverride?: string
+) {
   if (!scene.endpoint || !scene.layer) return null;
 
   const boundingBox = imageBounds(parcel)
     .map((coordinate) => coordinate.toFixed(6))
     .join(",");
-  const time = scene.date.slice(0, 10);
+  const time = timeOverride ?? scene.date.slice(0, 10);
+  // PNG + transparency for the date-searching Latest scene, so a date with no
+  // satellite pass yields detectably transparent pixels instead of a black JPEG.
+  const format = timeOverride
+    ? "FORMAT=image/png&TRANSPARENT=TRUE"
+    : "FORMAT=image/jpeg&TRANSPARENT=FALSE";
 
-  return `${scene.endpoint}?SERVICE=WMS&REQUEST=GetMap&VERSION=1.1.1&LAYERS=${scene.layer}&STYLES=&FORMAT=image/jpeg&TRANSPARENT=FALSE&SRS=EPSG:4326&BBOX=${boundingBox}&WIDTH=960&HEIGHT=540&TIME=${time}`;
+  return `${scene.endpoint}?SERVICE=WMS&REQUEST=GetMap&VERSION=1.1.1&LAYERS=${scene.layer}&STYLES=&${format}&SRS=EPSG:4326&BBOX=${boundingBox}&WIDTH=960&HEIGHT=540&TIME=${time}`;
 }
 
 function ParcelBoundaryOverlay({ parcel }: { parcel: Parcel }) {
@@ -124,15 +150,63 @@ function ParcelBoundaryOverlay({ parcel }: { parcel: Parcel }) {
 
 export function HistoricalImageryTimeline({ parcel }: { parcel: Parcel }) {
   const [view, setView] = useState<ImageryView>("single");
-  const [selectedId, setSelectedId] = useState("2010");
+  const [selectedId, setSelectedId] = useState("latest");
   const [afterReveal, setAfterReveal] = useState(50);
   const [failedSceneIds, setFailedSceneIds] = useState<string[]>([]);
   const [loadedSceneIds, setLoadedSceneIds] = useState<string[]>([]);
+  // The Latest scene walks backwards one day at a time from the publication
+  // latency floor until a date actually has a pass over this parcel.
+  const [latestOffsetDays, setLatestOffsetDays] = useState(
+    LATEST_START_OFFSET_DAYS
+  );
   const selectedScene =
     IMAGERY_SCENES.find((scene) => scene.id === selectedId) ??
     IMAGERY_SCENES[IMAGERY_SCENES.length - 1];
-  const imageUrl = buildWmsImageUrl(selectedScene, parcel);
+  const isLatestScene = selectedScene.id === "latest";
+  const latestDate = isoDateDaysAgo(latestOffsetDays);
+  const imageUrl = buildWmsImageUrl(
+    selectedScene,
+    parcel,
+    isLatestScene ? latestDate : undefined
+  );
   const imageFailed = failedSceneIds.includes(selectedScene.id);
+  const latestSettled =
+    loadedSceneIds.includes("latest") || failedSceneIds.includes("latest");
+
+  const advanceLatestSearch = () => {
+    if (latestOffsetDays < LATEST_MAX_OFFSET_DAYS) {
+      setLatestOffsetDays(latestOffsetDays + 1);
+    } else {
+      setFailedSceneIds((current) =>
+        current.includes("latest") ? current : [...current, "latest"]
+      );
+    }
+  };
+
+  const handleImageLoad = (image: HTMLImageElement) => {
+    if (isLatestScene && !latestSettled) {
+      // A date with no pass still loads as a valid, blank image; only a
+      // verifiably non-blank load ends the search. Unverifiable pixels
+      // (no canvas / CORS taint) are accepted rather than discarded.
+      if (sampleImageBlankness(image) === true) {
+        advanceLatestSearch();
+        return;
+      }
+    }
+    setLoadedSceneIds((current) =>
+      current.includes(selectedScene.id) ? current : [...current, selectedScene.id]
+    );
+  };
+
+  const handleImageError = () => {
+    if (isLatestScene && !latestSettled) {
+      advanceLatestSearch();
+      return;
+    }
+    setFailedSceneIds((current) =>
+      current.includes(selectedScene.id) ? current : [...current, selectedScene.id]
+    );
+  };
   const comparisonBefore = IMAGERY_SCENES[1];
   const comparisonAfter = IMAGERY_SCENES[2];
   const comparisonBeforeUrl = buildWmsImageUrl(comparisonBefore, parcel);
@@ -175,7 +249,7 @@ export function HistoricalImageryTimeline({ parcel }: { parcel: Parcel }) {
             <div
               role="group"
               aria-label="Historical imagery year"
-              className="grid grid-cols-4 gap-1 rounded-lg bg-gray-100 p-1"
+              className="grid grid-cols-5 gap-1 rounded-lg bg-gray-100 p-1"
             >
               {IMAGERY_SCENES.map((scene) => {
                 const selected = scene.id === selectedScene.id;
@@ -277,44 +351,38 @@ export function HistoricalImageryTimeline({ parcel }: { parcel: Parcel }) {
           <div className="flex aspect-video items-center justify-center px-6 text-center">
             <div>
               <p className="text-sm font-semibold text-gray-700">
-                Historical image unavailable
+                {isLatestScene
+                  ? "No recent clear pass"
+                  : "Historical image unavailable"}
               </p>
               <p className="mt-2 text-sm text-gray-500">
-                NASA GIBS could not load this scene. Choose another year or try
-                again later.
+                {isLatestScene
+                  ? `No usable Harmonized Landsat Sentinel-2 pass over this parcel in the last ${LATEST_MAX_OFFSET_DAYS} days — likely persistent cloud cover. Choose another year or try again later.`
+                  : "NASA GIBS could not load this scene. Choose another year or try again later."}
               </p>
             </div>
           </div>
         ) : imageUrl ? (
           <div className="relative aspect-video">
             <Image
-              key={selectedScene.id}
+              key={`${selectedScene.id}-${isLatestScene ? latestOffsetDays : ""}`}
               src={imageUrl}
               alt={`${selectedScene.year} ${selectedScene.label} true-color historical context`}
               fill
               sizes="(max-width: 1024px) 100vw, 960px"
               className="object-cover"
-              onLoad={() =>
-                setLoadedSceneIds((current) =>
-                  current.includes(selectedScene.id)
-                    ? current
-                    : [...current, selectedScene.id]
-                )
-              }
-              onError={() =>
-                setFailedSceneIds((current) =>
-                  current.includes(selectedScene.id)
-                    ? current
-                    : [...current, selectedScene.id]
-                )
-              }
+              crossOrigin={isLatestScene ? "anonymous" : undefined}
+              onLoad={(event) => handleImageLoad(event.currentTarget)}
+              onError={handleImageError}
             />
             {!loadedSceneIds.includes(selectedScene.id) && (
               <div
                 role="status"
                 className="absolute inset-0 grid place-items-center bg-gray-100 text-sm font-medium text-gray-500"
               >
-                Loading historical image…
+                {isLatestScene
+                  ? "Searching recent satellite passes…"
+                  : "Loading historical image…"}
               </div>
             )}
             <div
@@ -335,7 +403,13 @@ export function HistoricalImageryTimeline({ parcel }: { parcel: Parcel }) {
           <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
             Capture
           </p>
-          <p className="mt-1 font-medium text-gray-700">{selectedScene.date}</p>
+          <p className="mt-1 font-medium text-gray-700">
+            {isLatestScene
+              ? latestSettled && !imageFailed
+                ? `${latestDate} observation`
+                : `searching back from ${isoDateDaysAgo(LATEST_START_OFFSET_DAYS)}…`
+              : selectedScene.date}
+          </p>
         </div>
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-gray-400">

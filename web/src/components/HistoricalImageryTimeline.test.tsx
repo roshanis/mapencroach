@@ -1,10 +1,14 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { FIXTURE_PARCELS } from "@/lib/fixtures";
+import {
+  LATEST_MAX_OFFSET_DAYS,
+  LATEST_START_OFFSET_DAYS,
+} from "@/lib/latest-imagery";
 import { HistoricalImageryTimeline } from "./HistoricalImageryTimeline";
 
 describe("HistoricalImageryTimeline", () => {
-  it("offers three usable historical maps and preserves the 1985 coverage gap", () => {
+  it("defaults to the Latest scene and keeps the historical years available", () => {
     render(<HistoricalImageryTimeline parcel={FIXTURE_PARCELS[0]} />);
 
     expect(
@@ -13,15 +17,82 @@ describe("HistoricalImageryTimeline", () => {
     expect(screen.getByRole("button", { name: /1985/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /1990/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /2000/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /2010/ })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: /2010/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Latest/ })).toHaveAttribute(
       "aria-pressed",
       "true"
     );
+    const image = screen.getByRole("img", {
+      name: /Latest HLS Sentinel-2 true-color historical context/i,
+    });
+    expect(image).toHaveAttribute(
+      "src",
+      expect.stringContaining("gibs.earthdata.nasa.gov")
+    );
+    expect(image).toHaveAttribute(
+      "src",
+      expect.stringContaining("HLS_S30_Nadir_BRDF_Adjusted_Reflectance")
+    );
+    // requests a current date, not an archival one
+    const currentYear = new Date().getFullYear().toString();
+    expect(decodeURIComponent(image.getAttribute("src") ?? "")).toContain(
+      `TIME=${currentYear}`
+    );
+  });
+
+  it("keeps the 2010 MODIS scene reachable from the year switcher", () => {
+    render(<HistoricalImageryTimeline parcel={FIXTURE_PARCELS[0]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /2010/ }));
+
     expect(
       screen.getByRole("img", {
         name: /2010 MODIS Terra true-color historical context/i,
       })
     ).toHaveAttribute("src", expect.stringContaining("gibs.earthdata.nasa.gov"));
+    expect(screen.getByText("2010-10-15 observation")).toBeInTheDocument();
+  });
+
+  it("steps the Latest search one day back per failed load, then reports a coverage gap", () => {
+    render(<HistoricalImageryTimeline parcel={FIXTURE_PARCELS[0]} />);
+
+    const requestedTimes = new Set<string>();
+    // walk from the start offset past the max lookback
+    for (let attempt = 0; attempt <= LATEST_MAX_OFFSET_DAYS; attempt += 1) {
+      const image = screen.queryByRole("img", {
+        name: /Latest HLS Sentinel-2 true-color historical context/i,
+      });
+      if (!image) break;
+      const time = /TIME=([0-9-]+)/.exec(
+        decodeURIComponent(image.getAttribute("src") ?? "")
+      )?.[1];
+      if (time) requestedTimes.add(time);
+      fireEvent.error(image);
+    }
+
+    // each retry asked GIBS for a different (earlier) date
+    expect(requestedTimes.size).toBe(
+      LATEST_MAX_OFFSET_DAYS - LATEST_START_OFFSET_DAYS + 1
+    );
+    expect(screen.getByText(/No recent clear pass/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/No usable Harmonized Landsat Sentinel-2 pass/i)
+    ).toBeInTheDocument();
+  });
+
+  it("accepts a Latest image whose pixels cannot be verified (no canvas in jsdom)", async () => {
+    render(<HistoricalImageryTimeline parcel={FIXTURE_PARCELS[0]} />);
+
+    const image = screen.getByRole("img", {
+      name: /Latest HLS Sentinel-2 true-color historical context/i,
+    });
+    fireEvent.load(image);
+
+    // next/image resolves the user onLoad asynchronously (img.decode())
+    await waitFor(() =>
+      expect(screen.queryByRole("status")).not.toBeInTheDocument()
+    );
+    expect(screen.getByText(/observation$/)).toBeInTheDocument();
   });
 
   it("switches scenes and explains source, resolution, and evidentiary limits", () => {
