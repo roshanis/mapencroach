@@ -97,11 +97,14 @@ class TestSeverityScore:
         result = severity_score(50_000, "waterbody", "A", repeat_offender=True)
         assert 0.0 <= result <= 100.0
 
-    def test_negative_area_is_clamped_to_zero_not_negative(self):
-        # A negative score would sort below every legitimate alert and
-        # effectively suppress it from any severity-ordered view.
-        result = severity_score(-5000, "waterbody", "A", repeat_offender=False)
-        assert result == 0.0
+    def test_negative_area_raises_value_error(self):
+        # A negative area is invalid input, not an extreme value to clamp
+        # -- silently coercing it to 0 would hide a caller bug.
+        with pytest.raises(ValueError, match="area_m2"):
+            severity_score(-5_000, "waterbody", "A", repeat_offender=False)
+
+    def test_area_of_zero_returns_zero(self):
+        assert severity_score(0, "waterbody", "A", repeat_offender=False) == 0.0
 
     def test_nan_area_is_rejected(self):
         with pytest.raises(ValueError, match="finite"):

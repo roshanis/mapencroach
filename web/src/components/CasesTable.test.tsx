@@ -5,6 +5,7 @@ import { CasesTable } from "./CasesTable";
 import type { Case } from "@/lib/types";
 
 const replaceMock = vi.fn();
+const pushMock = vi.fn();
 let currentSearchParams = new URLSearchParams();
 
 vi.mock("next/navigation", () => ({
@@ -33,12 +34,14 @@ beforeEach(() => {
   vi.setSystemTime(new Date("2026-07-13T12:00:00Z"));
   vi.mocked(useRouter).mockReturnValue({
     replace: replaceMock,
+    push: pushMock,
   } as unknown as ReturnType<typeof useRouter>);
 });
 
 afterEach(() => {
   vi.useRealTimers();
   replaceMock.mockReset();
+  pushMock.mockReset();
   currentSearchParams = new URLSearchParams();
   vi.restoreAllMocks();
 });
@@ -157,7 +160,7 @@ describe("CasesTable", () => {
     expect(row).toHaveTextContent("—");
   });
 
-  it("renders up to 2 allowed_transitions as chips plus a +n more chip", () => {
+  it("renders up to 2 allowed_transitions as chips plus a +n more chip, using human transition labels", () => {
     const cases: Case[] = [
       makeCase({
         id: "1",
@@ -174,10 +177,36 @@ describe("CasesTable", () => {
     render(<CasesTable cases={cases} />);
 
     // The table and the mobile card each render their own NextSteps chips
-    // from the same transitions array — expect one match per presentation.
-    expect(screen.getAllByText("RESPONSE WINDOW")).toHaveLength(2);
-    expect(screen.getAllByText("DISMISSED FALSE POSITIVE")).toHaveLength(2);
+    // from the same transitions array, using the same human transition
+    // labels — expect one match per presentation.
+    expect(screen.getAllByText("Open response window")).toHaveLength(2);
+    expect(screen.getAllByText("Dismiss false positive")).toHaveLength(2);
     expect(screen.getAllByText("+2 more")).toHaveLength(2);
+  });
+
+  it("labels an in-chain next step using its STATE_LABELS text (not the raw enum)", () => {
+    const cases: Case[] = [
+      makeCase({ id: "1", state: "NEW", allowed_transitions: ["TRIAGED"] }),
+    ];
+
+    render(<CasesTable cases={cases} />);
+
+    // Scoped to the desktop <table>: the mobile card renders the same
+    // NextSteps chip, so an unscoped query would be ambiguous.
+    expect(
+      within(screen.getByRole("table")).getByText("Triaged")
+    ).toBeInTheDocument();
+  });
+
+  it("renders time in stage in coarser units once it crosses 60 days", () => {
+    const cases: Case[] = [
+      makeCase({ id: "1", state: "NEW", state_since: daysAgoIso(200) }),
+    ];
+
+    render(<CasesTable cases={cases} />);
+
+    // 200 days / 30, rounded -> 7 months.
+    expect(screen.getByTestId("case-row")).toHaveTextContent("7 months");
   });
 
   it("uses a real link to navigate to the case", () => {
@@ -373,8 +402,8 @@ describe("CasesTable — mobile card presentation", () => {
       "Show Cause Issued"
     );
     expect(card).toHaveTextContent("4 days");
-    expect(within(card).getByText("RESPONSE WINDOW")).toBeInTheDocument();
-    expect(within(card).getByText("DISMISSED FALSE POSITIVE")).toBeInTheDocument();
+    expect(within(card).getByText("Open response window")).toBeInTheDocument();
+    expect(within(card).getByText("Dismiss false positive")).toBeInTheDocument();
   });
 
   it("filters and buckets the card list the same way it filters the table", () => {
@@ -406,5 +435,45 @@ describe("CasesTable — mobile card presentation", () => {
     expect(cards).toHaveLength(3);
     const ids = cards.map((c) => c.getAttribute("data-case-id"));
     expect(new Set(ids).size).toBe(3);
+  });
+
+  describe("whole-row navigation", () => {
+    it("navigates to the case when clicking anywhere on the row", () => {
+      const cases: Case[] = [makeCase({ id: "CASE-1", state: "NEW" })];
+      render(<CasesTable cases={cases} />);
+
+      fireEvent.click(screen.getByTestId("case-row"));
+
+      expect(pushMock).toHaveBeenCalledWith("/cases/CASE-1");
+    });
+
+    it("does not double-navigate when the click lands on the inner case link", () => {
+      const cases: Case[] = [makeCase({ id: "CASE-1", state: "NEW" })];
+      render(<CasesTable cases={cases} />);
+
+      // Scoped to the clickable table row: the mobile card renders its own
+      // "CASE-1" link too, so an unscoped query would be ambiguous. The
+      // row's own link is what exercises the closest("a") bail-out below.
+      const row = screen.getByTestId("case-row");
+      fireEvent.click(within(row).getByRole("link", { name: "CASE-1" }));
+
+      expect(pushMock).not.toHaveBeenCalled();
+    });
+
+    it("does not hijack a ctrl-click (or other modified click) on the row", () => {
+      const cases: Case[] = [makeCase({ id: "CASE-1", state: "NEW" })];
+      render(<CasesTable cases={cases} />);
+
+      fireEvent.click(screen.getByTestId("case-row"), { ctrlKey: true });
+
+      expect(pushMock).not.toHaveBeenCalled();
+    });
+
+    it("marks the row as clickable with a pointer cursor", () => {
+      const cases: Case[] = [makeCase({ id: "CASE-1", state: "NEW" })];
+      render(<CasesTable cases={cases} />);
+
+      expect(screen.getByTestId("case-row").className).toContain("cursor-pointer");
+    });
   });
 });

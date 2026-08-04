@@ -1,10 +1,22 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getCaseForRequest, getCaseImageryForRequest } from "@/lib/server-api";
+import {
+  getAlertForRequest,
+  getCaseForRequest,
+  getCaseImageryForRequest,
+  getParcelForRequest,
+  getPersonaRoleForRequest,
+} from "@/lib/server-api";
 import { STATE_DESCRIPTIONS } from "@/lib/explanations";
-import { CASE_STATE_CHAIN, STATE_LABELS } from "@/lib/types";
+import { formatDuration } from "@/lib/format";
+import { canDraftNotice } from "@/lib/notice-gate";
+import { CASE_STATE_CHAIN, LAND_CATEGORY_LABELS, STATE_LABELS } from "@/lib/types";
 import { CaseImageryHistory } from "@/components/CaseImageryHistory";
+import { EventTimeline } from "@/components/EventTimeline";
+import { EvidenceManifest } from "@/components/EvidenceManifest";
+import { NoticeDraftWorkspace } from "@/components/NoticeDraftWorkspace";
 import { StateRail } from "@/components/StateRail";
+import { TierChip } from "@/components/TierChip";
 import { TopBar } from "@/components/TopBar";
 import { TransitionPanel } from "@/components/TransitionPanel";
 
@@ -15,6 +27,14 @@ function formatTimestamp(iso: string): string {
     dateStyle: "medium",
     timeStyle: "short",
   });
+}
+
+/** Whole days elapsed since an ISO timestamp; null if the timestamp is absent/invalid. */
+function daysSince(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return null;
+  return Math.max(0, Math.floor((Date.now() - then) / (24 * 60 * 60 * 1000)));
 }
 
 export default async function CaseDetailPage({
@@ -29,7 +49,19 @@ export default async function CaseDetailPage({
     notFound();
   }
 
-  const imagery = await getCaseImageryForRequest(id);
+  const [alert, imagery, parcel, personaRole] = await Promise.all([
+    getAlertForRequest(caseRecord.alert_id),
+    getCaseImageryForRequest(id),
+    getParcelForRequest(caseRecord.parcel_id),
+    getPersonaRoleForRequest(),
+  ]);
+  const canDraft = canDraftNotice({ role: personaRole, state: caseRecord.state });
+
+  // The detail endpoint omits state_since (the list endpoint has it); the
+  // last event's timestamp is the same instant by construction.
+  const lastEvent = caseRecord.events[caseRecord.events.length - 1];
+  const daysInStage = daysSince(caseRecord.state_since ?? lastEvent?.occurred_at);
+  const firstEvent = caseRecord.events[0];
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -53,6 +85,75 @@ export default async function CaseDetailPage({
             {caseRecord.parcel_id}
           </p>
         </div>
+
+        <section
+          data-testid="case-summary"
+          className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm"
+        >
+          <h2 className="mb-4 text-base font-semibold text-gray-900">
+            Case Summary
+          </h2>
+          <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-3 lg:grid-cols-5">
+            <div>
+              <dt className="text-xs uppercase tracking-wide text-gray-500">
+                Parcel
+              </dt>
+              <dd className="mt-1 font-medium text-gray-900">
+                {parcel ? (
+                  <Link
+                    href={`/parcels/${parcel.id}`}
+                    className="text-gov hover:underline"
+                  >
+                    {parcel.survey_no}
+                  </Link>
+                ) : (
+                  caseRecord.parcel_id
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase tracking-wide text-gray-500">
+                Land category
+              </dt>
+              <dd className="mt-1 font-medium text-gray-900">
+                {parcel ? LAND_CATEGORY_LABELS[parcel.land_category] : "—"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase tracking-wide text-gray-500">
+                Alert
+              </dt>
+              <dd className="mt-1 flex items-center gap-2">
+                {alert ? (
+                  <>
+                    <TierChip tier={alert.tier} />
+                    <span className="font-medium text-gray-900">
+                      {Math.round(alert.severity_score)}
+                    </span>
+                  </>
+                ) : (
+                  <span className="font-medium text-gray-900">—</span>
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase tracking-wide text-gray-500">
+                Days in stage
+              </dt>
+              <dd className="mt-1 font-medium text-gray-900">
+                {daysInStage === null ? "—" : formatDuration(daysInStage)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase tracking-wide text-gray-500">
+                Started
+              </dt>
+              <dd className="mt-1 font-medium text-gray-900">
+                {firstEvent ? formatTimestamp(firstEvent.occurred_at) : "—"}
+              </dd>
+            </div>
+          </dl>
+        </section>
 
         <section className="overflow-x-auto rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
           <h2 className="mb-6 text-base font-semibold text-gray-900">
@@ -90,52 +191,19 @@ export default async function CaseDetailPage({
           />
         </section>
 
+        {parcel && canDraft && (
+          <NoticeDraftWorkspace
+            caseRecord={caseRecord}
+            parcel={parcel}
+            alert={alert}
+          />
+        )}
+
         <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
           <h2 className="mb-4 text-base font-semibold text-gray-900">
             Event History
           </h2>
-          <ol data-testid="case-event-history" className="flex flex-col gap-4">
-            {caseRecord.events.map((event, idx) => (
-              <li
-                key={`${event.to_state}-${event.occurred_at}-${idx}`}
-                className="flex flex-col gap-1 border-l-2 border-gov/30 pl-4"
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-medium text-gray-900">
-                    {event.from_state
-                      ? `${event.from_state.replace(/_/g, " ")} → ${event.to_state.replace(/_/g, " ")}`
-                      : `Opened at ${event.to_state.replace(/_/g, " ")}`}
-                  </span>
-                  <span className="text-xs text-gray-400">
-                    {formatTimestamp(event.occurred_at)}
-                  </span>
-                </div>
-                <div className="text-xs text-gray-500">
-                  Actor: {event.actor}
-                </div>
-                {event.note && (
-                  <p className="text-sm text-gray-700">{event.note}</p>
-                )}
-                {event.artifacts.length > 0 && (
-                  <ul className="flex flex-wrap gap-2">
-                    {event.artifacts.map((artifact) => (
-                      <li
-                        key={artifact}
-                        // break-all: artifact references (file names, refs)
-                        // are officer-entered free text with no guaranteed
-                        // break points — on a narrow phone an unbroken long
-                        // one would otherwise force the whole page to
-                        // scroll horizontally instead of wrapping in place.
-                        className="max-w-full break-all rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-600"
-                      >
-                        {artifact}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </li>
-            ))}
-          </ol>
+          <EventTimeline events={caseRecord.events} />
         </section>
 
         <section className="overflow-x-auto rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
@@ -158,13 +226,13 @@ export default async function CaseDetailPage({
           <h2 className="mb-4 text-base font-semibold text-gray-900">
             Evidence Packet
           </h2>
-          <div
-            data-testid="evidence-packet-placeholder"
-            className="flex h-28 items-center justify-center rounded border border-dashed border-gray-300 text-sm text-gray-400"
+          <EvidenceManifest events={caseRecord.events} />
+          <Link
+            href={`/cases/${caseRecord.id}/evidence-packet`}
+            className="mt-4 inline-flex rounded-md border border-gov/30 bg-white px-4 py-2 text-sm font-semibold text-gov hover:bg-gov/5 focus:outline-none focus:ring-2 focus:ring-gov focus:ring-offset-2"
           >
-            Evidence packet export (inspection reports, imagery, notices)
-            coming soon.
-          </div>
+            Open print-ready packet
+          </Link>
         </section>
       </main>
     </div>

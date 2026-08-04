@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { PERSONA_COOKIE, TOKEN_COOKIE } from "@/lib/api";
-import { PERSONA_META_COOKIE, clearCookie, readCookie } from "@/lib/cookies";
+import { PERSONA_COOKIE } from "@/lib/api";
+import { PERSONA_META_COOKIE, readCookie } from "@/lib/cookies";
 import { jurisdictionLabel, roleLabel } from "@/lib/format";
+import { exitPersona } from "./PersonaSwitcher";
 
 interface PersonaMeta {
   name: string;
@@ -46,10 +47,7 @@ export function ViewingAsBanner() {
     .join(", ");
 
   function handleExit() {
-    clearCookie(TOKEN_COOKIE);
-    clearCookie(PERSONA_COOKIE);
-    clearCookie(PERSONA_META_COOKIE);
-    window.location.reload();
+    exitPersona();
   }
 
   return (

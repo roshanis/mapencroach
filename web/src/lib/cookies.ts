@@ -19,24 +19,35 @@ export function readCookie(name: string): string | undefined {
 }
 
 /**
- * `; Secure` when the page itself is served over https — never on plain
- * http, so localhost/http dev setups keep working. `mapencroach_token`
- * carries a real bearer credential in live mode, so it must not be sendable
- * over a plaintext connection once one exists.
+ * Builds a `document.cookie`-assignable string. Appends `; Secure` only when
+ * running in a browser (`typeof window !== "undefined"`, SSR-safe) that is
+ * currently served over https — an unconditional `Secure` attribute would
+ * silently drop the cookie in plain-http local dev (e.g. Safari), and
+ * `mapencroach_token` carries a real bearer credential in live mode, so it
+ * must not be sendable over a plaintext connection once one exists.
+ *
+ * `value === undefined` builds the "clear" form (empty value, `max-age=0`
+ * is expected to be passed by the caller).
  */
-function secureAttribute(): string {
-  if (typeof window === "undefined") return "";
-  return window.location.protocol === "https:" ? "; Secure" : "";
+export function buildCookieString(
+  name: string,
+  value: string | undefined,
+  maxAge: number
+): string {
+  const secure =
+    typeof window !== "undefined" && window.location.protocol === "https:"
+      ? "; Secure"
+      : "";
+  const encoded = value !== undefined ? encodeURIComponent(value) : "";
+  return `${name}=${encoded}; path=/; max-age=${maxAge}; SameSite=Lax${secure}`;
 }
 
 export function setCookie(name: string, value: string) {
   if (typeof document === "undefined") return;
-  document.cookie = `${name}=${encodeURIComponent(
-    value
-  )}; path=/; max-age=${COOKIE_MAX_AGE}; SameSite=Lax${secureAttribute()}`;
+  document.cookie = buildCookieString(name, value, COOKIE_MAX_AGE);
 }
 
 export function clearCookie(name: string) {
   if (typeof document === "undefined") return;
-  document.cookie = `${name}=; path=/; max-age=0; SameSite=Lax${secureAttribute()}`;
+  document.cookie = buildCookieString(name, undefined, 0);
 }

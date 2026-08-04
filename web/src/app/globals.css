@@ -90,3 +90,49 @@ body {
     font-size: 16px !important;
   }
 }
+
+@media print {
+  @page {
+    size: A4;
+    margin: 14mm;
+  }
+
+  body {
+    background: #ffffff;
+  }
+
+  [data-print-hidden="true"] {
+    display: none !important;
+  }
+
+  [data-print-document="true"] {
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+}
+
+/* Pulsing halo for red-tier alert markers (MapLibreMap / GoogleMap). Applied
+   to the marker WRAPPER element, never the inner button, so it never fights
+   with the selection scaling/ring transform applied to the button. */
+@keyframes alert-marker-pulse-halo {
+  0% {
+    box-shadow: 0 0 0 0 rgba(196, 50, 31, 0.55);
+  }
+  70% {
+    box-shadow: 0 0 0 14px rgba(196, 50, 31, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(196, 50, 31, 0);
+  }
+}
+
+.alert-marker-pulse {
+  border-radius: 9999px;
+  animation: alert-marker-pulse-halo 1.8s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .alert-marker-pulse {
+    animation: none;
+  }
+}

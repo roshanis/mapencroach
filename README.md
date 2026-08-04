@@ -39,7 +39,10 @@ token cookie set at sign-in.
 
 Open http://localhost:3000 for the product landing page, then enter the command
 map at http://localhost:3000/console. Alert queue, parcel profiles, and case
-detail remain linked from the operational console.
+detail remain linked from the operational console. The parcel workflow includes
+matched historical-imagery comparison and role-gated boundary review; the case
+workflow includes a clearly marked training notice draft and an unsigned,
+print-ready evidence packet.
 Omit both env vars to run the UI on built-in fixture data with no backend at all.
 
 Google Maps is the production map provider when both
@@ -51,8 +54,8 @@ the Maps JavaScript API.
 ## Tests
 
 ```bash
-cd backend && .venv/bin/pytest --cov && .venv/bin/ruff check .   # 472 tests
-cd web && npm test && npm run build                              # 316 tests
+cd backend && .venv/bin/pytest --cov && .venv/bin/ruff check .
+cd web && npm test && npm run lint && npm run build
 ```
 
 ## Weekly imagery snapshots

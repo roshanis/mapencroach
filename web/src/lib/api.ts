@@ -161,9 +161,9 @@ export function authHeaders(tokenOverride?: string): HeadersInit | undefined {
  * backend restart or an auth lapse render an existing record as absent.
  */
 export class ApiError extends Error {
-  status: number;
+  readonly status: number;
 
-  constructor(status: number, message: string) {
+  constructor(message: string, status: number) {
     super(message);
     this.name = "ApiError";
     this.status = status;
@@ -174,8 +174,8 @@ async function fetchJson<T>(url: string, token?: string): Promise<T> {
   const res = await fetch(url, { headers: authHeaders(token) });
   if (!res.ok) {
     throw new ApiError(
-      res.status,
-      `Request failed: ${res.status} ${res.statusText} (${url})`
+      `Request failed: ${res.status} ${res.statusText} (${url})`,
+      res.status
     );
   }
   return (await res.json()) as T;
@@ -277,6 +277,8 @@ export async function getParcelContext(
       token
     );
   } catch (error) {
+    // Only a genuine 404 means "this context does not exist" — any other
+    // failure must propagate rather than read as "no context".
     if (error instanceof ApiError && error.status === 404) return undefined;
     throw error;
   }
@@ -321,6 +323,8 @@ export async function getCase(
     const raw = await fetchJson<Case>(`${base}/cases/${id}`, token);
     return normalizeCase(raw);
   } catch (error) {
+    // Only a genuine 404 means "this case does not exist" — any other
+    // failure must propagate rather than read as "no case".
     if (error instanceof ApiError && error.status === 404) return undefined;
     throw error;
   }
@@ -451,35 +455,43 @@ async function tagRequest(
     };
   }
 
-  const res = await fetch(url, {
-    method,
-    headers: {
-      ...(body ? { "Content-Type": "application/json" } : {}),
-      ...authHeaders(token),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-
-  if (res.ok) {
-    try {
-      const feature = (await res.json()) as ParcelFeature;
-      return { ok: true, status: res.status, tags: feature.properties.tags ?? [] };
-    } catch {
-      return { ok: true, status: res.status };
-    }
-  }
-
-  let detail: string = res.statusText;
   try {
-    const errBody = (await res.json()) as { detail?: string };
-    if (typeof errBody?.detail === "string") {
-      detail = errBody.detail;
-    }
-  } catch {
-    // fall back to statusText
-  }
+    const res = await fetch(url, {
+      method,
+      headers: {
+        ...(body ? { "Content-Type": "application/json" } : {}),
+        ...authHeaders(token),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
 
-  return { ok: false, status: res.status, detail };
+    if (res.ok) {
+      try {
+        const feature = (await res.json()) as ParcelFeature;
+        return { ok: true, status: res.status, tags: feature.properties.tags ?? [] };
+      } catch {
+        return { ok: true, status: res.status };
+      }
+    }
+
+    let detail: string = res.statusText;
+    try {
+      const errBody = (await res.json()) as { detail?: string };
+      if (typeof errBody?.detail === "string") {
+        detail = errBody.detail;
+      }
+    } catch {
+      // fall back to statusText
+    }
+
+    return { ok: false, status: res.status, detail };
+  } catch {
+    return {
+      ok: false,
+      status: 0,
+      detail: "Tag service could not be reached. Try again.",
+    };
+  }
 }
 
 export async function addParcelTag(
@@ -875,4 +887,65 @@ export async function backfillCaseImagery(
     };
   }
   return { ok: false, status: res.status, detail: await readErrorDetail(res) };
+}
+
+export interface BoundaryGradeResult {
+  ok: boolean;
+  status: number;
+  detail?: string;
+  grade?: BoundaryGrade;
+}
+
+export async function updateBoundaryGrade(
+  parcelId: string,
+  grade: BoundaryGrade,
+  surveyReference: string,
+  token?: string
+): Promise<BoundaryGradeResult> {
+  const base = getApiBase();
+  if (!base) {
+    return {
+      ok: false,
+      status: 0,
+      detail: "No backend configured — fixture mode is read-only.",
+    };
+  }
+
+  try {
+    const res = await fetch(`${base}/parcels/${parcelId}/boundary-grade`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(token),
+      },
+      body: JSON.stringify({
+        grade,
+        survey_reference: surveyReference,
+      }),
+    });
+
+    if (res.ok) {
+      const feature = (await res.json()) as ParcelFeature;
+      return {
+        ok: true,
+        status: res.status,
+        grade: feature.properties.boundary_grade,
+      };
+    }
+
+    let detail = res.statusText;
+    try {
+      const body = (await res.json()) as { detail?: string };
+      if (typeof body.detail === "string") detail = body.detail;
+    } catch {
+      // Keep the HTTP status text when the backend body is not JSON.
+    }
+    return { ok: false, status: res.status, detail };
+  } catch {
+    return {
+      ok: false,
+      status: 0,
+      detail: "Boundary-grade service could not be reached. Try again.",
+    };
+  }
 }

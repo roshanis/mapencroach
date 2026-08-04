@@ -121,5 +121,25 @@ describe("NavLinks", () => {
       expect(hamburger).toHaveAttribute("aria-expanded", "false");
       expect(screen.getAllByRole("link", { name: "Alerts" })).toHaveLength(1);
     });
+
+    it("adds a Demo roles link to /personas only in the mobile dropdown, not the desktop nav", () => {
+      vi.mocked(usePathname).mockReturnValue("/console");
+
+      render(<NavLinks />);
+
+      // Collapsed: no Demo roles link anywhere (desktop nav doesn't have one).
+      expect(
+        screen.queryByRole("link", { name: "Demo roles" })
+      ).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByTestId("nav-hamburger"));
+
+      // Open: the mobile dropdown now carries exactly one Demo roles link.
+      const demoRolesLinks = screen.getAllByRole("link", {
+        name: "Demo roles",
+      });
+      expect(demoRolesLinks).toHaveLength(1);
+      expect(demoRolesLinks[0]).toHaveAttribute("href", "/personas");
+    });
   });
 });

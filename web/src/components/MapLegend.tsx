@@ -1,6 +1,7 @@
 import {
   LAND_CATEGORY_COLORS,
   LAND_CATEGORY_LABELS,
+  TIER_COLORS,
   type LandCategory,
 } from "@/lib/types";
 
@@ -9,10 +10,10 @@ export interface MapLegendProps {
 }
 
 const TIER_DOTS: { label: string; color: string }[] = [
-  { label: "Red", color: "#c4321f" },
-  { label: "Amber", color: "#c98a12" },
-  { label: "Green", color: "#1e8f4e" },
-  { label: "Legacy", color: "#7b3fa0" },
+  { label: "Red", color: TIER_COLORS.red },
+  { label: "Amber", color: TIER_COLORS.amber },
+  { label: "Green", color: TIER_COLORS.green },
+  { label: "Legacy", color: TIER_COLORS.legacy },
 ];
 
 export function MapLegend({ categories }: MapLegendProps) {

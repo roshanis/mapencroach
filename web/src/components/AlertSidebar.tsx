@@ -1,27 +1,42 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
+import Link from "next/link";
 import { TierChip } from "./TierChip";
 import { ageFromNow, sortBySeverityDesc } from "@/lib/format";
-import type { Alert } from "@/lib/types";
+import { LAND_CATEGORY_LABELS, type Alert, type Case, type Parcel } from "@/lib/types";
 
 export interface AlertSidebarProps {
   alerts: Alert[];
+  parcels?: Parcel[];
   onSelect?: (alert: Alert) => void;
   selectedAlertId?: string;
   summary?: ReactNode;
   mobileOpen?: boolean;
   onMobileClose?: () => void;
+  /** Lookup from alert id to its case, used to render a "Case" quick-action chip. */
+  casesByAlertId?: Map<string, Case>;
+}
+
+/** "Waterbody · Grade A" style secondary line for a resolved parcel. */
+function parcelSecondaryLine(parcel: Parcel): string {
+  return `${LAND_CATEGORY_LABELS[parcel.land_category]} · Grade ${parcel.boundary_grade}`;
 }
 
 export function AlertSidebar({
   alerts,
+  parcels = [],
   onSelect,
   selectedAlertId,
   summary,
   mobileOpen = false,
   onMobileClose,
+  casesByAlertId,
 }: AlertSidebarProps) {
+  const parcelsById = useMemo(
+    () => new Map(parcels.map((parcel) => [parcel.id, parcel])),
+    [parcels]
+  );
   const sorted = sortBySeverityDesc(
     alerts.filter((alert) => alert.status !== "closed")
   );
@@ -70,35 +85,69 @@ export function AlertSidebar({
           )}
         </div>
         <ul className="flex-1 overflow-y-auto">
-          {sorted.map((alert) => (
-            <li key={alert.id}>
-              <button
-                type="button"
-                data-testid="alert-list-item"
-                data-alert-id={alert.id}
-                aria-label={`${alert.parcel_id}, ${alert.tier} alert, ${alert.status.replaceAll("_", " ")}`}
-                onClick={() => onSelect?.(alert)}
-                className={`flex w-full flex-col gap-1 border-b border-gray-100 px-4 py-3 text-left transition-colors hover:bg-gray-50 ${
-                  selectedAlertId === alert.id ? "bg-gov/5" : ""
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <TierChip tier={alert.tier} />
-                  <span className="text-xs text-gray-400">
-                    {ageFromNow(alert.detected_at)}
-                  </span>
+          {sorted.map((alert) => {
+            const parcel = parcelsById.get(alert.parcel_id);
+            const caseForAlert = casesByAlertId?.get(alert.id);
+            return (
+              <li key={alert.id}>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  data-testid="alert-list-item"
+                  data-alert-id={alert.id}
+                  aria-label={`${alert.parcel_id}, ${alert.tier} alert, ${alert.status.replaceAll("_", " ")}`}
+                  onClick={() => onSelect?.(alert)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onSelect?.(alert);
+                    }
+                  }}
+                  className={`flex w-full cursor-pointer flex-col gap-1 border-b border-gray-100 px-4 py-3 text-left transition-colors hover:bg-gray-50 ${
+                    selectedAlertId === alert.id ? "bg-gov/5" : ""
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <TierChip tier={alert.tier} />
+                    <span className="text-xs text-gray-400">
+                      {ageFromNow(alert.detected_at)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="font-medium text-gray-900">
+                      {parcel ? parcel.survey_no : alert.parcel_id}
+                    </span>
+                    <span className="text-gray-500">
+                      Severity {Math.round(alert.severity_score)}
+                    </span>
+                  </div>
+                  {parcel && (
+                    <span className="text-xs text-gray-500">
+                      {parcelSecondaryLine(parcel)}
+                    </span>
+                  )}
+                  <div className="mt-1 flex items-center gap-3 text-xs">
+                    <Link
+                      href={`/parcels/${alert.parcel_id}`}
+                      onClick={(event) => event.stopPropagation()}
+                      className="text-gov hover:underline focus:outline-none focus:ring-2 focus:ring-gov/30"
+                    >
+                      Parcel &rarr;
+                    </Link>
+                    {caseForAlert && (
+                      <Link
+                        href={`/cases/${caseForAlert.id}`}
+                        onClick={(event) => event.stopPropagation()}
+                        className="rounded-full bg-gov/10 px-2 py-0.5 font-medium text-gov hover:bg-gov/20 focus:outline-none focus:ring-2 focus:ring-gov/30"
+                      >
+                        Case
+                      </Link>
+                    )}
+                  </div>
                 </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="font-medium text-gray-900">
-                    {alert.parcel_id}
-                  </span>
-                  <span className="text-gray-500">
-                    Severity {alert.severity_score}
-                  </span>
-                </div>
-              </button>
-            </li>
-          ))}
+              </li>
+            );
+          })}
           {sorted.length === 0 && (
             <li className="px-4 py-8 text-center text-sm text-slate-500">
               No unresolved alerts in this jurisdiction.

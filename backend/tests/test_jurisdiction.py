@@ -56,10 +56,13 @@ class TestValidation:
         with pytest.raises(ValueError, match="root"):
             JurisdictionTree([("a", None), ("b", None)])
 
-    def test_dangling_parent_is_rejected(self):
-        # ("a", "ghost") has zero roots, but the more specific and more
-        # useful diagnosis is that "a" points at a parent that doesn't
-        # exist -- that's caught before the generic root-count check runs.
+    def test_missing_root_is_rejected(self):
+        # Single-node case: "ghost" is both a dangling parent reference and
+        # the reason there is zero valid roots. The dangling-parent check
+        # now catches this explicitly and more specifically -- see
+        # test_dangling_parent_is_rejected and
+        # test_dangling_parent_with_a_valid_root_elsewhere_is_rejected below
+        # -- before the generic root-count check would otherwise run.
         with pytest.raises(ValueError, match="unknown parent"):
             JurisdictionTree([("a", "ghost")])
 
@@ -78,3 +81,18 @@ class TestValidation:
     def test_empty_tree_is_rejected(self):
         with pytest.raises(ValueError, match="root"):
             JurisdictionTree([])
+
+    def test_dangling_parent_is_rejected(self):
+        with pytest.raises(ValueError, match="orphan") as exc_info:
+            JurisdictionTree(
+                [
+                    ("state", None),
+                    ("dist-a", "state"),
+                    ("orphan", "no-such-parent"),
+                ]
+            )
+        assert "no-such-parent" in str(exc_info.value)
+
+    def test_valid_multi_level_tree_still_constructs(self):
+        tree = JurisdictionTree(ROWS)
+        assert tree.scope_ids("state") == {r[0] for r in ROWS}

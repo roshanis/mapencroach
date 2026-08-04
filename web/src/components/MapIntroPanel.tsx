@@ -3,17 +3,27 @@
 import { useEffect, useState } from "react";
 
 const STORAGE_KEY = "mapencroach.intro.dismissed";
+const SEEN_KEY = "mapencroach.intro.seen";
 
 // localStorage can throw (not just return null) where storage is blocked —
 // Safari private browsing, a sandboxed iframe without allow-storage-access,
 // some embedded webviews. An uncaught SecurityError here bubbles past this
 // component to app/error.tsx and replaces the whole console with an error
 // page over a purely cosmetic "have you seen this before?" panel.
-function readDismissed(): boolean {
+function readStorageFlag(key: string): boolean {
   try {
-    return localStorage.getItem(STORAGE_KEY) === "1";
+    return localStorage.getItem(key) === "1";
   } catch {
     return false;
+  }
+}
+
+function writeStorageFlag(key: string) {
+  try {
+    localStorage.setItem(key, "1");
+  } catch {
+    // Storage is blocked — this render still behaves correctly, it just
+    // won't be remembered across reloads.
   }
 }
 
@@ -43,7 +53,15 @@ export function MapIntroPanel() {
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
-    setDismissed(readDismissed());
+    const alreadyDismissed = readStorageFlag(STORAGE_KEY);
+    const alreadySeen = readStorageFlag(SEEN_KEY);
+    // Start collapsed if the user has ever dismissed the panel, or has ever
+    // simply seen it before (a prior session) — only a truly first-ever
+    // view shows it expanded.
+    setDismissed(alreadyDismissed || alreadySeen);
+    if (!alreadyDismissed && !alreadySeen) {
+      writeStorageFlag(SEEN_KEY);
+    }
     setReady(true);
   }, []);
 

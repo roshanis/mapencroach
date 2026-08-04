@@ -30,7 +30,7 @@ Close other tabs, hide bookmarks bar, zoom browser to 110%.
 
 ---
 
-## The script (4 stops, ~1 minute each)
+## The script (5 stops, ~1 minute each)
 
 ### Stop 1 — Command map (`/console`)
 
@@ -66,8 +66,10 @@ On parcel-1 (canal land):
 > why this alert is red: high-value land, trustworthy boundary, big change."
 
 Use the **Imagery Timeline** to switch between the verified 1990 and 2000
-Landsat annual mosaics and the 2010 MODIS observation. The 1985 tab deliberately
-shows a coverage gap rather than inventing a scene.
+Landsat annual mosaics and the 2010 MODIS observation. Then choose
+**Compare years** and drag the reveal control across the matched 1990/2000
+extent; the parcel boundary remains fixed over both scenes. The 1985 tab
+deliberately shows a coverage gap rather than inventing a scene.
 
 > "These historical maps give the officer visual planning context and retain their
 > NASA source, capture date, and resolution. They are not enforcement evidence —
@@ -108,6 +110,17 @@ The red banner shows the engine's own words: *cannot transition from
 SHOW_CAUSE_ISSUED to ORDER_ISSUED*. Try "DISMISSED FALSE POSITIVE" after blanking
 the evidence field — refused again, naming the missing dismissal reason.
 
+Open **Notice preparation**. The warning and preview watermark make the legal
+boundary explicit: this is a training draft, not an approved form and not for
+service. Fill the required authority, deadline, address, and observed-facts
+fields to generate a draft; point out that the software still requires legal
+review, authoritative evidence, an approved form, and an authorized signature.
+
+Under **Evidence packet**, choose **Open print-ready packet**. The packet brings
+the case, parcel, event history, and artifact manifest together for review and
+print/PDF export, while its readiness checklist keeps legal review and digital
+signature visibly pending. It does not claim certification.
+
 Do refusals freely — they change nothing. Only advance the case legally (e.g.
 RESPONSE WINDOW) as your finale if at all: it mutates the demo until the
 free-tier API instance next restarts, which conveniently resets everything.
@@ -136,6 +149,12 @@ spread: statewide viewer, district case officer, district survey officer,
 taluk-level case officer, statewide data admin. "Exit persona" in the banner
 returns to the default officer.
 
+For a survey handoff, switch to **Survey Officer, Roorkee**, open
+`/parcels/parcel-7`, and use **Boundary grade review** to record a new grade with
+a survey reference. The control is absent for non-survey roles, and the API
+records the actor and reference in the audit chain. This changes demo state
+until the API instance restarts.
+
 ---
 
 ## Technical encore (60 seconds, only for a technical audience)
@@ -157,7 +176,7 @@ curl -s -X POST http://localhost:8000/cases/case-1/transitions \
 # → 409 "missing required artifact(s): dismissal_reason"
 ```
 
-Worth mentioning: 472 backend tests at ~99% coverage; every mutation lands in a
+Worth mentioning: 687 backend tests at ~99% coverage; every mutation lands in a
 tamper-evident hash-chained audit log (editing or reordering any entry breaks
 verification; dropping entries off the end is caught by verifying against a
 retained head anchor — built for evidence-integrity requirements under BSA 2023
@@ -174,6 +193,7 @@ of, parcels outside their jurisdiction.
 | Real cadastral records | Ingestion + topology QA built and tested; needs the department's parcel files |
 | Live satellite change detection | Pipeline plumbing (scene registry, hashing, tiles) built; Sentinel-2 fetch needs free Copernicus credentials |
 | Persistent database | Demo runs in-memory; PostGIS models are written and ready |
+| Approved notice templates and digital certificates | Notice output is a marked training draft; the print-ready packet remains unsigned and explicitly pending legal review |
 
 Framing that works: *"Everything you just clicked is real, tested software. What's
 seeded today is demo data — the next step is your data."*

@@ -1,13 +1,50 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { DemoMenu } from "./DemoMenu";
 import { NavLinks } from "./NavLinks";
-import { PersonaSwitcher } from "./PersonaSwitcher";
 import { ViewingAsBanner } from "./ViewingAsBanner";
+import { PERSONA_META_COOKIE, readCookie } from "@/lib/cookies";
+import { jurisdictionLabel } from "@/lib/format";
 
 export interface TopBarProps {
   jurisdiction?: string;
 }
 
+/**
+ * Reads the active demo persona's jurisdiction from the same
+ * PERSONA_META_COOKIE that ViewingAsBanner uses, so the header chip agrees
+ * with the "Viewing as" banner instead of showing a generic/default label.
+ */
+function readActivePersonaJurisdiction(): string | undefined {
+  const raw = readCookie(PERSONA_META_COOKIE);
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as {
+      jurisdiction_id?: string;
+      jurisdiction_name?: string;
+    };
+    if (parsed && typeof parsed.jurisdiction_id === "string") {
+      return jurisdictionLabel(parsed.jurisdiction_id, parsed.jurisdiction_name);
+    }
+  } catch {
+    // fall through — malformed cookie, ignore and use the prop instead
+  }
+  return undefined;
+}
+
 export function TopBar({ jurisdiction = "All Jurisdictions" }: TopBarProps) {
+  const [personaJurisdiction, setPersonaJurisdiction] = useState<
+    string | undefined
+  >(undefined);
+
+  useEffect(() => {
+    setPersonaJurisdiction(readActivePersonaJurisdiction());
+  }, []);
+
+  const displayJurisdiction = personaJurisdiction ?? jurisdiction;
+
   return (
     <>
       <header
@@ -38,20 +75,14 @@ export function TopBar({ jurisdiction = "All Jurisdictions" }: TopBarProps) {
           </Link>
           <NavLinks />
         </div>
-        <div className="flex items-center gap-2 sm:gap-3">
+        <div className="flex shrink-0 items-center gap-1.5 sm:gap-3">
           <div
             data-testid="jurisdiction-placeholder"
-            className="hidden max-w-64 truncate rounded border border-white/30 px-3 py-1 text-xs text-white/90 lg:block"
+            className="max-w-24 truncate rounded border border-white/30 px-2 py-1 text-xs text-white/90 sm:max-w-40 sm:px-3 lg:max-w-64"
           >
-            {jurisdiction}
+            {displayJurisdiction}
           </div>
-          <PersonaSwitcher />
-          <Link
-            href="/personas"
-            className="hidden min-h-11 items-center rounded border border-white/25 px-2.5 text-xs text-white/80 hover:bg-white/10 hover:text-white sm:inline-flex"
-          >
-            Demo roles
-          </Link>
+          <DemoMenu />
         </div>
       </header>
       <ViewingAsBanner />

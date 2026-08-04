@@ -6,10 +6,17 @@ import { transitionCase, type TransitionResult } from "@/lib/api";
 import {
   CASE_STATE_CHAIN,
   NON_CHAIN_STATES,
-  TRANSITION_ACTION_LABELS as ACTION_LABELS,
+  TRANSITION_ACTION_LABELS,
 } from "@/lib/types";
 
 const ALL_STATES: string[] = [...CASE_STATE_CHAIN, ...NON_CHAIN_STATES];
+
+/**
+ * Human, imperative labels for transition targets (e.g. "Dismiss false
+ * positive"). Re-exported so other views (e.g. CasesTable's next-step chips)
+ * can reuse the same phrasing instead of duplicating it.
+ */
+export const ACTION_LABELS = TRANSITION_ACTION_LABELS;
 
 const SUBMIT_LABELS: Record<string, string> = {
   RESPONSE_WINDOW: "Record response window",
@@ -69,7 +76,10 @@ export function TransitionPanel({
   // requiredArtifacts[stale-selected] would be undefined, silently passing
   // the evidence gate for a step the engine will refuse. Resync whenever the
   // current selection falls outside the fresh set; leave it alone otherwise
-  // so an in-progress manual selection survives an incidental re-render.
+  // so an in-progress manual selection (or a brand-new array object with the
+  // same contents) survives an incidental re-render. Intentionally leave
+  // `result` untouched: a success banner from the transition that just
+  // triggered this refresh should survive the resync.
   useEffect(() => {
     if (allowedTransitions.includes(selected)) return;
     setSelected(allowedTransitions[0] ?? "");

@@ -53,12 +53,16 @@ def severity_score(
     area factor = min(area_m2 / 1 hectare, 1.0), weighted by land category
     importance and boundary survey grade (uncertain boundaries lower
     actionability), with a 20% bump for repeat offenders. Clamped to the
-    documented [0, 100] range at both ends -- a bogus negative area can't
-    produce a negative score that would sort below every legitimate alert.
+    documented [0, 100] range at the top end -- a repeat-offender bump on
+    an already-large area can't push the score past 100.
 
-    Raises ValueError if `area_m2` is not finite (NaN/inf), since those
-    would otherwise propagate silently into an uninterpretable score.
+    Raises ValueError if `area_m2` is negative (a negative area is invalid
+    input, not an extreme value to clamp -- silently coercing it to 0
+    would hide a caller bug) or not finite (NaN/inf), since either would
+    otherwise propagate silently into an uninterpretable score.
     """
+    if area_m2 < 0:
+        raise ValueError(f"area_m2 must be non-negative, got {area_m2!r}")
     if land_category not in LAND_CATEGORY_WEIGHTS:
         raise ValueError(f"unknown land_category: {land_category!r}")
     if boundary_grade not in BOUNDARY_GRADE_MULTIPLIERS:
@@ -74,8 +78,7 @@ def severity_score(
     if repeat_offender:
         score *= _REPEAT_OFFENDER_MULTIPLIER
 
-    score = min(score, 100.0)
-    score = max(score, 0.0)
+    score = max(0.0, min(score, 100.0))
     return round(score, 1)
 
 

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   COOKIE_MAX_AGE,
   PERSONA_META_COOKIE,
+  buildCookieString,
   clearCookie,
   readCookie,
   setCookie,
@@ -98,5 +99,50 @@ describe("cookie Secure attribute", () => {
     clearCookie("mapencroach_token");
 
     expect(setSpy.mock.calls[0][0]).toContain("; Secure");
+  });
+});
+
+describe("buildCookieString Secure attribute", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("omits Secure under http (jsdom's default test origin)", () => {
+    expect(window.location.protocol).toBe("http:");
+    const cookieString = buildCookieString("test_cookie", "hello", COOKIE_MAX_AGE);
+    expect(cookieString).not.toContain("Secure");
+    expect(cookieString).toBe(
+      "test_cookie=hello; path=/; max-age=28800; SameSite=Lax"
+    );
+  });
+
+  it("appends Secure when the page is served over https", () => {
+    vi.stubGlobal("location", { ...window.location, protocol: "https:" });
+    const cookieString = buildCookieString("test_cookie", "hello", COOKIE_MAX_AGE);
+    expect(cookieString).toBe(
+      "test_cookie=hello; path=/; max-age=28800; SameSite=Lax; Secure"
+    );
+  });
+
+  it("setCookie omits Secure under http", () => {
+    setCookie("test_cookie", "hello");
+    expect(readCookie("test_cookie")).toBe("hello");
+  });
+
+  it("setCookie appends Secure under https", () => {
+    vi.stubGlobal("location", { ...window.location, protocol: "https:" });
+    expect(buildCookieString("test_cookie", "hello", COOKIE_MAX_AGE)).toContain(
+      "; Secure"
+    );
+  });
+
+  it("clearCookie's cookie string omits Secure under http and appends it under https", () => {
+    expect(buildCookieString("test_cookie", undefined, 0)).toBe(
+      "test_cookie=; path=/; max-age=0; SameSite=Lax"
+    );
+    vi.stubGlobal("location", { ...window.location, protocol: "https:" });
+    expect(buildCookieString("test_cookie", undefined, 0)).toBe(
+      "test_cookie=; path=/; max-age=0; SameSite=Lax; Secure"
+    );
   });
 });

@@ -2,14 +2,18 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { CaseStateChip } from "./CaseStateChip";
+import { ACTION_LABELS } from "./TransitionPanel";
 import { parseFilterParam } from "@/lib/searchParams";
+import { formatDuration } from "@/lib/format";
 import {
   CASE_STATE_CHAIN,
+  STATE_LABELS,
   TERMINAL_STATES,
   PAUSED_STATES,
   type Case,
+  type CaseState,
 } from "@/lib/types";
 
 export interface CasesTableProps {
@@ -84,6 +88,20 @@ function buildSections(cases: Case[]): Section[] {
   return sections;
 }
 
+/**
+ * Human label for a transition target. Reuses TransitionPanel's imperative
+ * phrasing (e.g. "Dismiss false positive") for special-state actions; falls
+ * back to the chain's own STATE_LABELS (e.g. "Triaged") for in-chain
+ * advances, and a humanized raw string for anything unrecognized.
+ */
+function transitionLabel(state: string): string {
+  if (state in ACTION_LABELS) return ACTION_LABELS[state];
+  if ((CASE_STATE_CHAIN as string[]).includes(state)) {
+    return STATE_LABELS[state as CaseState];
+  }
+  return state.replace(/_/g, " ");
+}
+
 function NextSteps({ transitions }: { transitions?: string[] }) {
   if (!transitions || transitions.length === 0) {
     return <span className="text-gray-400">—</span>;
@@ -97,7 +115,7 @@ function NextSteps({ transitions }: { transitions?: string[] }) {
           key={t}
           className="rounded px-2 py-0.5 text-xs text-gov ring-1 ring-inset ring-gov/30"
         >
-          {t.replace(/_/g, " ")}
+          {transitionLabel(t)}
         </span>
       ))}
       {remaining > 0 && (
@@ -127,7 +145,7 @@ function StageProgress({ state }: { state: Case["state"] }) {
 
 /** Formats days-in-stage the same way for the table cell and the card. */
 function daysLabel(days: number | null): string {
-  return days === null ? "—" : `${days} days`;
+  return days === null ? "—" : formatDuration(days);
 }
 
 const CASE_LINK_CLASSES =
@@ -139,12 +157,22 @@ const CASE_LINK_CLASSES =
  * (CaseStateChip, StageProgress, NextSteps), so there is one place that
  * knows how to render a case, not two drifting copies. */
 function CaseTableRow({ c }: { c: Case }) {
+  const router = useRouter();
   const days = daysInStage(c.state_since);
   return (
     <tr
       data-testid="case-row"
       data-case-id={c.id}
-      className="border-t border-gray-100 hover:bg-gray-50"
+      onClick={(event) => {
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+          return;
+        }
+        if ((event.target as HTMLElement).closest("a")) {
+          return;
+        }
+        router.push(`/cases/${c.id}`);
+      }}
+      className="cursor-pointer border-t border-gray-100 hover:bg-gov/5"
     >
       <td className="px-4 py-2 font-medium">
         <Link href={`/cases/${c.id}`} className={CASE_LINK_CLASSES}>

@@ -48,7 +48,14 @@ def validate_secret_config(demo_mode: bool) -> str:
     noting that POST /demo/login mints tokens for any persona with no
     credentials at all.
     """
+    # An unset, empty, or whitespace-only env var is treated as absent so a
+    # misconfigured deploy (MAPENCROACH_JWT_SECRET="" or "   ") trips the
+    # fail-closed guard below instead of silently signing tokens with a
+    # blank secret. Only the blankness check is stripped -- the real secret
+    # is used verbatim.
     secret = os.environ.get("MAPENCROACH_JWT_SECRET", "")
+    if not secret.strip():
+        secret = ""
 
     if demo_mode:
         if secret and secret != _DEFAULT_SECRET:

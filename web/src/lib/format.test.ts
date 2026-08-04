@@ -4,6 +4,8 @@ import {
   ageFromNow,
   jurisdictionLabel,
   roleLabel,
+  formatDuration,
+  parseArtifact,
 } from "./format";
 
 describe("sortBySeverityDesc", () => {
@@ -85,5 +87,73 @@ describe("roleLabel", () => {
     expect(roleLabel("viewer")).toBe("Viewer");
     expect(roleLabel("survey_officer")).toBe("Survey Officer");
     expect(roleLabel("data_admin")).toBe("Data Admin");
+  });
+});
+
+describe("formatDuration", () => {
+  it('renders 0 days as "today"', () => {
+    expect(formatDuration(0)).toBe("today");
+  });
+
+  it("renders exactly 1 day as singular", () => {
+    expect(formatDuration(1)).toBe("1 day");
+  });
+
+  it("renders sub-60-day counts as plural days", () => {
+    expect(formatDuration(45)).toBe("45 days");
+  });
+
+  it("renders 59 days as days, not months (boundary)", () => {
+    expect(formatDuration(59)).toBe("59 days");
+  });
+
+  it("rounds 184 days to the nearest month", () => {
+    expect(formatDuration(184)).toBe("6 months");
+  });
+
+  it("renders 60 days as 2 months (boundary)", () => {
+    expect(formatDuration(60)).toBe("2 months");
+  });
+
+  it("renders 800 days in years once the month count reaches 24", () => {
+    expect(formatDuration(800)).toBe("2 years");
+  });
+
+  it("treats non-positive day counts as today", () => {
+    expect(formatDuration(-5)).toBe("today");
+  });
+});
+
+describe("parseArtifact", () => {
+  it('parses a "key: value" artifact string into a humanized kind', () => {
+    expect(parseArtifact("inspection_report: report-001.pdf")).toEqual({
+      kind: "Inspection report",
+      label: "report-001.pdf",
+      value: "report-001.pdf",
+    });
+  });
+
+  it("humanizes multi-word snake_case keys", () => {
+    expect(parseArtifact("dispatch_proof: dispatch-001.pdf")).toEqual({
+      kind: "Dispatch proof",
+      label: "dispatch-001.pdf",
+      value: "dispatch-001.pdf",
+    });
+  });
+
+  it("tolerates a string with no colon by treating it as an Attachment", () => {
+    expect(parseArtifact("site_photos_9001.zip")).toEqual({
+      kind: "Attachment",
+      label: "site_photos_9001.zip",
+      value: "site_photos_9001.zip",
+    });
+  });
+
+  it("trims surrounding whitespace around the key and value", () => {
+    expect(parseArtifact("notice_document :  notice-001.pdf ")).toEqual({
+      kind: "Notice document",
+      label: "notice-001.pdf",
+      value: "notice-001.pdf",
+    });
   });
 });

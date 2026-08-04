@@ -1,8 +1,9 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MapIntroPanel } from "./MapIntroPanel";
 
 const STORAGE_KEY = "mapencroach.intro.dismissed";
+const SEEN_KEY = "mapencroach.intro.seen";
 
 // Node's experimental global `localStorage` getter (added in Node >=22, the
 // "--localstorage-file" warning) shadows jsdom's own window.localStorage in
@@ -111,6 +112,44 @@ describe("MapIntroPanel", () => {
       expect(screen.getByTestId("map-intro-reopen")).toBeInTheDocument();
     });
 
+    expect(screen.queryByTestId("map-intro-panel")).not.toBeInTheDocument();
+  });
+
+  it("shows the pill immediately when the panel was previously seen (even if never explicitly dismissed)", async () => {
+    localStorage.setItem(SEEN_KEY, "1");
+
+    render(<MapIntroPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("map-intro-reopen")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByTestId("map-intro-panel")).not.toBeInTheDocument();
+  });
+
+  it("marks the panel as seen on a truly first view, so a later session starts collapsed", async () => {
+    render(<MapIntroPanel />);
+
+    // First view: shown expanded, exactly like today.
+    await waitFor(() => {
+      expect(screen.getByTestId("map-intro-panel")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(localStorage.getItem(SEEN_KEY)).toBe("1");
+    });
+    // Never explicitly dismissed this session.
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+
+    cleanup();
+
+    // A later session (fresh mount, same localStorage) should start
+    // collapsed to a reopen pill instead of covering the map again.
+    render(<MapIntroPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("map-intro-reopen")).toBeInTheDocument();
+    });
     expect(screen.queryByTestId("map-intro-panel")).not.toBeInTheDocument();
   });
 

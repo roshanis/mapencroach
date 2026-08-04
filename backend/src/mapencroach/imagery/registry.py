@@ -19,6 +19,7 @@ construct `SceneRegistry()` with no store at all.
 """
 
 import hashlib
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -103,11 +104,19 @@ class SceneRegistry:
     storage existed -- hash-on-ingest bookkeeping only, no bytes retained,
     `load` always raises `SceneNotRetained`.
 
-    The lookup dicts are internal state, not part of the public API: they
-    are excluded from `__init__`/`__repr__`/`__eq__` (`init=False,
-    repr=False, compare=False`) so a caller can't construct or compare a
-    registry by injecting arbitrary entries into them directly -- the only
-    way in is `register`.
+    The lookup dicts (and the lock guarding them) are internal state, not
+    part of the public API: they are excluded from `__init__`/`__repr__`/
+    `__eq__` (`init=False, repr=False, compare=False`) so a caller can't
+    construct or compare a registry by injecting arbitrary entries into
+    them directly -- the only way in is `register`.
+
+    `register` is called from `api/app.py`'s capture handlers *outside*
+    `store.lock` (capture calls out to imagery providers, and that lock is
+    deliberately released before any I/O -- see `api/store.py`), so two
+    concurrent capture runs can call `register` on the same shared
+    registry at once. `_lock` guards the duplicate check and both dict
+    inserts so that race can't register the same scene_id/hash twice or
+    leave the two lookup dicts inconsistent with each other.
     """
 
     blob_store: BlobStore | None = None
@@ -117,6 +126,9 @@ class SceneRegistry:
     )
     _by_hash: dict[str, SceneRecord] = field(
         default_factory=dict, init=False, repr=False, compare=False
+    )
+    _lock: threading.Lock = field(
+        default_factory=threading.Lock, init=False, repr=False, compare=False
     )
 
     def register(
@@ -134,34 +146,35 @@ class SceneRegistry:
     ) -> SceneRecord:
         sha256 = hashlib.sha256(data).hexdigest()
 
-        if scene_id in self._by_id or sha256 in self._by_hash:
-            raise DuplicateScene(
-                f"scene already registered (scene_id={scene_id!r}, sha256={sha256!r})"
+        with self._lock:
+            if scene_id in self._by_id or sha256 in self._by_hash:
+                raise DuplicateScene(
+                    f"scene already registered (scene_id={scene_id!r}, sha256={sha256!r})"
+                )
+
+            retained = False
+            if self.blob_store is not None:
+                # `put` is itself keyed by (and verifies against) this same
+                # sha256, so storage can never disagree with the registry
+                # about which bytes a scene_id/hash resolves to.
+                self.blob_store.put(data)
+                retained = True
+
+            record = SceneRecord(
+                scene_id=scene_id,
+                sha256=sha256,
+                captured_at=captured_at,
+                sensor=sensor,
+                resolution_m=resolution_m,
+                cloud_pct=cloud_pct,
+                source=source,
+                stac_item=_build_stac_item(scene_id, captured_at, cloud_pct, resolution_m, href),
+                media_type=media_type,
+                retained=retained,
             )
-
-        retained = False
-        if self.blob_store is not None:
-            # `put` is itself keyed by (and verifies against) this same
-            # sha256, so storage can never disagree with the registry
-            # about which bytes a scene_id/hash resolves to.
-            self.blob_store.put(data)
-            retained = True
-
-        record = SceneRecord(
-            scene_id=scene_id,
-            sha256=sha256,
-            captured_at=captured_at,
-            sensor=sensor,
-            resolution_m=resolution_m,
-            cloud_pct=cloud_pct,
-            source=source,
-            stac_item=_build_stac_item(scene_id, captured_at, cloud_pct, resolution_m, href),
-            media_type=media_type,
-            retained=retained,
-        )
-        self._by_id[scene_id] = record
-        self._by_hash[sha256] = record
-        return record
+            self._by_id[scene_id] = record
+            self._by_hash[sha256] = record
+            return record
 
     def get(self, scene_id: str) -> SceneRecord:
         return self._by_id[scene_id]

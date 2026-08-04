@@ -25,7 +25,11 @@ export function TagEditor({ parcelId, initialTags }: TagEditorProps) {
         setTags(result.tags ?? tags);
         setInput("");
       } else {
-        setError(`Refused (HTTP ${result.status}): ${result.detail}`);
+        setError(
+          result.status === 0
+            ? result.detail ?? "Tag service could not be reached. Try again."
+            : `Refused (HTTP ${result.status}): ${result.detail}`
+        );
       }
     } catch {
       setError("Tag service could not be reached. The tag was not saved — try again.");
@@ -42,7 +46,11 @@ export function TagEditor({ parcelId, initialTags }: TagEditorProps) {
       if (result.ok) {
         setTags(result.tags ?? tags);
       } else {
-        setError(`Refused (HTTP ${result.status}): ${result.detail}`);
+        setError(
+          result.status === 0
+            ? result.detail ?? "Tag service could not be reached. Try again."
+            : `Refused (HTTP ${result.status}): ${result.detail}`
+        );
       }
     } catch {
       setError("Tag service could not be reached. The tag was not removed — try again.");
@@ -82,6 +90,7 @@ export function TagEditor({ parcelId, initialTags }: TagEditorProps) {
         <input
           type="text"
           data-testid="tag-input"
+          aria-label="Add tag"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="add-tag-like-this"
@@ -100,7 +109,7 @@ export function TagEditor({ parcelId, initialTags }: TagEditorProps) {
       </div>
 
       {error && (
-        <p data-testid="tag-error" className="text-xs text-red-600">
+        <p data-testid="tag-error" role="alert" className="text-xs text-red-600">
           {error}
         </p>
       )}

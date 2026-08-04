@@ -36,6 +36,7 @@ called after the relevant `store.lock` block has already been released
 and is not persisted, and its cross-process concurrency caveats.
 """
 
+import math
 import os
 import re
 from datetime import UTC, date, datetime, timedelta
@@ -43,7 +44,7 @@ from typing import Annotated, Any
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 from mapencroach.api.auth import (
     Role,
@@ -186,16 +187,39 @@ def _enrich_persona(persona: dict[str, str], store: Store) -> dict[str, Any]:
     }
 
 
+_NonBlankStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
 class BoundaryGradePatch(BaseModel):
     grade: str
-    survey_reference: str
+    # The survey reference is the audit trail's evidence of record -- a
+    # whitespace-only value is functionally a missing reference and must be
+    # rejected rather than silently persisted.
+    survey_reference: _NonBlankStr
 
 
 class AlertCreate(BaseModel):
     parcel_id: str
     tier: AlertTier
+    # allow_inf_nan=False rejects Infinity/-Infinity/NaN at parse time. Without
+    # it, `ge=0` lets Infinity through (it JSON-serializes as null downstream,
+    # poisoning the store) and NaN comparisons are unreliable.
     area_m2: float = Field(ge=0, allow_inf_nan=False)
     detected_at: datetime
+
+    @field_validator("area_m2", mode="before")
+    @classmethod
+    def _area_m2_reject_non_finite(cls, value: Any) -> Any:
+        # FastAPI's default RequestValidationError handler embeds the raw
+        # offending value as the error's "input", and Starlette's
+        # JSONResponse renders with allow_nan=False -- so an Infinity/NaN
+        # float surviving into that error would crash the response instead
+        # of returning a clean 422. Normalizing to None here before
+        # allow_inf_nan=False rejects it means the eventual error carries a
+        # JSON-safe `null`, not a raw non-finite float.
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
+        return value
 
 
 class TagCreate(BaseModel):
@@ -521,12 +545,18 @@ def create_app(store: Store | None = None) -> FastAPI:
             )
 
         with store.lock:
+            old_grade = parcel["boundary_grade"]
             parcel["boundary_grade"] = body.grade
             store.record_audit(
                 actor=user.sub,
                 action="parcel.boundary_grade.update",
                 object_type="parcel",
                 object_id=parcel_id,
+                extra={
+                    "survey_reference": body.survey_reference,
+                    "from_grade": old_grade,
+                    "to_grade": body.grade,
+                },
             )
         return _parcel_to_feature(parcel)
 

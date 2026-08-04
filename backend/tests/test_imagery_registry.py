@@ -1,3 +1,6 @@
+import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
 import pytest
@@ -301,3 +304,67 @@ class TestRegistryStateIsNotInjectable:
         rendered = repr(registry)
         assert "_by_id" not in rendered
         assert "_by_hash" not in rendered
+
+
+class TestConcurrency:
+    """register()'s dedup check and the two dict writes are not atomic.
+    Dormant today (no endpoint wires this in yet), but it is the
+    evidentiary anchor for imagery, so concurrent registrations must never
+    let two threads both "win" a duplicate scene_id, and every successful
+    registration must leave _by_id/_by_hash consistent with each other.
+
+    The race window (hash the bytes, *then* check-and-insert) is narrow
+    enough that CPython's GIL scheduling can hide it under default
+    settings even with a dozen threads. Shrinking the GIL switch interval
+    for the duration of this test makes it reliably exercise the race
+    instead of passing by luck -- verified empirically: without this, the
+    unfixed code passed most runs and only occasionally leaked a
+    duplicate; with it, the unfixed code fails every run.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _aggressive_gil_switching(self):
+        original = sys.getswitchinterval()
+        sys.setswitchinterval(1e-6)
+        try:
+            yield
+        finally:
+            sys.setswitchinterval(original)
+
+    def test_concurrent_registration_dedupes_distinct_and_duplicate_ids(self):
+        registry = make_registry()
+        n_threads = 12
+        n_distinct = 5
+        barrier = threading.Barrier(n_threads)
+        results_lock = threading.Lock()
+        successes: list[str] = []
+        duplicate_errors = 0
+
+        def worker(thread_idx: int) -> None:
+            nonlocal duplicate_errors
+            scene_id = f"scene-{thread_idx % n_distinct}"
+            data = f"bytes-for-{scene_id}".encode()
+            barrier.wait()
+            try:
+                register_scene(registry, data=data, scene_id=scene_id)
+            except DuplicateScene:
+                with results_lock:
+                    duplicate_errors += 1
+            else:
+                with results_lock:
+                    successes.append(scene_id)
+
+        with ThreadPoolExecutor(max_workers=n_threads) as pool:
+            futures = [pool.submit(worker, i) for i in range(n_threads)]
+            for f in futures:
+                f.result()
+
+        # Exactly one success per distinct scene_id; every other attempt
+        # (targeting an id someone else already won) raised DuplicateScene.
+        assert sorted(successes) == sorted({f"scene-{i}" for i in range(n_distinct)})
+        assert duplicate_errors == n_threads - n_distinct
+
+        assert len(registry._by_id) == n_distinct
+        assert len(registry._by_hash) == n_distinct
+        for record in registry._by_id.values():
+            assert registry._by_hash[record.sha256] is record
