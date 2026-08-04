@@ -4,7 +4,7 @@
 // the waterbody-encroachment storyline.
 
 import type { Persona } from "./api";
-import type { Alert, Case, Parcel, ParcelContext } from "./types";
+import type { Alert, Case, Jurisdiction, Parcel, ParcelContext } from "./types";
 
 function square(
   centerLng: number,
@@ -350,6 +350,8 @@ export const FIXTURE_CASES: Case[] = [
     id: "CASE-9001",
     alert_id: "ALT-5001",
     parcel_id: "PCL-1001",
+    // Matches PCL-1001's jurisdiction_id — this case has not been transferred.
+    jurisdiction_id: "UK-URBAN-01",
     state: "SHOW_CAUSE_ISSUED",
     allowed_transitions: [
       "RESPONSE_WINDOW",
@@ -403,6 +405,8 @@ export const FIXTURE_CASES: Case[] = [
     id: "CASE-9002",
     alert_id: "ALT-5004",
     parcel_id: "PCL-1006",
+    // Matches PCL-1006's jurisdiction_id — this case has not been transferred.
+    jurisdiction_id: "UK-RURAL-01",
     state: "CLOSED",
     events: [
       {
@@ -570,4 +574,20 @@ export const FIXTURE_PERSONAS: Persona[] = [
     visible_parcels: 30,
     capabilities: DATA_ADMIN_CAPABILITIES,
   },
+];
+
+// Mirrors the demo jurisdiction tree served by GET /jurisdictions (see
+// backend/src/mapencroach/api/store.py's JURISDICTION_NAMES and
+// Store.seed_demo's jurisdiction_rows) so the transfer-target picker can be
+// exercised without a backend.
+export const FIXTURE_JURISDICTIONS: Jurisdiction[] = [
+  { id: "state", name: "Haridwar–Roorkee Development Authority", parent_id: null },
+  { id: "dist-a", name: "Haridwar Division", parent_id: "state" },
+  { id: "dist-b", name: "Roorkee Division", parent_id: "state" },
+  { id: "taluk-a1", name: "Haridwar City", parent_id: "dist-a" },
+  { id: "taluk-a2", name: "Kankhal", parent_id: "dist-a" },
+  { id: "taluk-a3", name: "Laksar", parent_id: "dist-a" },
+  { id: "taluk-b1", name: "Roorkee City", parent_id: "dist-b" },
+  { id: "taluk-b2", name: "Bahadarabad", parent_id: "dist-b" },
+  { id: "taluk-b3", name: "Narsan", parent_id: "dist-b" },
 ];

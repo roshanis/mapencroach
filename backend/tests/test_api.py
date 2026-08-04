@@ -1,3 +1,5 @@
+import base64
+import hashlib
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -6,7 +8,7 @@ from fastapi.testclient import TestClient
 from conftest import TEST_JWT_SECRET
 from mapencroach.api.app import create_app
 from mapencroach.api.auth import Role, create_token
-from mapencroach.api.store import Store
+from mapencroach.api.store import JURISDICTION_NAMES, Store
 from mapencroach.audit.chain import verify_chain
 
 SECRET = TEST_JWT_SECRET
@@ -643,6 +645,9 @@ class TestCases:
             for key in ("from_state", "to_state", "actor", "occurred_at", "artifacts", "note"):
                 assert key in event
         assert "RESPONSE_WINDOW" in body["allowed_transitions"]
+        # The transfer UI needs to know the case's CURRENT jurisdiction,
+        # which can differ from the parcel's after a transfer.
+        assert body["jurisdiction_id"] == store.cases[case_id].jurisdiction_id
 
     def test_case_detail_unknown_is_404(self, client: TestClient, state_token: str):
         resp = client.get("/cases/no-such-case", headers=auth_headers(state_token))
@@ -1173,3 +1178,322 @@ class TestCasesListStateSince:
                 f"/cases/{summary['id']}", headers=auth_headers(state_token)
             ).json()
             assert summary["state_since"] == detail["events"][-1]["occurred_at"]
+
+
+class TestCaseTransfer:
+    """POST /cases/{id}/transfer hands a case to a different jurisdiction --
+    the handover use case (e.g. dist-a officer -> dist-b officer). Transfers
+    out of the caller's own scope are allowed by design; the caller simply
+    loses visibility afterwards, same as any other out-of-scope resource."""
+
+    def test_transfer_within_scope_updates_jurisdiction(
+        self, client: TestClient, dist_a_token: str, store: Store
+    ):
+        case_id = next(
+            cid for cid, c in store.cases.items() if c.jurisdiction_id == "taluk-a1"
+        )
+        resp = client.post(
+            f"/cases/{case_id}/transfer",
+            headers=auth_headers(dist_a_token),
+            json={"to_jurisdiction_id": "taluk-a2", "reason": "workload rebalance"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["id"] == case_id
+        assert body["jurisdiction_id"] == "taluk-a2"
+        assert store.cases[case_id].jurisdiction_id == "taluk-a2"
+
+        # Still visible: taluk-a2 is inside the caller's dist-a scope.
+        follow_up = client.get(f"/cases/{case_id}", headers=auth_headers(dist_a_token))
+        assert follow_up.status_code == 200
+
+    def test_cross_district_handover_then_caller_404s(
+        self, client: TestClient, dist_a_token: str, store: Store
+    ):
+        case_id = next(
+            cid for cid, c in store.cases.items() if c.jurisdiction_id == "taluk-a1"
+        )
+        resp = client.post(
+            f"/cases/{case_id}/transfer",
+            headers=auth_headers(dist_a_token),
+            json={"to_jurisdiction_id": "taluk-b1", "reason": "handover to Roorkee"},
+        )
+        assert resp.status_code == 200
+        assert store.cases[case_id].jurisdiction_id == "taluk-b1"
+
+        follow_up = client.get(f"/cases/{case_id}", headers=auth_headers(dist_a_token))
+        assert follow_up.status_code == 404
+
+    def test_out_of_scope_case_is_404(self, client: TestClient, store: Store):
+        case_id = next(
+            cid for cid, c in store.cases.items() if c.jurisdiction_id in store.dist_a_scope
+        )
+        officer_b = token_for("officer-b-transfer", Role.CASE_OFFICER, store.district_b_id)
+        resp = client.post(
+            f"/cases/{case_id}/transfer",
+            headers=auth_headers(officer_b),
+            json={"to_jurisdiction_id": store.district_b_id, "reason": "trying to grab"},
+        )
+        assert resp.status_code == 404
+
+    def test_unknown_case_is_404(self, client: TestClient, dist_a_token: str):
+        resp = client.post(
+            "/cases/no-such-case/transfer",
+            headers=auth_headers(dist_a_token),
+            json={"to_jurisdiction_id": "taluk-a2", "reason": "n/a"},
+        )
+        assert resp.status_code == 404
+
+    def test_unknown_target_jurisdiction_is_400(
+        self, client: TestClient, dist_a_token: str, store: Store
+    ):
+        case_id = next(
+            cid for cid, c in store.cases.items() if c.jurisdiction_id in store.dist_a_scope
+        )
+        resp = client.post(
+            f"/cases/{case_id}/transfer",
+            headers=auth_headers(dist_a_token),
+            json={"to_jurisdiction_id": "not-a-real-place", "reason": "typo target"},
+        )
+        assert resp.status_code == 400
+
+    def test_same_target_jurisdiction_is_400(
+        self, client: TestClient, dist_a_token: str, store: Store
+    ):
+        case_id = next(
+            cid for cid, c in store.cases.items() if c.jurisdiction_id == "taluk-a1"
+        )
+        resp = client.post(
+            f"/cases/{case_id}/transfer",
+            headers=auth_headers(dist_a_token),
+            json={"to_jurisdiction_id": "taluk-a1", "reason": "no-op"},
+        )
+        assert resp.status_code == 400
+
+    def test_viewer_cannot_transfer(self, client: TestClient, viewer_token: str, store: Store):
+        case_id = next(iter(store.cases))
+        resp = client.post(
+            f"/cases/{case_id}/transfer",
+            headers=auth_headers(viewer_token),
+            json={"to_jurisdiction_id": store.district_b_id, "reason": "nope"},
+        )
+        assert resp.status_code == 403
+
+    def test_survey_officer_cannot_transfer(
+        self, client: TestClient, survey_officer_dist_a_token: str, store: Store
+    ):
+        case_id = next(
+            cid for cid, c in store.cases.items() if c.jurisdiction_id in store.dist_a_scope
+        )
+        resp = client.post(
+            f"/cases/{case_id}/transfer",
+            headers=auth_headers(survey_officer_dist_a_token),
+            json={"to_jurisdiction_id": store.district_b_id, "reason": "nope"},
+        )
+        assert resp.status_code == 403
+
+    def test_blank_reason_is_422(self, client: TestClient, dist_a_token: str, store: Store):
+        case_id = next(
+            cid for cid, c in store.cases.items() if c.jurisdiction_id in store.dist_a_scope
+        )
+        resp = client.post(
+            f"/cases/{case_id}/transfer",
+            headers=auth_headers(dist_a_token),
+            json={"to_jurisdiction_id": "taluk-a2", "reason": "   "},
+        )
+        assert resp.status_code == 422
+
+    def test_transfer_is_audited_and_chain_verifies(
+        self, client: TestClient, dist_a_token: str, store: Store
+    ):
+        case_id = next(
+            cid for cid, c in store.cases.items() if c.jurisdiction_id == "taluk-a1"
+        )
+        before = len(store.audit_chain)
+        resp = client.post(
+            f"/cases/{case_id}/transfer",
+            headers=auth_headers(dist_a_token),
+            json={"to_jurisdiction_id": "taluk-a2", "reason": "workload rebalance"},
+        )
+        assert resp.status_code == 200
+        assert len(store.audit_chain) == before + 1
+        entry = store.audit_chain[-1]
+        assert entry.payload["action"] == "case.transfer"
+        assert entry.payload["object_type"] == "case"
+        assert entry.payload["object_id"] == case_id
+        assert entry.payload["from_jurisdiction_id"] == "taluk-a1"
+        assert entry.payload["to_jurisdiction_id"] == "taluk-a2"
+        assert entry.payload["reason"] == "workload rebalance"
+        assert verify_chain(store.audit_chain).ok
+
+
+class TestJurisdictions:
+    """GET /jurisdictions is administrative reference data (the full tree,
+    not scoped to the caller) used to populate handover-target pickers --
+    any authenticated role may read it, since choosing a transfer target
+    requires seeing jurisdictions outside one's own scope."""
+
+    def test_returns_full_tree_in_stored_row_order(
+        self, client: TestClient, dist_a_token: str, store: Store
+    ):
+        resp = client.get("/jurisdictions", headers=auth_headers(dist_a_token))
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body) == len(store.jurisdiction_rows)
+        assert [(row["id"], row["parent_id"]) for row in body] == list(
+            store.jurisdiction_rows
+        )
+        for row in body:
+            assert set(row) == {"id", "name", "parent_id"}
+
+    def test_names_come_from_jurisdiction_names_map(
+        self, client: TestClient, state_token: str
+    ):
+        resp = client.get("/jurisdictions", headers=auth_headers(state_token))
+        assert resp.status_code == 200
+        by_id = {row["id"]: row for row in resp.json()}
+        assert by_id["dist-a"]["name"] == JURISDICTION_NAMES["dist-a"]
+        assert by_id["state"]["parent_id"] is None
+        assert by_id["dist-a"]["parent_id"] == "state"
+
+    def test_unknown_id_falls_back_to_the_raw_id(self, client: TestClient, state_token: str):
+        store = Store(
+            jurisdiction_rows=[("state", None), ("mystery-node", "state")],
+            root_jurisdiction_id="state",
+        )
+        app = create_app(store)
+        local_client = TestClient(app)
+        token = token_for("state-user", Role.DATA_ADMIN, "state")
+        resp = local_client.get("/jurisdictions", headers=auth_headers(token))
+        assert resp.status_code == 200
+        by_id = {row["id"]: row for row in resp.json()}
+        assert by_id["mystery-node"]["name"] == "mystery-node"
+
+    def test_unauthenticated_is_401(self, client: TestClient):
+        resp = client.get("/jurisdictions")
+        assert resp.status_code == 401
+
+
+class TestImageryScenes:
+    """POST /imagery/scenes wires the dormant SceneRegistry: hash-on-ingest
+    evidence intake. Scenes are jurisdiction-agnostic evidence objects, so
+    GET is open to any authenticated role -- no scoping applies."""
+
+    def _payload(self, **overrides: object) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "scene_id": "scene-alpha",
+            "captured_at": datetime(2026, 1, 1, tzinfo=UTC).isoformat(),
+            "sensor": "sentinel-2",
+            "resolution_m": 10.0,
+            "cloud_pct": 5.0,
+            "source": "copernicus",
+            "href": "https://example.com/scene-alpha.tif",
+            "data_base64": base64.b64encode(b"fake-scene-bytes").decode(),
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_ingest_and_fetch_round_trip(self, client: TestClient, state_token: str):
+        raw = b"fake-scene-bytes"
+        resp = client.post(
+            "/imagery/scenes",
+            headers=auth_headers(state_token),
+            json=self._payload(data_base64=base64.b64encode(raw).decode()),
+        )
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["scene_id"] == "scene-alpha"
+        assert body["sha256"] == hashlib.sha256(raw).hexdigest()
+        assert body["sensor"] == "sentinel-2"
+        assert body["resolution_m"] == 10.0
+        assert body["cloud_pct"] == 5.0
+        assert body["source"] == "copernicus"
+        assert "stac_item" in body
+        assert "data_base64" not in body
+        assert "data" not in body
+
+        get_resp = client.get(
+            "/imagery/scenes/scene-alpha", headers=auth_headers(state_token)
+        )
+        assert get_resp.status_code == 200
+        assert get_resp.json() == body
+
+    def test_duplicate_scene_is_409(self, client: TestClient, state_token: str):
+        first = client.post(
+            "/imagery/scenes", headers=auth_headers(state_token), json=self._payload()
+        )
+        assert first.status_code == 201
+        resp = client.post(
+            "/imagery/scenes", headers=auth_headers(state_token), json=self._payload()
+        )
+        assert resp.status_code == 409
+        assert resp.json()["detail"]
+
+    def test_invalid_base64_is_422(self, client: TestClient, state_token: str):
+        resp = client.post(
+            "/imagery/scenes",
+            headers=auth_headers(state_token),
+            json=self._payload(data_base64="not-valid-base64!!!"),
+        )
+        assert resp.status_code == 422
+
+    def test_empty_base64_is_422(self, client: TestClient, state_token: str):
+        resp = client.post(
+            "/imagery/scenes",
+            headers=auth_headers(state_token),
+            json=self._payload(data_base64=""),
+        )
+        assert resp.status_code == 422
+
+    def test_viewer_cannot_post_but_can_get(
+        self, client: TestClient, state_token: str, viewer_token: str
+    ):
+        seed = client.post(
+            "/imagery/scenes", headers=auth_headers(state_token), json=self._payload()
+        )
+        assert seed.status_code == 201
+
+        post_resp = client.post(
+            "/imagery/scenes",
+            headers=auth_headers(viewer_token),
+            json=self._payload(scene_id="scene-viewer-blocked"),
+        )
+        assert post_resp.status_code == 403
+
+        get_resp = client.get(
+            "/imagery/scenes/scene-alpha", headers=auth_headers(viewer_token)
+        )
+        assert get_resp.status_code == 200
+
+    def test_unknown_scene_is_404(self, client: TestClient, state_token: str):
+        resp = client.get(
+            "/imagery/scenes/no-such-scene", headers=auth_headers(state_token)
+        )
+        assert resp.status_code == 404
+
+    def test_ingest_is_audited_and_chain_verifies(
+        self, client: TestClient, state_token: str, store: Store
+    ):
+        before = len(store.audit_chain)
+        resp = client.post(
+            "/imagery/scenes", headers=auth_headers(state_token), json=self._payload()
+        )
+        assert resp.status_code == 201
+        assert len(store.audit_chain) == before + 1
+        entry = store.audit_chain[-1]
+        assert entry.payload["action"] == "imagery.scene.ingest"
+        assert entry.payload["scene_id"] == "scene-alpha"
+        assert entry.payload["sha256"] == resp.json()["sha256"]
+        assert verify_chain(store.audit_chain).ok
+
+    def test_unauthenticated_post_is_401(self, client: TestClient):
+        resp = client.post("/imagery/scenes", json=self._payload())
+        assert resp.status_code == 401
+
+    def test_unauthenticated_get_is_401(self, client: TestClient, state_token: str):
+        seed = client.post(
+            "/imagery/scenes", headers=auth_headers(state_token), json=self._payload()
+        )
+        assert seed.status_code == 201
+        resp = client.get("/imagery/scenes/scene-alpha")
+        assert resp.status_code == 401

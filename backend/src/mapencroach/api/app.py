@@ -8,6 +8,7 @@ their own jurisdiction_id. Parcels outside scope 404 rather than 403 so
 we don't leak that they exist.
 """
 
+import base64
 import math
 import os
 import re
@@ -27,7 +28,7 @@ from mapencroach.api.auth import (
     signing_secret,
     using_default_secret,
 )
-from mapencroach.api.store import JURISDICTION_NAMES, Store
+from mapencroach.api.store import JURISDICTION_NAMES, CaseRecord, Store
 from mapencroach.domain.alerts import AlertTier, severity_score
 from mapencroach.domain.case_engine import (
     Case,
@@ -38,6 +39,7 @@ from mapencroach.domain.case_engine import (
     required_artifacts_for,
     transition,
 )
+from mapencroach.imagery.registry import DuplicateScene, SceneRecord
 
 _VALID_GRADES = {"A", "B", "C"}
 
@@ -178,6 +180,37 @@ class TransitionRequest(BaseModel):
     note: str = ""
 
 
+class CaseTransferRequest(BaseModel):
+    to_jurisdiction_id: _NonBlankStr
+    # The handover justification is part of the legal record -- a
+    # whitespace-only value is functionally missing and must be rejected.
+    reason: _NonBlankStr
+
+
+class SceneIngest(BaseModel):
+    scene_id: _NonBlankStr
+    captured_at: datetime
+    sensor: _NonBlankStr
+    resolution_m: float = Field(gt=0)
+    cloud_pct: float = Field(ge=0, le=100)
+    source: _NonBlankStr
+    href: _NonBlankStr
+    data_base64: str
+
+    @field_validator("data_base64")
+    @classmethod
+    def _data_base64_must_be_valid_and_non_empty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("data_base64 must not be empty")
+        try:
+            decoded = base64.b64decode(value, validate=True)
+        except ValueError as exc:
+            raise ValueError("data_base64 must be valid base64") from exc
+        if not decoded:
+            raise ValueError("data_base64 must not be empty")
+        return value
+
+
 def _parcel_to_feature(parcel: dict[str, Any]) -> dict[str, Any]:
     return {
         "type": "Feature",
@@ -209,6 +242,52 @@ def _transition_options(case: Case) -> tuple[list[str], dict[str, list[str]]]:
         [s.value for s in allowed],
         {s.value: list(required_artifacts_for(case, s)) for s in allowed},
     )
+
+
+def _case_to_detail(record: CaseRecord) -> dict[str, Any]:
+    """The GET /cases/{id} payload shape, reused by every endpoint that
+    returns a full case (e.g. transfer) so callers see a consistent view."""
+    events = [
+        {
+            "from_state": e.from_state.value,
+            "to_state": e.to_state.value,
+            "actor": e.actor,
+            "occurred_at": e.occurred_at.isoformat(),
+            "artifacts": dict(e.artifacts),
+            "note": e.note,
+        }
+        for e in record.case.events
+    ]
+    allowed, required = _transition_options(record.case)
+    return {
+        "id": record.case.case_id,
+        "alert_id": record.alert_id,
+        "parcel_id": record.parcel_id,
+        # The case's CURRENT jurisdiction, distinct from the parcel's own
+        # jurisdiction once the case has been transferred (see
+        # /cases/{id}/transfer) -- callers need this to know who owns the
+        # case now, not just where the underlying parcel sits.
+        "jurisdiction_id": record.jurisdiction_id,
+        "state": record.case.state.value,
+        "events": events,
+        "allowed_transitions": allowed,
+        "required_artifacts": required,
+    }
+
+
+def _scene_to_dict(record: SceneRecord) -> dict[str, Any]:
+    """Scene payload shape returned by imagery endpoints -- deliberately
+    excludes the raw bytes, which the client already has."""
+    return {
+        "scene_id": record.scene_id,
+        "sha256": record.sha256,
+        "captured_at": record.captured_at.isoformat(),
+        "sensor": record.sensor,
+        "resolution_m": record.resolution_m,
+        "cloud_pct": record.cloud_pct,
+        "source": record.source,
+        "stac_item": record.stac_item,
+    }
 
 
 def create_app(store: Store | None = None) -> FastAPI:
@@ -497,27 +576,7 @@ def create_app(store: Store | None = None) -> FastAPI:
         if record is None or record.jurisdiction_id not in scope:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case not found")
 
-        events = [
-            {
-                "from_state": e.from_state.value,
-                "to_state": e.to_state.value,
-                "actor": e.actor,
-                "occurred_at": e.occurred_at.isoformat(),
-                "artifacts": dict(e.artifacts),
-                "note": e.note,
-            }
-            for e in record.case.events
-        ]
-        allowed, required = _transition_options(record.case)
-        return {
-            "id": record.case.case_id,
-            "alert_id": record.alert_id,
-            "parcel_id": record.parcel_id,
-            "state": record.case.state.value,
-            "events": events,
-            "allowed_transitions": allowed,
-            "required_artifacts": required,
-        }
+        return _case_to_detail(record)
 
     @app.post("/cases/{case_id}/transitions", status_code=status.HTTP_201_CREATED)
     def transition_case(
@@ -572,5 +631,117 @@ def create_app(store: Store | None = None) -> FastAPI:
             "allowed_transitions": allowed,
             "required_artifacts": required,
         }
+
+    @app.post("/cases/{case_id}/transfer")
+    def transfer_case(
+        case_id: str,
+        body: CaseTransferRequest,
+        store: StoreDep,
+        user: Annotated[User, Depends(require_roles(Role.CASE_OFFICER, Role.DATA_ADMIN))],
+    ) -> dict[str, Any]:
+        record = store.cases.get(case_id)
+        scope = _user_scope(store, user)
+        if record is None or record.jurisdiction_id not in scope:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case not found")
+
+        # Non-raising membership check: scope_ids(root) is every node in the
+        # tree, so `in` never throws for an unknown id the way scope_ids of
+        # the (possibly bogus) target itself would.
+        known_jurisdiction_ids = store.tree.scope_ids(store.root_jurisdiction_id)
+        to_jurisdiction_id = body.to_jurisdiction_id
+        if to_jurisdiction_id not in known_jurisdiction_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"unknown jurisdiction {to_jurisdiction_id!r}",
+            )
+
+        from_jurisdiction_id = record.jurisdiction_id
+        if to_jurisdiction_id == from_jurisdiction_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="case is already in that jurisdiction",
+            )
+
+        # Cross-scope handover is the point of this endpoint: the target may
+        # lie outside the caller's own scope (dist-a officer -> dist-b), and
+        # the caller may lose visibility on the case immediately afterwards.
+        record.jurisdiction_id = to_jurisdiction_id
+        store.record_audit(
+            actor=user.sub,
+            action="case.transfer",
+            object_type="case",
+            object_id=case_id,
+            extra={
+                "from_jurisdiction_id": from_jurisdiction_id,
+                "to_jurisdiction_id": to_jurisdiction_id,
+                "reason": body.reason,
+            },
+        )
+        return _case_to_detail(record)
+
+    # ------------------------------------------------------------------
+    # Jurisdictions
+    # ------------------------------------------------------------------
+
+    @app.get("/jurisdictions")
+    def list_jurisdictions(store: StoreDep, user: CurrentUser) -> list[dict[str, Any]]:
+        # Deliberately NOT jurisdiction-scoped: this is administrative
+        # reference data (the full tree), needed so a caller can pick a
+        # handover target outside their own scope -- e.g. the case-transfer
+        # UI must be able to list dist-b's taluks for a dist-a officer.
+        return [
+            {
+                "id": jurisdiction_id,
+                "name": JURISDICTION_NAMES.get(jurisdiction_id, jurisdiction_id),
+                "parent_id": parent_id,
+            }
+            for jurisdiction_id, parent_id in store.jurisdiction_rows
+        ]
+
+    # ------------------------------------------------------------------
+    # Imagery
+    # ------------------------------------------------------------------
+
+    @app.post("/imagery/scenes", status_code=status.HTTP_201_CREATED)
+    def ingest_scene(
+        body: SceneIngest,
+        store: StoreDep,
+        user: Annotated[User, Depends(require_roles(Role.DATA_ADMIN))],
+    ) -> dict[str, Any]:
+        data = base64.b64decode(body.data_base64)
+        try:
+            record = store.scene_registry.register(
+                data,
+                scene_id=body.scene_id,
+                captured_at=body.captured_at,
+                sensor=body.sensor,
+                resolution_m=body.resolution_m,
+                cloud_pct=body.cloud_pct,
+                source=body.source,
+                href=body.href,
+            )
+        except DuplicateScene as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+            ) from exc
+
+        store.record_audit(
+            actor=user.sub,
+            action="imagery.scene.ingest",
+            object_type="scene",
+            object_id=record.scene_id,
+            extra={"scene_id": record.scene_id, "sha256": record.sha256},
+        )
+        return _scene_to_dict(record)
+
+    @app.get("/imagery/scenes/{scene_id}")
+    def get_scene(scene_id: str, store: StoreDep, user: CurrentUser) -> dict[str, Any]:
+        try:
+            record = store.scene_registry.get(scene_id)
+        except KeyError:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="scene not found"
+            ) from None
+        return _scene_to_dict(record)
 
     return app

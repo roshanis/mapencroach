@@ -9,6 +9,7 @@ import {
   getAlerts,
   getCase,
   getCases,
+  getJurisdictions,
   getParcel,
   getParcelContext,
   getParcels,
@@ -20,6 +21,7 @@ import type {
   AlertFilters,
   BBox,
   Case,
+  Jurisdiction,
   Parcel,
   ParcelContext,
 } from "./types";
@@ -98,4 +100,9 @@ export async function getCaseForRequest(
 export async function getCasesForRequest(): Promise<Case[]> {
   const token = await serverToken();
   return getCases(token);
+}
+
+export async function getJurisdictionsForRequest(): Promise<Jurisdiction[]> {
+  const token = await serverToken();
+  return getJurisdictions(token);
 }

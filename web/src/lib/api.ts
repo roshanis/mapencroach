@@ -7,6 +7,7 @@
 import {
   FIXTURE_ALERTS,
   FIXTURE_CASES,
+  FIXTURE_JURISDICTIONS,
   FIXTURE_PARCELS,
   FIXTURE_PARCEL_CONTEXTS,
 } from "./fixtures";
@@ -16,6 +17,7 @@ import type {
   BBox,
   Case,
   CaseEvent,
+  Jurisdiction,
   LandCategory,
   BoundaryGrade,
   Parcel,
@@ -26,6 +28,17 @@ export const TOKEN_COOKIE = "mapencroach_token";
 export const PERSONA_COOKIE = "mapencroach_persona";
 
 function getApiBase(): string | undefined {
+  // Server components/route handlers bypass the same-origin proxy and call
+  // the backend directly (a relative /api path can't be fetched
+  // server-side): prefer the server-only MAPENCROACH_BACKEND_URL there.
+  // Client code keeps using NEXT_PUBLIC_API_URL, which deployments now set
+  // to the relative "/api/backend" proxy path — a path, not a secret.
+  if (typeof window === "undefined") {
+    const serverBase = process.env.MAPENCROACH_BACKEND_URL;
+    if (serverBase && serverBase.length > 0) {
+      return serverBase.replace(/\/$/, "");
+    }
+  }
   const base = process.env.NEXT_PUBLIC_API_URL;
   return base && base.length > 0 ? base.replace(/\/$/, "") : undefined;
 }
@@ -125,10 +138,16 @@ function cookieValue(name: string): string | undefined {
 }
 
 function authHeaders(tokenOverride?: string): HeadersInit | undefined {
+  // Client-side: an explicit override wins, else the persona cookie, else no
+  // header at all — the backend proxy route injects the service token
+  // server-side when the browser has no persona cookie. Server-side (no
+  // `document`): fall back to the server-only MAPENCROACH_API_TOKEN, since
+  // there is no cookie jar to read and no proxy in front of this call.
   const token =
     tokenOverride ??
-    (typeof document !== "undefined" ? cookieValue(TOKEN_COOKIE) : undefined) ??
-    process.env.NEXT_PUBLIC_API_TOKEN;
+    (typeof document !== "undefined"
+      ? cookieValue(TOKEN_COOKIE)
+      : process.env.MAPENCROACH_API_TOKEN);
   return token ? { Authorization: `Bearer ${token}` } : undefined;
 }
 
@@ -305,6 +324,18 @@ export async function getCase(
   }
 }
 
+/**
+ * Lists the full jurisdiction tree — administrative reference data, not
+ * scoped to the caller's own jurisdiction. Needed so a case-transfer UI can
+ * offer handover targets outside the caller's own scope (e.g. a dist-a
+ * officer picking a dist-b taluk).
+ */
+export async function getJurisdictions(token?: string): Promise<Jurisdiction[]> {
+  const base = getApiBase();
+  if (!base) return FIXTURE_JURISDICTIONS;
+  return fetchJson<Jurisdiction[]>(`${base}/jurisdictions`, token);
+}
+
 export interface TransitionResult {
   ok: boolean;
   status: number;
@@ -351,6 +382,63 @@ export async function transitionCase(
   }
 
   return { ok: false, status: res.status, detail };
+}
+
+/**
+ * Hands a case to a different jurisdiction (see POST /cases/{id}/transfer).
+ * Follows transitionCase's shape (fixture-mode read-only guard, then a POST
+ * whose non-ok body's `detail` is surfaced), but additionally wraps the
+ * fetch in try/catch: unlike transitionCase, a transfer's failure mode
+ * includes the caller losing visibility on the case entirely, so a network
+ * outage must resolve to a friendly ok:false result rather than throwing.
+ */
+export async function transferCase(
+  caseId: string,
+  toJurisdictionId: string,
+  reason: string,
+  token?: string
+): Promise<TransitionResult> {
+  const base = getApiBase();
+  if (!base) {
+    return {
+      ok: false,
+      status: 0,
+      detail: "No backend configured — fixture mode is read-only.",
+    };
+  }
+
+  try {
+    const res = await fetch(`${base}/cases/${caseId}/transfer`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(token),
+      },
+      body: JSON.stringify({ to_jurisdiction_id: toJurisdictionId, reason }),
+    });
+
+    if (res.ok) {
+      return { ok: true, status: res.status };
+    }
+
+    let detail: string = res.statusText;
+    try {
+      const body = (await res.json()) as { detail?: string };
+      if (typeof body?.detail === "string") {
+        detail = body.detail;
+      }
+    } catch {
+      // fall back to statusText
+    }
+
+    return { ok: false, status: res.status, detail };
+  } catch {
+    return {
+      ok: false,
+      status: 0,
+      detail: "Transfer service could not be reached. Try again.",
+    };
+  }
 }
 
 export interface Persona {
