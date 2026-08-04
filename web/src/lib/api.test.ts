@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  ApiError,
   addParcelTag,
   getAlerts,
   getCase,
@@ -11,6 +12,7 @@ import {
   loginPersona,
   removeParcelTag,
   transitionCase,
+  updateBoundaryGrade,
 } from "./api";
 import {
   FIXTURE_ALERTS,
@@ -340,6 +342,120 @@ describe("api client with NEXT_PUBLIC_API_URL set", () => {
   });
 });
 
+describe("ApiError", () => {
+  it("carries a numeric status and an informative message", () => {
+    const err = new ApiError("Request failed: 404 Not Found (/parcels/x)", 404);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(404);
+    expect(err.message).toBe("Request failed: 404 Not Found (/parcels/x)");
+  });
+});
+
+describe("404 vs. non-404 error handling for getParcel/getParcelContext/getCase", () => {
+  it("getParcel resolves undefined on a 404", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+      json: async () => ({}),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getParcel("PCL-MISSING")).resolves.toBeUndefined();
+  });
+
+  it("getParcel rejects on a 500", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: "Internal Server Error",
+      json: async () => ({}),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getParcel("PCL-1001")).rejects.toThrow();
+  });
+
+  it("getParcel rejects when fetch itself rejects (network outage)", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError("network down"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getParcel("PCL-1001")).rejects.toThrow("network down");
+  });
+
+  it("getParcelContext resolves undefined on a 404", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+      json: async () => ({}),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getParcelContext("PCL-MISSING")).resolves.toBeUndefined();
+  });
+
+  it("getParcelContext rejects on a 500", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: "Internal Server Error",
+      json: async () => ({}),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getParcelContext("PCL-1001")).rejects.toThrow();
+  });
+
+  it("getParcelContext rejects when fetch itself rejects (network outage)", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError("network down"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getParcelContext("PCL-1001")).rejects.toThrow("network down");
+  });
+
+  it("getCase resolves undefined on a 404", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+      json: async () => ({}),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getCase("CASE-MISSING")).resolves.toBeUndefined();
+  });
+
+  it("getCase rejects on a 500", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: "Internal Server Error",
+      json: async () => ({}),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getCase("CASE-9001")).rejects.toThrow();
+  });
+
+  it("getCase rejects when fetch itself rejects (network outage)", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError("network down"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getCase("CASE-9001")).rejects.toThrow("network down");
+  });
+});
+
 describe("authHeaders token precedence", () => {
   afterEach(() => {
     document.cookie = "mapencroach_token=; path=/; max-age=0";
@@ -642,5 +758,86 @@ describe("parcel tag endpoints", () => {
     const result = await removeParcelTag("PCL-1001", "nope");
 
     expect(result).toEqual({ ok: false, status: 404, detail: "tag not present" });
+  });
+
+  it("addParcelTag resolves to a friendly ok:false result when fetch rejects (network outage)", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError("network down"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await addParcelTag("PCL-1001", "flagged");
+
+    expect(result).toEqual({
+      ok: false,
+      status: 0,
+      detail: "Tag service could not be reached. Try again.",
+    });
+  });
+
+  it("removeParcelTag resolves to a friendly ok:false result when fetch rejects (network outage)", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError("network down"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await removeParcelTag("PCL-1001", "court-monitored");
+
+    expect(result).toEqual({
+      ok: false,
+      status: 0,
+      detail: "Tag service could not be reached. Try again.",
+    });
+  });
+});
+
+describe("boundary grade endpoint", () => {
+  it("returns fixture-mode read-only without calling fetch", async () => {
+    delete process.env.NEXT_PUBLIC_API_URL;
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await updateBoundaryGrade("PCL-1001", "A", "SR-2026-104");
+
+    expect(result).toEqual({
+      ok: false,
+      status: 0,
+      detail: "No backend configured — fixture mode is read-only.",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("patches the grade with the authenticated survey reference", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    process.env.NEXT_PUBLIC_API_TOKEN = "test-token-123";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({
+        type: "Feature",
+        geometry: FIXTURE_PARCELS[0].geometry,
+        properties: {
+          ...FIXTURE_PARCELS[0],
+          boundary_grade: "A",
+        },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await updateBoundaryGrade("PCL-1001", "A", "SR-2026-104");
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://api.example.test/parcels/PCL-1001/boundary-grade"
+    );
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.method).toBe("PATCH");
+    expect(init.headers).toMatchObject({
+      "Content-Type": "application/json",
+      Authorization: "Bearer test-token-123",
+    });
+    expect(JSON.parse(init.body)).toEqual({
+      grade: "A",
+      survey_reference: "SR-2026-104",
+    });
+    expect(result).toEqual({ ok: true, status: 200, grade: "A" });
   });
 });

@@ -8,6 +8,7 @@ their own jurisdiction_id. Parcels outside scope 404 rather than 403 so
 we don't leak that they exist.
 """
 
+import math
 import os
 import re
 from datetime import UTC, datetime, timedelta
@@ -15,7 +16,7 @@ from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 from mapencroach.api.auth import (
     Role,
@@ -24,9 +25,10 @@ from mapencroach.api.auth import (
     current_user,
     require_roles,
     signing_secret,
+    using_default_secret,
 )
 from mapencroach.api.store import JURISDICTION_NAMES, Store
-from mapencroach.domain.alerts import severity_score
+from mapencroach.domain.alerts import AlertTier, severity_score
 from mapencroach.domain.case_engine import (
     Case,
     CaseState,
@@ -127,16 +129,39 @@ def _enrich_persona(persona: dict[str, str], store: Store) -> dict[str, Any]:
     }
 
 
+_NonBlankStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
 class BoundaryGradePatch(BaseModel):
     grade: str
-    survey_reference: str
+    # The survey reference is the audit trail's evidence of record -- a
+    # whitespace-only value is functionally a missing reference and must be
+    # rejected rather than silently persisted.
+    survey_reference: _NonBlankStr
 
 
 class AlertCreate(BaseModel):
     parcel_id: str
-    tier: str
-    area_m2: float
+    tier: AlertTier
+    # allow_inf_nan=False rejects Infinity/-Infinity/NaN at parse time. Without
+    # it, `ge=0` lets Infinity through (it JSON-serializes as null downstream,
+    # poisoning the store) and NaN comparisons are unreliable.
+    area_m2: float = Field(ge=0, allow_inf_nan=False)
     detected_at: datetime
+
+    @field_validator("area_m2", mode="before")
+    @classmethod
+    def _area_m2_reject_non_finite(cls, value: Any) -> Any:
+        # FastAPI's default RequestValidationError handler embeds the raw
+        # offending value as the error's "input", and Starlette's
+        # JSONResponse renders with allow_nan=False -- so an Infinity/NaN
+        # float surviving into that error would crash the response instead
+        # of returning a clean 422. Normalizing to None here before
+        # allow_inf_nan=False rejects it means the eventual error carries a
+        # JSON-safe `null`, not a raw non-finite float.
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
+        return value
 
 
 class TagCreate(BaseModel):
@@ -195,6 +220,14 @@ def create_app(store: Store | None = None) -> FastAPI:
     extra wiring.
     """
     demo_mode = os.environ.get("MAPENCROACH_DEMO") == "1"
+    if not demo_mode and using_default_secret():
+        raise RuntimeError(
+            "MAPENCROACH_JWT_SECRET is not set (or is the insecure development "
+            "default). Refusing to start outside demo mode: anyone who has read "
+            "the public repo could mint a valid data_admin token. Set "
+            "MAPENCROACH_JWT_SECRET to a strong secret, or set MAPENCROACH_DEMO=1 "
+            "for a local demo."
+        )
     if store is None:
         store = Store.seed_demo() if demo_mode else Store()
 
@@ -272,12 +305,18 @@ def create_app(store: Store | None = None) -> FastAPI:
                 detail=f"invalid grade {body.grade!r}, must be one of {sorted(_VALID_GRADES)}",
             )
 
+        old_grade = parcel["boundary_grade"]
         parcel["boundary_grade"] = body.grade
         store.record_audit(
             actor=user.sub,
             action="parcel.boundary_grade.update",
             object_type="parcel",
             object_id=parcel_id,
+            extra={
+                "survey_reference": body.survey_reference,
+                "from_grade": old_grade,
+                "to_grade": body.grade,
+            },
         )
         return _parcel_to_feature(parcel)
 
@@ -416,7 +455,7 @@ def create_app(store: Store | None = None) -> FastAPI:
         alert = {
             "id": alert_id,
             "parcel_id": body.parcel_id,
-            "tier": body.tier,
+            "tier": body.tier.value,
             "severity_score": score,
             "area_m2": body.area_m2,
             "status": "OPEN",

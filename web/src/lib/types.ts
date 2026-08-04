@@ -2,6 +2,14 @@
 
 export type AlertTier = "green" | "amber" | "red" | "legacy";
 
+/** Single source of truth for alert-tier colors (map markers + legend). */
+export const TIER_COLORS: Record<AlertTier, string> = {
+  green: "#1e8f4e",
+  amber: "#c98a12",
+  red: "#c4321f",
+  legacy: "#7b3fa0",
+};
+
 export type AlertStatus = "open" | "under_review" | "escalated" | "closed";
 
 export type BoundaryGrade = "A" | "B" | "C";

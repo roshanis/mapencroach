@@ -112,6 +112,7 @@ def import_shrug_observations(
 ) -> ShrugObservationImport:
     """Import one indicator, filtering rows to the parcel's linked SHRUG id."""
     _require_review(manifest)
+    geographic_unit_id = geographic_unit_id.strip()
     observations = tuple(
         ContextObservation(
             key=indicator_key,
@@ -123,7 +124,7 @@ def import_shrug_observations(
             source_id=manifest.source_id,
         )
         for row in rows
-        if str(row.get("shrid2", "")) == geographic_unit_id
+        if str(row.get("shrid2", "")).strip() == geographic_unit_id
         and indicator_key in row
         and period_field in row
     )

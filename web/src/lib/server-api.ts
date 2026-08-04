@@ -11,13 +11,40 @@ import {
   getCases,
   getParcel,
   getParcelContext,
+  getParcels,
   TOKEN_COOKIE,
 } from "./api";
-import type { Alert, AlertFilters, Case, Parcel, ParcelContext } from "./types";
+import { PERSONA_META_COOKIE } from "./cookies";
+import type {
+  Alert,
+  AlertFilters,
+  BBox,
+  Case,
+  Parcel,
+  ParcelContext,
+} from "./types";
 
 export async function serverToken(): Promise<string | undefined> {
   try {
     return (await cookies()).get(TOKEN_COOKIE)?.value;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Reads the active demo persona's role from PERSONA_META_COOKIE, server-side
+ * (mirrors the client-side parsing done by ViewingAsBanner/TopBar via
+ * `readCookie`). Returns undefined when the cookie is absent, malformed, or
+ * carries a non-string role — callers must treat undefined as the demo's
+ * default case-officer session, not as "no access".
+ */
+export async function getPersonaRoleForRequest(): Promise<string | undefined> {
+  try {
+    const raw = (await cookies()).get(PERSONA_META_COOKIE)?.value;
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as { role?: unknown };
+    return typeof parsed?.role === "string" ? parsed.role : undefined;
   } catch {
     return undefined;
   }
@@ -28,6 +55,11 @@ export async function getParcelForRequest(
 ): Promise<Parcel | undefined> {
   const token = await serverToken();
   return getParcel(id, token);
+}
+
+export async function getParcelsForRequest(bbox?: BBox): Promise<Parcel[]> {
+  const token = await serverToken();
+  return getParcels(bbox, token);
 }
 
 export async function getParcelContextForRequest(
@@ -42,6 +74,18 @@ export async function getAlertsForRequest(
 ): Promise<Alert[]> {
   const token = await serverToken();
   return getAlerts(filters, token);
+}
+
+/**
+ * Fetches a single alert by id for the case-summary card. There is no
+ * per-id alert endpoint wired up yet, so this loads the request-scoped
+ * alert list and finds the match; returns undefined if not found.
+ */
+export async function getAlertForRequest(
+  id: string
+): Promise<Alert | undefined> {
+  const alerts = await getAlertsForRequest();
+  return alerts.find((alert) => alert.id === id);
 }
 
 export async function getCaseForRequest(

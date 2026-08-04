@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import "maplibre-gl/dist/maplibre-gl.css";
 import type * as MapLibreGL from "maplibre-gl";
 import { LAND_CATEGORY_COLORS } from "@/lib/types";
-import type { AlertTier } from "@/lib/types";
 import { BasemapToggle, type BasemapMode } from "./BasemapToggle";
+import { collectParcelVertices, createAlertMarkerElement } from "./map-markers";
 import type { OperationalMapProps } from "./map-types";
 
 function buildLandCategoryMatchExpression(
@@ -16,21 +17,6 @@ function buildLandCategoryMatchExpression(
     ...Object.entries(LAND_CATEGORY_COLORS).flat(),
     fallback,
   ] as unknown as MapLibreGL.DataDrivenPropertyValueSpecification<string>;
-}
-
-const TIER_COLORS: Record<AlertTier, string> = {
-  green: "#1e8f4e",
-  amber: "#c98a12",
-  red: "#c4321f",
-  legacy: "#7b3fa0",
-};
-
-function styleAlertMarker(element: HTMLButtonElement, selected: boolean) {
-  element.dataset.selected = String(selected);
-  element.style.transform = selected ? "scale(1.45)" : "scale(1)";
-  element.style.boxShadow = selected
-    ? "0 0 0 4px rgba(255,255,255,0.9), 0 0 0 7px rgba(28,79,140,0.65)"
-    : "0 0 0 1px rgba(0,0,0,0.25)";
 }
 
 export type MapLibreMapProps = OperationalMapProps;
@@ -46,23 +32,36 @@ export default function MapLibreMap({
 }: MapLibreMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<import("maplibre-gl").Map | null>(null);
-  const markerElementsRef = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const markerElementsRef = useRef<
+    Map<string, { setSelected: (selected: boolean) => void }>
+  >(new Map());
   const onAlertClickRef = useRef(onAlertClick);
   const selectedAlertIdRef = useRef(selectedAlertId);
   const [mode, setMode] = useState<BasemapMode>("satellite");
+  const modeRef = useRef(mode);
 
   function handleBasemapChange(newMode: BasemapMode) {
+    modeRef.current = newMode;
     setMode(newMode);
-    mapRef.current?.setLayoutProperty(
-      "esri-base",
-      "visibility",
-      newMode === "satellite" ? "visible" : "none"
-    );
-    mapRef.current?.setLayoutProperty(
-      "osm-base",
-      "visibility",
-      newMode === "satellite" ? "none" : "visible"
-    );
+    // Two windows where the map can't take the change yet: (a) the dynamic
+    // `import("maplibre-gl")` hasn't resolved, so mapRef.current is still
+    // null; (b) the map exists but its style hasn't finished loading, so
+    // calling setLayoutProperty would throw ("Style is not done loading").
+    // In both cases modeRef.current is already updated above, and either the
+    // initial style construction or the "load" handler below re-applies it
+    // once the map is actually ready.
+    if (mapRef.current?.isStyleLoaded()) {
+      mapRef.current.setLayoutProperty(
+        "esri-base",
+        "visibility",
+        newMode === "satellite" ? "visible" : "none"
+      );
+      mapRef.current.setLayoutProperty(
+        "osm-base",
+        "visibility",
+        newMode === "satellite" ? "none" : "visible"
+      );
+    }
   }
 
   useEffect(() => {
@@ -71,8 +70,8 @@ export default function MapLibreMap({
 
   useEffect(() => {
     selectedAlertIdRef.current = selectedAlertId;
-    markerElementsRef.current.forEach((element, alertId) => {
-      styleAlertMarker(element, alertId === selectedAlertId);
+    markerElementsRef.current.forEach((marker, alertId) => {
+      marker.setSelected(alertId === selectedAlertId);
     });
   }, [selectedAlertId]);
 
@@ -113,13 +112,17 @@ export default function MapLibreMap({
               id: "osm-base",
               type: "raster",
               source: "osm",
-              layout: { visibility: "none" },
+              layout: {
+                visibility: modeRef.current === "satellite" ? "none" : "visible",
+              },
             },
             {
               id: "esri-base",
               type: "raster",
               source: "esri-imagery",
-              layout: { visibility: "visible" },
+              layout: {
+                visibility: modeRef.current === "satellite" ? "visible" : "none",
+              },
             },
           ],
         },
@@ -131,6 +134,21 @@ export default function MapLibreMap({
 
       map.on("load", () => {
         if (cancelled) return;
+
+        // Re-apply the current mode now that the style is guaranteed to be
+        // loaded: a toggle click during either failure window above (the
+        // import still pending, or the map constructed but not yet loaded)
+        // only updated modeRef/mode, so pick that up here.
+        map.setLayoutProperty(
+          "esri-base",
+          "visibility",
+          modeRef.current === "satellite" ? "visible" : "none"
+        );
+        map.setLayoutProperty(
+          "osm-base",
+          "visibility",
+          modeRef.current === "satellite" ? "none" : "visible"
+        );
 
         map.addSource("parcels", {
           type: "geojson",
@@ -171,31 +189,40 @@ export default function MapLibreMap({
         for (const alert of alerts) {
           const parcel = parcels.find((p) => p.id === alert.parcel_id);
           if (!parcel) continue;
-          const el = document.createElement("button");
-          el.type = "button";
-          el.style.width = "14px";
-          el.style.height = "14px";
-          el.style.borderRadius = "50%";
-          el.style.border = "2px solid white";
-          el.style.boxShadow = "0 0 0 1px rgba(0,0,0,0.25)";
-          el.style.backgroundColor = TIER_COLORS[alert.tier];
-          el.setAttribute("data-testid", "alert-marker");
-          el.setAttribute("data-alert-id", alert.id);
-          el.setAttribute("aria-label", `Select alert ${alert.id}`);
-          el.style.cursor = "pointer";
-          el.style.padding = "0";
-          el.style.transition = "transform 150ms ease, box-shadow 150ms ease";
-          styleAlertMarker(el, alert.id === selectedAlertIdRef.current);
-          markerElements.set(alert.id, el);
-          if (onAlertClick) {
-            el.addEventListener("click", () => onAlertClickRef.current?.(alert.id));
-          }
 
-          const marker = new maplibregl.Marker({ element: el })
+          const { wrapper, setSelected } = createAlertMarkerElement({
+            alert,
+            parcelLabel: parcel.survey_no,
+            selected: alert.id === selectedAlertIdRef.current,
+            onClick: (alertId) => onAlertClickRef.current?.(alertId),
+          });
+          markerElements.set(alert.id, { setSelected });
+
+          // MapLibre only ever writes `transform: translate(...)` onto the
+          // element we hand it (the wrapper) to position the marker. Our own
+          // selection styling only ever touches the inner button, so the two
+          // can never fight over the same CSS property, and MapLibre's
+          // "Map marker" aria-label overwrite never reaches the button.
+          const marker = new maplibregl.Marker({ element: wrapper })
             .setLngLat(parcel.centroid)
             .addTo(map);
           markers.push(marker);
         }
+
+        const vertices = collectParcelVertices(parcels);
+        if (vertices.length > 0) {
+          const bounds = vertices.reduce(
+            (acc, vertex) => acc.extend(vertex),
+            new maplibregl.LngLatBounds(vertices[0], vertices[0])
+          );
+          map.fitBounds(bounds, {
+            padding: { top: 130, right: 130, bottom: 110, left: 90 },
+            maxZoom: 14,
+            duration: 0,
+          });
+        }
+        // When there are no parcels, the initial `center`/`zoom` props above
+        // remain in effect as the fallback camera.
 
         onReady?.({
           panTo: (lngLat) => {
@@ -214,6 +241,11 @@ export default function MapLibreMap({
       mapInstance?.remove();
       mapRef.current = null;
     };
+    // This effect runs once, deliberately omitting `parcels`, `alerts`,
+    // `center`, and `zoom` from its dependency array: they are intentionally
+    // captured only at mount time. Callers that need to change any of them
+    // must remount this component (e.g. by changing its `key`) rather than
+    // expect a live update. Selection and callbacks stay live via refs above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

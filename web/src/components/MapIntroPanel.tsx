@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 const STORAGE_KEY = "mapencroach.intro.dismissed";
+const SEEN_KEY = "mapencroach.intro.seen";
 
 const BULLETS = [
   "Every colored shape is a government land parcel — the color is its land category (legend, bottom left).",
@@ -17,7 +18,15 @@ export function MapIntroPanel() {
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
-    setDismissed(localStorage.getItem(STORAGE_KEY) === "1");
+    const alreadyDismissed = localStorage.getItem(STORAGE_KEY) === "1";
+    const alreadySeen = localStorage.getItem(SEEN_KEY) === "1";
+    // Start collapsed if the user has ever dismissed the panel, or has ever
+    // simply seen it before (a prior session) — only a truly first-ever
+    // view shows it expanded.
+    setDismissed(alreadyDismissed || alreadySeen);
+    if (!alreadyDismissed && !alreadySeen) {
+      localStorage.setItem(SEEN_KEY, "1");
+    }
     setReady(true);
   }, []);
 
@@ -42,7 +51,7 @@ export function MapIntroPanel() {
   return (
     <div
       data-testid="map-intro-panel"
-      className="absolute right-3 top-3 z-10 w-80 max-w-[calc(100vw-1.5rem)] rounded-lg border border-gray-200 bg-white/95 p-4 shadow-md lg:top-24 2xl:top-3"
+      className="absolute right-3 top-3 z-10 w-80 max-w-[calc(100vw-2rem)] rounded-lg border border-gray-200 bg-white/95 p-4 shadow-md lg:top-24 2xl:top-3"
     >
       <p className="text-sm font-semibold text-gray-900">
         What am I looking at?

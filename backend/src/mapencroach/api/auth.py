@@ -22,12 +22,28 @@ _DEFAULT_SECRET = "dev-secret-do-not-deploy"  # noqa: S105 - documented dev defa
 
 
 def _secret() -> str:
-    return os.environ.get("MAPENCROACH_JWT_SECRET", _DEFAULT_SECRET)
+    value = os.environ.get("MAPENCROACH_JWT_SECRET")
+    # An unset, empty, or whitespace-only env var is treated as absent so a
+    # misconfigured deploy (MAPENCROACH_JWT_SECRET="" or "   ") falls back to
+    # the well-known dev default and trips using_default_secret()'s fail-closed
+    # guard, instead of silently signing tokens with a blank secret. Only the
+    # blankness check is stripped -- the real secret is returned verbatim.
+    if value is None or not value.strip():
+        return _DEFAULT_SECRET
+    return value
 
 
 def signing_secret() -> str:
     """The active signing secret, for callers that mint tokens (demo login)."""
     return _secret()
+
+
+def using_default_secret() -> bool:
+    """True if MAPENCROACH_JWT_SECRET is unset (or set to the insecure
+    dev default), meaning tokens are signed with a secret published in
+    the public repo. create_app uses this to fail closed outside demo
+    mode."""
+    return _secret() == _DEFAULT_SECRET
 
 
 class Role(StrEnum):

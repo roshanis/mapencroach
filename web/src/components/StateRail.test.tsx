@@ -84,6 +84,19 @@ describe("StateRail", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("lays out all steps in a single horizontally scrollable row (no wrapping)", () => {
+    render(<StateRail currentState="NEW" />);
+    const rail = screen.getByTestId("state-rail");
+    expect(rail.className).toContain("overflow-x-auto");
+    expect(rail.className).not.toContain("flex-col");
+    expect(rail.className).not.toContain("flex-wrap");
+
+    const steps = screen.getAllByTestId("state-rail-step");
+    steps.forEach((step) => {
+      expect(step.className).toContain("shrink-0");
+    });
+  });
+
   it("sets a title on each step from STATE_DESCRIPTIONS (spot check NEW and SHOW_CAUSE_ISSUED)", () => {
     render(<StateRail currentState="NEW" />);
     const steps = screen.getAllByTestId("state-rail-step");

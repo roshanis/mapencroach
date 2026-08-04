@@ -288,3 +288,28 @@ class TestShrugImportBoundary:
                 confidence=0.78,
                 manifest=manifest,
             )
+
+    def test_import_matches_whitespace_padded_shrid2_after_normalization(self):
+        manifest = ShrugImportManifest.demo(
+            source_id="shrug-compatible-demo",
+            module="Core keys",
+            version="SHRUG-compatible demo",
+        )
+        rows = [
+            {"shrid2": " 11-001-00001 ", "year": 2020, "viirs_annual_mean": 4.2},
+            {"shrid2": "11-001-00099", "year": 2020, "viirs_annual_mean": 99.0},
+        ]
+
+        imported = import_shrug_observations(
+            parcel_id="parcel-1",
+            geographic_unit_id="11-001-00001",
+            rows=rows,
+            indicator_key="viirs_annual_mean",
+            label="Night-light intensity",
+            unit="annual mean radiance",
+            period_field="year",
+            manifest=manifest,
+        )
+
+        assert len(imported.observations) == 1
+        assert imported.observations[0].value == 4.2

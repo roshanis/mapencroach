@@ -10,8 +10,10 @@ interface later; callers should depend only on the attributes/methods
 documented here, not on dict internals.
 """
 
+import threading
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from mapencroach.audit.chain import AuditEntry, append_entry
@@ -27,6 +29,17 @@ from mapencroach.domain.geography import (
 from mapencroach.domain.jurisdiction import JurisdictionTree
 
 _PARCEL_SIZE_DEG = 0.001  # ~110m square at this latitude
+
+
+def _ago(now: datetime, days: float, hour: int, minute: int = 0) -> datetime:
+    """`now` shifted back `days` days, with the wall-clock time pinned to
+    `hour`/`minute` so seeded events don't all land at the same hour.
+
+    Seed demo timestamps are computed relative to `now` (captured once at
+    seed time) rather than fixed absolute dates, so the demo never reads as
+    stale no matter when the process boots.
+    """
+    return (now - timedelta(days=days)).replace(hour=hour, minute=minute, second=0, microsecond=0)
 
 
 def _square_polygon(center_lon: float, center_lat: float, half_size: float) -> dict[str, Any]:
@@ -91,6 +104,13 @@ class Store:
         self._tree: JurisdictionTree | None = None
         if self.jurisdiction_rows:
             self._tree = JurisdictionTree(self.jurisdiction_rows)
+        # Guards the audit chain append and the id sequences below. All
+        # app.py handlers are sync `def`s, so FastAPI runs them on a
+        # threadpool sharing this one Store -- without a lock, concurrent
+        # requests can interleave append_entry's non-atomic
+        # read-prev-hash-then-append (corrupting the hash chain) or the
+        # id counters' non-atomic increment (handing out duplicate ids).
+        self._lock = threading.Lock()
 
     @property
     def tree(self) -> JurisdictionTree:
@@ -106,24 +126,36 @@ class Store:
     def dist_b_scope(self) -> set[str]:
         return self.tree.scope_ids(self.district_b_id)
 
-    def record_audit(self, *, actor: str, action: str, object_type: str, object_id: str) -> None:
-        append_entry(
-            self.audit_chain,
-            {
-                "actor": actor,
-                "action": action,
-                "object_type": object_type,
-                "object_id": object_id,
-            },
-        )
+    def record_audit(
+        self,
+        *,
+        actor: str,
+        action: str,
+        object_type: str,
+        object_id: str,
+        extra: Mapping[str, Any] | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "actor": actor,
+            "action": action,
+            "object_type": object_type,
+            "object_id": object_id,
+            "at": datetime.now(UTC).isoformat(),
+        }
+        if extra:
+            payload.update(extra)
+        with self._lock:
+            append_entry(self.audit_chain, payload)
 
     def next_alert_id(self) -> str:
-        self._next_alert_seq += 1
-        return f"alert-{self._next_alert_seq}"
+        with self._lock:
+            self._next_alert_seq += 1
+            return f"alert-{self._next_alert_seq}"
 
     def next_case_id(self) -> str:
-        self._next_case_seq += 1
-        return f"case-{self._next_case_seq}"
+        with self._lock:
+            self._next_case_seq += 1
+            return f"case-{self._next_case_seq}"
 
     def context_for_parcel(self, parcel_id: str) -> ParcelContext:
         """Return canonical identifiers plus any linked context for a parcel."""
@@ -173,6 +205,11 @@ class Store:
             ("taluk-b3", "dist-b"),
         ]
         store = cls(jurisdiction_rows=rows)
+
+        # Captured once so every seeded timestamp below is relative to "now"
+        # at seed/startup time -- the demo should never read as stale no
+        # matter how long it's been running.
+        now = datetime.now(UTC)
 
         seed_tags = {
             "parcel-1": ["court-monitored"],
@@ -343,27 +380,30 @@ class Store:
             actor="system", action="parcel.seed", object_type="parcel", object_id="bulk"
         )
 
+        # detected_days_ago/hour vary per alert so the console shows a mix of
+        # ages instead of a single stale-looking date; the urgent RED alert
+        # (parcel-1) is kept the freshest.
         alert_specs = [
-            ("parcel-1", AlertTier.RED, 6000.0, "OPEN"),
-            ("parcel-3", AlertTier.AMBER, 3000.0, "OPEN"),
+            ("parcel-1", AlertTier.RED, 6000.0, "OPEN", 2, 8, 20),
+            ("parcel-3", AlertTier.AMBER, 3000.0, "OPEN", 6, 13, 45),
             # CLOSED (not RESOLVED) so the console's status filter matches.
-            ("parcel-5", AlertTier.GREEN, 500.0, "CLOSED"),
-            ("parcel-7", AlertTier.LEGACY, 8000.0, "OPEN"),
-            ("parcel-9", AlertTier.RED, 4500.0, "UNDER_REVIEW"),
-            ("parcel-12", AlertTier.AMBER, 2000.0, "ESCALATED"),
-            ("parcel-15", AlertTier.GREEN, 700.0, "OPEN"),
-            ("parcel-20", AlertTier.AMBER, 2500.0, "OPEN"),
-            ("parcel-23", AlertTier.RED, 5200.0, "OPEN"),
-            ("parcel-26", AlertTier.LEGACY, 9000.0, "UNDER_REVIEW"),
+            ("parcel-5", AlertTier.GREEN, 500.0, "CLOSED", 19, 7, 10),
+            ("parcel-7", AlertTier.LEGACY, 8000.0, "OPEN", 21, 16, 30),
+            ("parcel-9", AlertTier.RED, 4500.0, "UNDER_REVIEW", 4, 11, 5),
+            ("parcel-12", AlertTier.AMBER, 2000.0, "ESCALATED", 9, 18, 50),
+            ("parcel-15", AlertTier.GREEN, 700.0, "OPEN", 14, 9, 40),
+            ("parcel-20", AlertTier.AMBER, 2500.0, "OPEN", 11, 15, 15),
+            ("parcel-23", AlertTier.RED, 5200.0, "OPEN", 3, 20, 0),
+            ("parcel-26", AlertTier.LEGACY, 9000.0, "UNDER_REVIEW", 17, 6, 25),
         ]
         alert_ids: list[str] = []
-        detected_at = datetime(2026, 1, 15, tzinfo=UTC)
-        for parcel_id, tier, area_m2, status in alert_specs:
+        for parcel_id, tier, area_m2, status, days_ago, hour, minute in alert_specs:
             parcel = store.parcels[parcel_id]
             alert_id = store.next_alert_id()
             score = severity_score(
                 area_m2, parcel["land_category"], parcel["boundary_grade"], False
             )
+            detected_at = _ago(now, days_ago, hour, minute)
             store.alerts[alert_id] = {
                 "id": alert_id,
                 "parcel_id": parcel_id,
@@ -383,27 +423,32 @@ class Store:
         case1_parcel_id = store.alerts[case1_alert_id]["parcel_id"]
         case1_id = store.next_case_id()
         case1 = Case(case_id=case1_id, state=CaseState.NEW)
-        t0 = datetime(2026, 1, 16, tzinfo=UTC)
-        _advance(case1, CaseState.TRIAGED, "system", t0, {"triage_note": "high severity RED alert"})
+        _advance(
+            case1,
+            CaseState.TRIAGED,
+            "system",
+            _ago(now, 12, 9, 10),
+            {"triage_note": "high severity RED alert"},
+        )
         _advance(
             case1,
             CaseState.INSPECTION_ASSIGNED,
             "system",
-            t0,
+            _ago(now, 10, 14, 0),
             {"inspector_id": "inspector-1"},
         )
         _advance(
             case1,
             CaseState.INSPECTED,
             "inspector-1",
-            t0,
+            _ago(now, 7, 11, 30),
             {"inspection_report": "report-001.pdf"},
         )
         _advance(
             case1,
             CaseState.SHOW_CAUSE_ISSUED,
             "system",
-            t0,
+            _ago(now, 3, 16, 20),
             {"notice_document": "notice-001.pdf", "dispatch_proof": "dispatch-001.pdf"},
         )
         store.cases[case1_id] = CaseRecord(
@@ -421,59 +466,70 @@ class Store:
         case2_parcel_id = store.alerts[case2_alert_id]["parcel_id"]
         case2_id = store.next_case_id()
         case2 = Case(case_id=case2_id, state=CaseState.NEW)
-        t1 = datetime(2025, 12, 1, tzinfo=UTC)
-        _advance(case2, CaseState.TRIAGED, "system", t1, {"triage_note": "minor green alert"})
+        _advance(
+            case2,
+            CaseState.TRIAGED,
+            "system",
+            _ago(now, 75, 9, 0),
+            {"triage_note": "minor green alert"},
+        )
         _advance(
             case2,
             CaseState.INSPECTION_ASSIGNED,
             "system",
-            t1,
+            _ago(now, 72, 13, 20),
             {"inspector_id": "inspector-2"},
         )
         _advance(
             case2,
             CaseState.INSPECTED,
             "inspector-2",
-            t1,
+            _ago(now, 68, 10, 45),
             {"inspection_report": "report-002.pdf"},
         )
         _advance(
             case2,
             CaseState.SHOW_CAUSE_ISSUED,
             "system",
-            t1,
+            _ago(now, 63, 15, 0),
             {"notice_document": "notice-002.pdf", "dispatch_proof": "dispatch-002.pdf"},
         )
-        _advance(case2, CaseState.RESPONSE_WINDOW, "system", t1, {})
+        _advance(case2, CaseState.RESPONSE_WINDOW, "system", _ago(now, 58, 9, 30), {})
         _advance(
             case2,
             CaseState.HEARING_SCHEDULED,
             "system",
-            t1,
-            {"hearing_date": "2025-12-10"},
+            _ago(now, 55, 11, 15),
+            {"hearing_date": _ago(now, 52, 10, 0).date().isoformat()},
         )
         _advance(
             case2,
             CaseState.HEARING_HELD,
             "legal-officer-1",
-            t1,
+            _ago(now, 50, 14, 40),
             {"hearing_record": "hearing-002.pdf"},
         )
         _advance(
             case2,
             CaseState.ORDER_ISSUED,
             "legal-officer-1",
-            t1,
+            _ago(now, 47, 10, 0),
             {"reasoned_order": "order-002.pdf"},
         )
         _advance(
             case2,
             CaseState.ACTION_TAKEN,
             "system",
-            t1,
+            _ago(now, 46, 16, 0),
             {"action_report": "action-002.pdf"},
         )
-        _advance(case2, CaseState.CLOSED, "system", t1, {"closure_note": "resolved, case closed"})
+        _advance(
+            case2,
+            CaseState.CLOSED,
+            "system",
+            _ago(now, 45, 12, 0),
+            {"closure_note": "resolved, case closed"},
+        )
         store.cases[case2_id] = CaseRecord(
             case=case2,
             alert_id=case2_alert_id,
@@ -487,26 +543,39 @@ class Store:
         # Case 3: alert-5 (parcel-9) reached show-cause, then a court stay
         # froze the chain — resumes at SHOW_CAUSE_ISSUED when vacated.
         case3 = Case(case_id=store.next_case_id(), state=CaseState.NEW)
-        t2 = datetime(2026, 2, 10, tzinfo=UTC)
-        _advance(case3, CaseState.TRIAGED, "system", t2, {"triage_note": "red alert, SIDCUL-side"})
         _advance(
-            case3, CaseState.INSPECTION_ASSIGNED, "system", t2, {"inspector_id": "inspector-3"}
+            case3,
+            CaseState.TRIAGED,
+            "system",
+            _ago(now, 24, 10, 0),
+            {"triage_note": "red alert, SIDCUL-side"},
         )
         _advance(
-            case3, CaseState.INSPECTED, "inspector-3", t2, {"inspection_report": "report-003.pdf"}
+            case3,
+            CaseState.INSPECTION_ASSIGNED,
+            "system",
+            _ago(now, 22, 15, 30),
+            {"inspector_id": "inspector-3"},
+        )
+        _advance(
+            case3,
+            CaseState.INSPECTED,
+            "inspector-3",
+            _ago(now, 19, 9, 15),
+            {"inspection_report": "report-003.pdf"},
         )
         _advance(
             case3,
             CaseState.SHOW_CAUSE_ISSUED,
             "system",
-            t2,
+            _ago(now, 15, 13, 45),
             {"notice_document": "notice-003.pdf", "dispatch_proof": "dispatch-003.pdf"},
         )
         _advance(
             case3,
             CaseState.STAYED_BY_COURT,
             "legal-officer-1",
-            datetime(2026, 2, 24, tzinfo=UTC),
+            _ago(now, 6, 11, 0),
             {"stay_order_ref": "WP-1204-2026 (Uttarakhand HC)"},
         )
         store.cases[case3.case_id] = CaseRecord(
@@ -522,19 +591,32 @@ class Store:
         # Case 4: alert-6 (parcel-12) — inspection disputed the boundary, so a
         # ground survey was requested; resumes at INSPECTED with the result.
         case4 = Case(case_id=store.next_case_id(), state=CaseState.NEW)
-        t3 = datetime(2026, 3, 3, tzinfo=UTC)
-        _advance(case4, CaseState.TRIAGED, "system", t3, {"triage_note": "amber alert, Kankhal"})
         _advance(
-            case4, CaseState.INSPECTION_ASSIGNED, "system", t3, {"inspector_id": "inspector-2"}
+            case4,
+            CaseState.TRIAGED,
+            "system",
+            _ago(now, 20, 9, 20),
+            {"triage_note": "amber alert, Kankhal"},
         )
         _advance(
-            case4, CaseState.INSPECTED, "inspector-2", t3, {"inspection_report": "report-004.pdf"}
+            case4,
+            CaseState.INSPECTION_ASSIGNED,
+            "system",
+            _ago(now, 18, 14, 10),
+            {"inspector_id": "inspector-2"},
+        )
+        _advance(
+            case4,
+            CaseState.INSPECTED,
+            "inspector-2",
+            _ago(now, 15, 10, 50),
+            {"inspection_report": "report-004.pdf"},
         )
         _advance(
             case4,
             CaseState.SURVEY_REQUESTED,
             "inspector-2",
-            datetime(2026, 3, 12, tzinfo=UTC),
+            _ago(now, 8, 16, 5),
             {"survey_request_ref": "SRV-2026-014"},
         )
         store.cases[case4.case_id] = CaseRecord(
@@ -550,22 +632,35 @@ class Store:
         # Case 5: alert-9 (parcel-23) — notice served, occupier's response
         # window is running.
         case5 = Case(case_id=store.next_case_id(), state=CaseState.NEW)
-        t4 = datetime(2026, 4, 1, tzinfo=UTC)
-        _advance(case5, CaseState.TRIAGED, "system", t4, {"triage_note": "red alert, canal land"})
         _advance(
-            case5, CaseState.INSPECTION_ASSIGNED, "system", t4, {"inspector_id": "inspector-1"}
+            case5,
+            CaseState.TRIAGED,
+            "system",
+            _ago(now, 16, 8, 45),
+            {"triage_note": "red alert, canal land"},
         )
         _advance(
-            case5, CaseState.INSPECTED, "inspector-1", t4, {"inspection_report": "report-005.pdf"}
+            case5,
+            CaseState.INSPECTION_ASSIGNED,
+            "system",
+            _ago(now, 14, 12, 30),
+            {"inspector_id": "inspector-1"},
+        )
+        _advance(
+            case5,
+            CaseState.INSPECTED,
+            "inspector-1",
+            _ago(now, 11, 9, 0),
+            {"inspection_report": "report-005.pdf"},
         )
         _advance(
             case5,
             CaseState.SHOW_CAUSE_ISSUED,
             "system",
-            t4,
+            _ago(now, 9, 15, 20),
             {"notice_document": "notice-005.pdf", "dispatch_proof": "dispatch-005.pdf"},
         )
-        _advance(case5, CaseState.RESPONSE_WINDOW, "system", datetime(2026, 4, 8, tzinfo=UTC), {})
+        _advance(case5, CaseState.RESPONSE_WINDOW, "system", _ago(now, 2, 10, 0), {})
         store.cases[case5.case_id] = CaseRecord(
             case=case5,
             alert_id="alert-9",

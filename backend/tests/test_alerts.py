@@ -94,6 +94,13 @@ class TestSeverityScore:
         result = severity_score(50_000, "waterbody", "A", repeat_offender=True)
         assert 0.0 <= result <= 100.0
 
+    def test_negative_area_raises_value_error(self):
+        with pytest.raises(ValueError, match="area_m2"):
+            severity_score(-5_000, "waterbody", "A", repeat_offender=False)
+
+    def test_area_of_zero_returns_zero(self):
+        assert severity_score(0, "waterbody", "A", repeat_offender=False) == 0.0
+
 
 class TestPersistenceCheck:
     def test_one_observation_is_insufficient_with_default_required(self):

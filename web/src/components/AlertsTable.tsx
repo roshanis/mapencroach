@@ -9,10 +9,20 @@ import {
   ALERT_STATUS_DESCRIPTIONS,
   SEVERITY_EXPLANATION,
 } from "@/lib/explanations";
-import type { Alert, AlertStatus, AlertTier } from "@/lib/types";
+import {
+  LAND_CATEGORY_LABELS,
+  type Alert,
+  type AlertStatus,
+  type AlertTier,
+  type Case,
+  type Parcel,
+} from "@/lib/types";
 
 export interface AlertsTableProps {
   alerts: Alert[];
+  parcels?: Parcel[];
+  /** Lookup from alert id to its case, used to render a "Case" action link. */
+  casesByAlertId?: Map<string, Case>;
 }
 
 const TIER_OPTIONS: (AlertTier | "all")[] = ["all", "red", "amber", "green", "legacy"];
@@ -24,7 +34,27 @@ const STATUS_OPTIONS: (AlertStatus | "all")[] = [
   "closed",
 ];
 
-export function AlertsTable({ alerts }: AlertsTableProps) {
+const TIER_BAR_CLASSES: Record<AlertTier, string> = {
+  green: "bg-tier-green",
+  amber: "bg-tier-amber",
+  red: "bg-tier-red",
+  legacy: "bg-tier-legacy",
+};
+
+/** "Waterbody · Grade A" style secondary line for a resolved parcel. */
+function parcelSecondaryLine(parcel: Parcel): string {
+  return `${LAND_CATEGORY_LABELS[parcel.land_category]} · Grade ${parcel.boundary_grade}`;
+}
+
+export function AlertsTable({
+  alerts,
+  parcels = [],
+  casesByAlertId,
+}: AlertsTableProps) {
+  const parcelsById = useMemo(
+    () => new Map(parcels.map((parcel) => [parcel.id, parcel])),
+    [parcels]
+  );
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -171,43 +201,93 @@ export function AlertsTable({ alerts }: AlertsTableProps) {
             <th className="px-4 py-2">Area (m²)</th>
             <th className="px-4 py-2">Status</th>
             <th className="px-4 py-2">Age</th>
+            <th className="px-4 py-2">Actions</th>
           </tr>
         </thead>
         <tbody>
-          {filtered.map((alert) => (
-            <tr
-              key={alert.id}
-              data-testid="alert-row"
-              data-alert-id={alert.id}
-              className="border-t border-gray-100 hover:bg-gray-50"
-            >
-              <td className="px-4 py-2">
-                <TierChip tier={alert.tier} />
-              </td>
-              <td className="px-4 py-2 font-medium">
-                <Link
-                  href={`/parcels/${alert.parcel_id}`}
-                  className="text-gov underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-gov/30"
-                >
-                  {alert.parcel_id}
-                </Link>
-              </td>
-              <td className="px-4 py-2">{alert.severity_score}</td>
-              <td className="px-4 py-2">{alert.area_m2.toLocaleString()}</td>
-              <td
-                className="px-4 py-2 capitalize"
-                title={ALERT_STATUS_DESCRIPTIONS[alert.status]}
+          {filtered.map((alert) => {
+            const parcel = parcelsById.get(alert.parcel_id);
+            const barWidth = Math.min(100, Math.max(0, alert.severity_score));
+            const caseForAlert = casesByAlertId?.get(alert.id);
+            return (
+              <tr
+                key={alert.id}
+                data-testid="alert-row"
+                data-alert-id={alert.id}
+                className="border-t border-gray-100 hover:bg-gray-50"
               >
-                {alert.status.replace("_", " ")}
-              </td>
-              <td className="px-4 py-2 text-gray-500">
-                {ageFromNow(alert.detected_at)}
-              </td>
-            </tr>
-          ))}
+                <td className="px-4 py-2">
+                  <TierChip tier={alert.tier} />
+                </td>
+                <td className="px-4 py-2 font-medium">
+                  <Link
+                    href={`/parcels/${alert.parcel_id}`}
+                    className="text-gov underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-gov/30"
+                  >
+                    {parcel ? parcel.survey_no : alert.parcel_id}
+                  </Link>
+                  {parcel && (
+                    <div className="mt-0.5 text-xs font-normal text-gray-500">
+                      {parcelSecondaryLine(parcel)}
+                    </div>
+                  )}
+                </td>
+                <td className="px-4 py-2">
+                  <div className="flex items-center gap-2">
+                    <span>{Math.round(alert.severity_score)}</span>
+                    <span
+                      aria-hidden="true"
+                      data-testid="severity-bar"
+                      data-tier={alert.tier}
+                      className="inline-block h-1.5 w-16 overflow-hidden rounded-full bg-gray-100"
+                    >
+                      <span
+                        className={`block h-full rounded-full ${TIER_BAR_CLASSES[alert.tier]}`}
+                        style={{ width: `${barWidth}%` }}
+                      />
+                    </span>
+                  </div>
+                </td>
+                <td className="px-4 py-2">{alert.area_m2.toLocaleString()}</td>
+                <td
+                  className="px-4 py-2 capitalize"
+                  title={ALERT_STATUS_DESCRIPTIONS[alert.status]}
+                >
+                  {alert.status.replace("_", " ")}
+                </td>
+                <td className="px-4 py-2 text-gray-500">
+                  {ageFromNow(alert.detected_at)}
+                </td>
+                <td className="px-4 py-2">
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <Link
+                      href={`/parcels/${alert.parcel_id}`}
+                      className="text-gov hover:underline focus:outline-none focus:ring-2 focus:ring-gov/30"
+                    >
+                      Parcel record
+                    </Link>
+                    <Link
+                      href={`/console?alert=${alert.id}`}
+                      className="text-gov hover:underline focus:outline-none focus:ring-2 focus:ring-gov/30"
+                    >
+                      View on map
+                    </Link>
+                    {caseForAlert && (
+                      <Link
+                        href={`/cases/${caseForAlert.id}`}
+                        className="rounded-full bg-gov/10 px-2 py-0.5 font-medium text-gov hover:bg-gov/20 focus:outline-none focus:ring-2 focus:ring-gov/30"
+                      >
+                        Case
+                      </Link>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
           {filtered.length === 0 && (
             <tr>
-              <td colSpan={6} className="px-4 py-6 text-center text-gray-400">
+              <td colSpan={7} className="px-4 py-6 text-center text-gray-400">
                 No alerts match the current filters.
               </td>
             </tr>
