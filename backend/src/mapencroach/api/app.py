@@ -77,6 +77,7 @@ from mapencroach.domain.case_engine import (
 from mapencroach.imagery.capture import CaptureAttempt, CaptureStatus, capture_week
 from mapencroach.imagery.registry import DuplicateScene, SceneRecord
 from mapencroach.imagery.schedule import WeekRef, due_weeks, weeks_from
+from mapencroach.imagery.stac_search import StacClient, StacSearchError, geometry_bbox
 from mapencroach.persistence import build_store
 
 _VALID_GRADES = {"A", "B", "C"}
@@ -536,13 +537,17 @@ def _scene_to_dict(record: SceneRecord) -> dict[str, Any]:
     }
 
 
-def create_app(store: Store | None = None) -> FastAPI:
+def create_app(
+    store: Store | None = None, stac_client: StacClient | None = None
+) -> FastAPI:
     """Build the FastAPI app.
 
     If no store is supplied, one is created automatically: seeded with
     demo data when MAPENCROACH_DEMO=1, otherwise empty. `uvicorn
     "mapencroach.api.app:create_app" --factory` picks this up with no
-    extra wiring.
+    extra wiring. The STAC client (Sentinel-2 scene discovery on
+    /parcels/{id}/scenes) defaults to Earth Search; override the catalog
+    with MAPENCROACH_STAC_URL or inject a client in tests.
 
     Fails closed at startup (raises RuntimeError) rather than booting an
     insecure server: outside demo mode a real MAPENCROACH_JWT_SECRET is
@@ -558,12 +563,16 @@ def create_app(store: Store | None = None) -> FastAPI:
         # state (if any) and raises loudly on a corrupt state file rather
         # than silently booting empty; see `mapencroach.persistence`.
         store = build_store(demo=demo_mode)
+    if stac_client is None:
+        stac_url = os.environ.get("MAPENCROACH_STAC_URL")
+        stac_client = StacClient(stac_url) if stac_url else StacClient()
 
     jwt_secret = validate_secret_config(demo_mode)
 
     app = FastAPI(title="mapencroach API")
     app.state.store = store
     app.state.jwt_secret = jwt_secret
+    app.state.stac = stac_client
 
     cors_origins = [
         origin.strip()
@@ -639,6 +648,48 @@ def create_app(store: Store | None = None) -> FastAPI:
         if parcel is None or parcel["jurisdiction_id"] not in scope:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="parcel not found")
         return store.context_for_parcel(parcel_id).to_dict()
+
+    @app.get("/parcels/{parcel_id}/scenes")
+    def list_parcel_scenes(
+        parcel_id: str,
+        store: StoreDep,
+        user: CurrentUser,
+        days: Annotated[int, Query(ge=1, le=730)] = 90,
+        max_cloud_pct: Annotated[float, Query(ge=0, le=100)] = 40.0,
+        limit: Annotated[int, Query(ge=1, le=50)] = 8,
+    ) -> dict[str, Any]:
+        """Sentinel-2 scene candidates over a parcel, newest first.
+
+        Discovery only: nothing is ingested into the scene registry
+        until bytes are downloaded and hashed.
+        """
+        parcel = store.parcels.get(parcel_id)
+        scope = _user_scope(store, user)
+        if parcel is None or parcel["jurisdiction_id"] not in scope:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="parcel not found")
+
+        # Buffer ~550m beyond the parcel so thumbnails carry recognizable
+        # surroundings; scene footprints (110km tiles) dwarf it anyway.
+        bbox = geometry_bbox(parcel["geometry"], buffer_deg=0.005)
+        end = datetime.now(UTC)
+        start = end - timedelta(days=days)
+        try:
+            scenes = app.state.stac.search(
+                bbox, start=start, end=end, max_cloud_pct=max_cloud_pct, limit=limit
+            )
+        except StacSearchError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"imagery catalog unavailable: {exc}",
+            ) from exc
+
+        return {
+            "parcel_id": parcel_id,
+            "bbox": list(bbox),
+            "days": days,
+            "max_cloud_pct": max_cloud_pct,
+            "scenes": [c.to_api_dict() for c in scenes],
+        }
 
     @app.patch("/parcels/{parcel_id}/boundary-grade")
     def patch_boundary_grade(

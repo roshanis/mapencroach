@@ -143,6 +143,7 @@ class SceneRegistry:
         source: str,
         href: str,
         media_type: str = _DEFAULT_MEDIA_TYPE,
+        stac_item: dict[str, Any] | None = None,
     ) -> SceneRecord:
         sha256 = hashlib.sha256(data).hexdigest()
 
@@ -168,7 +169,13 @@ class SceneRegistry:
                 resolution_m=resolution_m,
                 cloud_pct=cloud_pct,
                 source=source,
-                stac_item=_build_stac_item(scene_id, captured_at, cloud_pct, resolution_m, href),
+                # A caller that discovered the scene in an external STAC
+                # catalog passes that catalog's own item so provenance is
+                # preserved; it gets the same deep-freeze as synthesized
+                # items so it can't be altered after registration either.
+                stac_item=_deep_freeze(stac_item)
+                if stac_item is not None
+                else _build_stac_item(scene_id, captured_at, cloud_pct, resolution_m, href),
                 media_type=media_type,
                 retained=retained,
             )
