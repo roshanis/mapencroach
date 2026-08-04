@@ -1915,6 +1915,24 @@ class TestImageryScenes:
         assert entry.payload["sha256"] == resp.json()["sha256"]
         assert verify_chain(store.audit_chain).ok
 
+    def test_ingest_flushes_the_persistent_scene_index(
+        self, client: TestClient, state_token: str, store: Store
+    ):
+        saved_stores: list[Store] = []
+
+        class RecordingPersister:
+            def save(self, saved_store: Store) -> None:
+                saved_stores.append(saved_store)
+
+        store.state_persister = RecordingPersister()
+
+        resp = client.post(
+            "/imagery/scenes", headers=auth_headers(state_token), json=self._payload()
+        )
+
+        assert resp.status_code == 201
+        assert saved_stores == [store]
+
     def test_unauthenticated_post_is_401(self, client: TestClient):
         resp = client.post("/imagery/scenes", json=self._payload())
         assert resp.status_code == 401

@@ -383,6 +383,13 @@ Nits: Sentinel-1B is dead (constellation = 1A+1C); Phase 0 of 2–4 weeks unreal
 ### Verification: Backend 305 passed (was 301 baseline this session, 276 at session start), Ruff clean. Web 413 passed across 54 files (was 381 at session start), ESLint clean, tsc clean, next build clean. Every subagent ran red-first; orchestrator read all diffs and re-ran all gates independently.
 ### Recommendations / Next steps: Uncommitted, awaiting human review/commit. Deployment configs must be migrated to the new env vars before the next deploy (old NEXT_PUBLIC_API_TOKEN deployments keep working only in fixture mode). Track D (PostGIS persistence) remains the next gated plan; Keycloak/OIDC per Codex's pilot-blocker list after that.
 
+## [AGENT: Codex] [2026-08-04T04:58Z]
+### Action: Audited the concurrently merged PR #2 tree and prepared a narrow post-merge correction with three Luna read-only reviews
+### Files changed: `.github/workflows/ci.yml`; `backend/src/mapencroach/api/app.py`; `backend/tests/test_api.py`; `web/src/app/console/page.tsx`; `web/src/app/console/page.test.tsx`; `agents-build-log.md`
+### Diff summary: Red-first test and fix ensure direct scene ingestion flushes the persistent scene index and audit record instead of leaving retained bytes orphaned after restart. Dependency audits now run inside the existing required backend/web checks instead of a non-blocking advisory job. A red-first UI assertion moves the H3 control below the 52px basemap toggle and active top safe-area inset. The merged binary-safe API proxy and its ETag/304 tests remain unchanged.
+### Verification: Backend 711 tests passed, Ruff clean, pip-audit found no known vulnerabilities. Web 556 tests across 59 files passed, ESLint clean, TypeScript clean, Next.js production build clean, npm audit found 0 vulnerabilities. CI YAML resolves exactly `backend` and `web`, contains no `continue-on-error`, and `git diff --check` is clean. Existing jsdom navigation/act and test-key-length warnings remain non-failing.
+### Recommendations / Next steps: Push this branch as a follow-up PR, require fresh backend/web/Vercel success, merge only after all required checks are green, and keep real-device notch behavior as a later browser acceptance check.
+
 ## [AGENT: Claude] [2026-08-04T06:10Z]
 ### Action: Session Ritual Complete — merge gate for the re-derived hardening PR (claude/harden-claims-authority, rebuilt on main 3327fff after PRs #2/#3/#4 merged mid-flight)
 ### Test suite: PASSING (backend 723, was 722 on main; web 557 across 59 files; all red-first for new behavior — persistence-migration and ordering/persona tests demonstrated red via stash-revert against unmodified sources)

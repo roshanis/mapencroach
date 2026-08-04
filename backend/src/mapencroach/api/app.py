@@ -1438,6 +1438,7 @@ def create_app(store: Store | None = None) -> FastAPI:
             object_id=record.scene_id,
             extra={"scene_id": record.scene_id, "sha256": record.sha256},
         )
+        store.persist_now()
         return _scene_to_dict(record)
 
     @app.get("/imagery/scenes/{scene_id}")
