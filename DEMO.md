@@ -17,8 +17,14 @@ from datetime import datetime, timedelta, UTC
 from mapencroach.api.auth import create_token
 print(create_token('officer-1', 'case_officer', 'state', 'dev-secret-do-not-deploy', datetime.now(UTC)+timedelta(hours=8)))"
 
-# 3. Start the console (from web/, third terminal)
-NEXT_PUBLIC_API_URL=http://localhost:8000 MAPENCROACH_API_TOKEN=<token> npm run dev
+# 3. Start the console (from web/, third terminal) — route the browser
+# through the server-side proxy: client-side calls authenticate via the
+# proxy's MAPENCROACH_API_TOKEN (or a persona cookie), never a bundled
+# token. 127.0.0.1, not localhost (see AGENTS.md).
+NEXT_PUBLIC_API_URL=/api/backend \
+MAPENCROACH_BACKEND_URL=http://127.0.0.1:8000 \
+MAPENCROACH_API_TOKEN=<token> \
+npm run dev
 ```
 
 Sanity check: open http://localhost:3000/console — the map should show parcels and colored
