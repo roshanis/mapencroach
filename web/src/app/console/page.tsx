@@ -236,7 +236,7 @@ function CommandMapPageContent() {
               onAlertClick={handleAlertMarkerClick}
               selectedAlertId={selectedAlertId}
             />
-            <div className="absolute left-[calc(0.75rem_+_env(safe-area-inset-left,0px))] top-14 z-20">
+            <div className="absolute left-[calc(0.75rem_+_env(safe-area-inset-left,0px))] top-[calc(4rem_+_env(safe-area-inset-top,0px))] z-20">
               <H3GridControl
                 visible={h3Visible}
                 resolution={h3Resolution}
