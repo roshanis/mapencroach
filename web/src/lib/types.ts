@@ -263,11 +263,25 @@ export interface Case {
   id: string;
   alert_id: string;
   parcel_id: string;
+  /**
+   * The case's CURRENT jurisdiction. Distinct from the parcel's own
+   * jurisdiction once the case has been transferred (see
+   * POST /cases/{id}/transfer) — the transfer UI needs this to know who
+   * owns the case now, not just where the underlying parcel sits.
+   */
+  jurisdiction_id: string;
   state: AnyCaseState;
   state_since?: string | null;
   events: CaseEvent[];
   allowed_transitions?: string[];
   required_artifacts?: Record<string, string[]>;
+}
+
+/** A node in the jurisdiction tree, as returned by GET /jurisdictions. */
+export interface Jurisdiction {
+  id: string;
+  name: string;
+  parent_id: string | null;
 }
 
 export interface BBox {

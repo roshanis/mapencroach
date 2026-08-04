@@ -8,6 +8,7 @@ import type {
   Alert,
   Case,
   CaseImagery,
+  Jurisdiction,
   Parcel,
   ParcelContext,
   WatchEntry,
@@ -357,6 +358,8 @@ export const FIXTURE_CASES: Case[] = [
     id: "CASE-9001",
     alert_id: "ALT-5001",
     parcel_id: "PCL-1001",
+    // Matches PCL-1001's jurisdiction_id — this case has not been transferred.
+    jurisdiction_id: "UK-URBAN-01",
     state: "SHOW_CAUSE_ISSUED",
     // Matches the occurred_at of the SHOW_CAUSE_ISSUED event below — the
     // "Time in stage" column and days-in-stage sort need this to work in
@@ -424,6 +427,8 @@ export const FIXTURE_CASES: Case[] = [
     id: "CASE-9002",
     alert_id: "ALT-5004",
     parcel_id: "PCL-1006",
+    // Matches PCL-1006's jurisdiction_id — this case has not been transferred.
+    jurisdiction_id: "UK-RURAL-01",
     state: "CLOSED",
     state_since: "2026-06-22T09:00:00Z",
     events: [
@@ -516,6 +521,8 @@ export const FIXTURE_CASES: Case[] = [
     id: "CASE-9003",
     alert_id: "ALT-5005",
     parcel_id: "PCL-1003",
+    // Matches PCL-1003's jurisdiction_id — this case has not been transferred.
+    jurisdiction_id: "UK-URBAN-01",
     state: "INSPECTED",
     state_since: "2026-06-08T08:30:00Z",
     allowed_transitions: [
@@ -569,6 +576,8 @@ export const FIXTURE_CASES: Case[] = [
     id: "CASE-9004",
     alert_id: "ALT-5003",
     parcel_id: "PCL-1004",
+    // Matches PCL-1004's jurisdiction_id — this case has not been transferred.
+    jurisdiction_id: "UK-URBAN-02",
     state: "STAYED_BY_COURT",
     state_since: "2026-07-06T09:00:00Z",
     allowed_transitions: [
@@ -636,6 +645,8 @@ export const FIXTURE_CASES: Case[] = [
     id: "CASE-9005",
     alert_id: "ALT-5002",
     parcel_id: "PCL-1008",
+    // Matches PCL-1008's jurisdiction_id — this case has not been transferred.
+    jurisdiction_id: "UK-URBAN-01",
     state: "TRIAGED",
     state_since: "2026-06-25T09:30:00Z",
     allowed_transitions: [
@@ -1101,4 +1112,20 @@ export const FIXTURE_PERSONAS: Persona[] = [
     visible_parcels: 30,
     capabilities: DATA_ADMIN_CAPABILITIES,
   },
+];
+
+// Mirrors the demo jurisdiction tree served by GET /jurisdictions (see
+// backend/src/mapencroach/api/store.py's JURISDICTION_NAMES and
+// Store.seed_demo's jurisdiction_rows) so the transfer-target picker can be
+// exercised without a backend.
+export const FIXTURE_JURISDICTIONS: Jurisdiction[] = [
+  { id: "state", name: "Haridwar–Roorkee Development Authority", parent_id: null },
+  { id: "dist-a", name: "Haridwar Division", parent_id: "state" },
+  { id: "dist-b", name: "Roorkee Division", parent_id: "state" },
+  { id: "taluk-a1", name: "Haridwar City", parent_id: "dist-a" },
+  { id: "taluk-a2", name: "Kankhal", parent_id: "dist-a" },
+  { id: "taluk-a3", name: "Laksar", parent_id: "dist-a" },
+  { id: "taluk-b1", name: "Roorkee City", parent_id: "dist-b" },
+  { id: "taluk-b2", name: "Bahadarabad", parent_id: "dist-b" },
+  { id: "taluk-b3", name: "Narsan", parent_id: "dist-b" },
 ];

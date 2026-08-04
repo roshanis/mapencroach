@@ -3,9 +3,12 @@
 Architecture: the Next.js console on **Vercel**, the FastAPI backend on **Render**
 (a persistent process — the in-memory demo store doesn't survive serverless).
 
-> **Demo data only.** The API token ends up in the public JS bundle and the
-> store is in-memory. Never point this deployment at real parcel or case data.
-> A real pilot gets Keycloak login + PostGIS first (see PLAN.md).
+> **Demo data only.** The store is in-memory, so every backend restart
+> reseeds it. The API token is server-only — the browser talks to the
+> Next.js app's `/api/backend` proxy, which injects the token when it
+> forwards requests upstream — but never point this deployment at real
+> parcel or case data. A real pilot gets Keycloak login + PostGIS first (see
+> PLAN.md).
 
 Deploy in this order — the frontend URL is needed for the backend's CORS.
 
@@ -66,8 +69,9 @@ In the Vercel project → **Settings → Environment Variables**:
 
 | Key | Value |
 |-----|-------|
-| `NEXT_PUBLIC_API_URL` | `https://<your-api>.onrender.com` |
-| `MAPENCROACH_API_TOKEN` | the token from step 3 (server-only — **not** `NEXT_PUBLIC_`) |
+| `NEXT_PUBLIC_API_URL` | `/api/backend` — a relative path, not a secret. The browser calls this same-origin proxy route instead of the Render URL directly. |
+| `MAPENCROACH_BACKEND_URL` | `https://<your-api>.onrender.com` — server-only; used by the `/api/backend` proxy and by server components to reach the backend directly. |
+| `MAPENCROACH_API_TOKEN` | the token from step 3 — server-only; the proxy injects it as `Authorization: Bearer <token>` when the browser has no persona cookie. Never prefixed with `NEXT_PUBLIC_`, so it is never bundled into client JS. |
 | `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | restricted Maps JavaScript API browser key |
 | `NEXT_PUBLIC_GOOGLE_MAP_ID` | JavaScript vector map ID |
 
@@ -75,8 +79,13 @@ Then **Deployments → Redeploy** (env vars are baked in at build time).
 
 `MAPENCROACH_API_TOKEN` is deliberately not a `NEXT_PUBLIC_*` var: those are
 inlined into the browser bundle, so a bearer token set there would be readable
-by every visitor and usable to drive case transitions. Only server-rendered
-requests use it; the browser authenticates with the sign-in cookie.
+by every visitor and usable to drive case transitions. It is only ever read
+server-side — by server-rendered requests directly, and by the `/api/backend`
+proxy as its last-resort fallback when a request (including one relayed from
+the browser) carries no `Authorization` header and no `mapencroach_token`
+persona cookie. The browser itself never sees this token; once a persona is
+signed in it authenticates with the sign-in cookie, which the proxy forwards
+upstream on its behalf.
 
 Restrict the Google browser key to the production Vercel hostname (and only
 the preview/local hostnames that need it) plus the Maps JavaScript API. The map
@@ -100,5 +109,7 @@ ID is public configuration; the API key must never be committed to this repo.
 | Everything 401 | Token minted with a different secret than the Render env var, or expired |
 | First load takes a minute | Render free tier waking up — warm it before demos |
 | Site shows fixture data (parcels named PCL-…) | `NEXT_PUBLIC_API_URL` not set at build time — set env vars, then redeploy |
+| Everything 503 with `"backend not configured"` | `MAPENCROACH_BACKEND_URL` missing on the Vercel deployment — set it and redeploy (server-only; no `NEXT_PUBLIC_` prefix) |
+| Everything 502 with `"backend unreachable"` | The proxy couldn't reach `MAPENCROACH_BACKEND_URL` — check the Render service is up and the URL has no typo/trailing slash |
 | Console says Google Maps is not configured | One or both Google Maps variables are missing from the Vercel deployment environment |
 | Console falls back after trying Google Maps | Check billing, Maps JavaScript API enablement, map ID, and the API key's website/API restrictions |

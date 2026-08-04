@@ -7,6 +7,7 @@ import {
   getCase,
   getCaseImagery,
   getCases,
+  getJurisdictions,
   getParcel,
   getParcelContext,
   getParcels,
@@ -16,6 +17,7 @@ import {
   loginPersona,
   removeParcelTag,
   runCaptures,
+  transferCase,
   transitionCase,
   unwatchAlert,
   updateBoundaryGrade,
@@ -26,13 +28,13 @@ import {
   FIXTURE_ALERTS,
   FIXTURE_CASES,
   FIXTURE_CASE_IMAGERY,
+  FIXTURE_JURISDICTIONS,
   FIXTURE_PARCELS,
   FIXTURE_PARCEL_CONTEXTS,
   FIXTURE_WATCH_ENTRIES,
 } from "./fixtures";
 
 const ORIGINAL_ENV = process.env.NEXT_PUBLIC_API_URL;
-const ORIGINAL_TOKEN = process.env.NEXT_PUBLIC_API_TOKEN;
 
 afterEach(() => {
   if (ORIGINAL_ENV === undefined) {
@@ -40,12 +42,8 @@ afterEach(() => {
   } else {
     process.env.NEXT_PUBLIC_API_URL = ORIGINAL_ENV;
   }
-  if (ORIGINAL_TOKEN === undefined) {
-    delete process.env.NEXT_PUBLIC_API_TOKEN;
-  } else {
-    process.env.NEXT_PUBLIC_API_TOKEN = ORIGINAL_TOKEN;
-  }
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
 
@@ -342,7 +340,8 @@ describe("api client with NEXT_PUBLIC_API_URL set", () => {
       "CASE-9001",
       "RESPONSE_WINDOW",
       {},
-      "moving forward"
+      "moving forward",
+      "test-token-123"
     );
 
     expect(result).toEqual({ ok: true, status: 201 });
@@ -364,7 +363,6 @@ describe("api client with NEXT_PUBLIC_API_URL set", () => {
 
   it("returns ok:false with the passed-through detail on a 409 refusal from the case engine", async () => {
     process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
-    delete process.env.NEXT_PUBLIC_API_TOKEN;
 
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,
@@ -538,9 +536,29 @@ describe("404 vs. non-404 error handling for getParcel/getParcelContext/getCase"
   });
 });
 
-describe("authHeaders token precedence", () => {
+describe("authHeaders token precedence (client-side)", () => {
   afterEach(() => {
     document.cookie = "mapencroach_token=; path=/; max-age=0";
+  });
+
+  it("uses the cookie token when no explicit token override is provided", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    document.cookie = "mapencroach_token=cookie-tok; path=/";
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      statusText: "Created",
+      json: async () => ({}),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await transitionCase("CASE-9001", "RESPONSE_WINDOW", {}, "note");
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers).toMatchObject({
+      Authorization: "Bearer cookie-tok",
+    });
   });
 
   it("uses a tokenOverride argument over the cookie token", async () => {
@@ -566,30 +584,17 @@ describe("authHeaders token precedence", () => {
     });
   });
 
-  it("falls back to the cookie token when no override is passed", async () => {
+  // "falls back to the cookie token when no override is passed" is already
+  // covered above by "uses the cookie token when no explicit token override
+  // is provided" — same behavior, so it is not duplicated here.
+
+  it("sends no Authorization header when there is no tokenOverride or cookie (NEXT_PUBLIC_API_TOKEN is never consulted)", async () => {
     process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
-    document.cookie = "mapencroach_token=cookie-tok; path=/";
-
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 201,
-      statusText: "Created",
-      json: async () => ({}),
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    await transitionCase("CASE-9001", "RESPONSE_WINDOW", {}, "note");
-
-    const [, init] = fetchMock.mock.calls[0];
-    expect(init.headers).toMatchObject({
-      Authorization: "Bearer cookie-tok",
-    });
-  });
-
-  it("never sends NEXT_PUBLIC_API_TOKEN as a Bearer fallback, even when set and no cookie/override is present", async () => {
-    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
-    process.env.NEXT_PUBLIC_API_TOKEN = "insecure-client-token";
-    // No cookie set — the old code fell back to the env var here.
+    // Set as if a stray build-time env var were present — it must be ignored
+    // client-side now that the fallback has been removed from authHeaders.
+    // vi.stubEnv (not a direct process.env assignment) so vi.unstubAllEnvs()
+    // in the top-level afterEach reliably cleans it up between tests.
+    vi.stubEnv("NEXT_PUBLIC_API_TOKEN", "should-never-be-used");
 
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -711,6 +716,69 @@ describe("distinguishing a genuine 404 from other failures", () => {
       json: async () => ({}),
     });
     await expect(getParcelContext("PCL-MISSING")).resolves.toBeUndefined();
+  });
+});
+
+describe("server-context getApiBase and authHeaders resolution", () => {
+  it("prefers MAPENCROACH_BACKEND_URL over NEXT_PUBLIC_API_URL when running server-side", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "https://client.example.test");
+    vi.stubEnv("MAPENCROACH_BACKEND_URL", "https://server.example.test");
+    vi.stubGlobal("window", undefined);
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({ type: "FeatureCollection", features: [] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getParcels();
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://server.example.test/parcels"
+    );
+  });
+
+  it("falls back to NEXT_PUBLIC_API_URL server-side when MAPENCROACH_BACKEND_URL is unset", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "https://client.example.test");
+    delete process.env.MAPENCROACH_BACKEND_URL;
+    vi.stubGlobal("window", undefined);
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({ type: "FeatureCollection", features: [] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getParcels();
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://client.example.test/parcels"
+    );
+  });
+
+  it("falls back to MAPENCROACH_API_TOKEN when authHeaders resolves with no document (server context) and no tokenOverride", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    vi.stubEnv("MAPENCROACH_API_TOKEN", "server-env-token");
+    vi.stubGlobal("document", undefined);
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({ type: "FeatureCollection", features: [] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getParcels();
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers).toMatchObject({
+      Authorization: "Bearer server-env-token",
+    });
   });
 });
 
@@ -875,7 +943,7 @@ describe("parcel tag endpoints", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await addParcelTag("PCL-1001", "flagged");
+    const result = await addParcelTag("PCL-1001", "flagged", "test-token-123");
 
     expect(fetchMock.mock.calls[0][0]).toBe(
       "https://api.example.test/parcels/PCL-1001/tags"
@@ -1035,7 +1103,12 @@ describe("boundary grade endpoint", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await updateBoundaryGrade("PCL-1001", "A", "SR-2026-104");
+    const result = await updateBoundaryGrade(
+      "PCL-1001",
+      "A",
+      "SR-2026-104",
+      "test-token-123"
+    );
 
     expect(fetchMock.mock.calls[0][0]).toBe(
       "https://api.example.test/parcels/PCL-1001/boundary-grade"
@@ -1636,6 +1709,155 @@ describe("case imagery backfill endpoints", () => {
         status: 422,
         detail: "originating alert tier must be RED",
       });
+    });
+  });
+});
+
+describe("getJurisdictions", () => {
+  it("falls back to the fixture jurisdiction tree when no backend is configured", async () => {
+    delete process.env.NEXT_PUBLIC_API_URL;
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const jurisdictions = await getJurisdictions();
+
+    expect(jurisdictions).toEqual(FIXTURE_JURISDICTIONS);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("fetches the jurisdiction tree from the backend", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const remote = [
+      { id: "state", name: "HRDA", parent_id: null },
+      { id: "dist-a", name: "Haridwar Division", parent_id: "state" },
+    ];
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => remote,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const jurisdictions = await getJurisdictions("test-token-123");
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://api.example.test/jurisdictions"
+    );
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers).toMatchObject({
+      Authorization: "Bearer test-token-123",
+    });
+    expect(jurisdictions).toEqual(remote);
+  });
+});
+
+describe("transferCase", () => {
+  it("returns a read-only message without calling fetch when no backend is configured", async () => {
+    delete process.env.NEXT_PUBLIC_API_URL;
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await transferCase("CASE-9001", "dist-b", "handover to Roorkee");
+
+    expect(result).toEqual({
+      ok: false,
+      status: 0,
+      detail: "No backend configured — fixture mode is read-only.",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("posts a transfer and returns ok:true with the auth header when a token is set", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({
+        id: "CASE-9001",
+        jurisdiction_id: "taluk-b1",
+        state: "SHOW_CAUSE_ISSUED",
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await transferCase(
+      "CASE-9001",
+      "taluk-b1",
+      "workload rebalance",
+      "test-token-123"
+    );
+
+    expect(result).toEqual({ ok: true, status: 200 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://api.example.test/cases/CASE-9001/transfer");
+    expect(init.method).toBe("POST");
+    expect(init.headers).toMatchObject({
+      "Content-Type": "application/json",
+      Authorization: "Bearer test-token-123",
+    });
+    expect(JSON.parse(init.body)).toEqual({
+      to_jurisdiction_id: "taluk-b1",
+      reason: "workload rebalance",
+    });
+  });
+
+  it("returns ok:false with the passed-through detail on an HTTP failure", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      statusText: "Bad Request",
+      json: async () => ({ detail: "unknown jurisdiction 'bogus'" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await transferCase("CASE-9001", "bogus", "typo target");
+
+    expect(result).toEqual({
+      ok: false,
+      status: 400,
+      detail: "unknown jurisdiction 'bogus'",
+    });
+  });
+
+  it("falls back to statusText when the error body has no detail", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      statusText: "Forbidden",
+      json: async () => {
+        throw new Error("not json");
+      },
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await transferCase("CASE-9001", "taluk-b1", "nope");
+
+    expect(result).toEqual({
+      ok: false,
+      status: 403,
+      detail: "Forbidden",
+    });
+  });
+
+  it("resolves to a friendly ok:false result when fetch rejects (network outage)", async () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.example.test";
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError("network down"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await transferCase("CASE-9001", "taluk-b1", "handover");
+
+    expect(result).toEqual({
+      ok: false,
+      status: 0,
+      detail: "Transfer service could not be reached. Try again.",
     });
   });
 });

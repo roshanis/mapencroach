@@ -4,6 +4,7 @@ import {
   getAlertForRequest,
   getCaseForRequest,
   getCaseImageryForRequest,
+  getJurisdictionsForRequest,
   getParcelForRequest,
   getPersonaRoleForRequest,
 } from "@/lib/server-api";
@@ -18,6 +19,7 @@ import { NoticeDraftWorkspace } from "@/components/NoticeDraftWorkspace";
 import { StateRail } from "@/components/StateRail";
 import { TierChip } from "@/components/TierChip";
 import { TopBar } from "@/components/TopBar";
+import { TransferPanel } from "@/components/TransferPanel";
 import { TransitionPanel } from "@/components/TransitionPanel";
 
 export const dynamic = "force-dynamic";
@@ -49,13 +51,20 @@ export default async function CaseDetailPage({
     notFound();
   }
 
-  const [alert, imagery, parcel, personaRole] = await Promise.all([
+  const [alert, imagery, parcel, personaRole, jurisdictions] = await Promise.all([
     getAlertForRequest(caseRecord.alert_id),
     getCaseImageryForRequest(id),
     getParcelForRequest(caseRecord.parcel_id),
     getPersonaRoleForRequest(),
+    getJurisdictionsForRequest(),
   ]);
   const canDraft = canDraftNotice({ role: personaRole, state: caseRecord.state });
+  // Mirrors canDraftNotice's undefined-means-default-case-officer-session
+  // convention: the transfer endpoint accepts CASE_OFFICER or DATA_ADMIN.
+  const canTransfer =
+    personaRole === undefined ||
+    personaRole === "case_officer" ||
+    personaRole === "data_admin";
 
   // The detail endpoint omits state_since (the list endpoint has it); the
   // last event's timestamp is the same instant by construction.
@@ -196,6 +205,14 @@ export default async function CaseDetailPage({
             caseRecord={caseRecord}
             parcel={parcel}
             alert={alert}
+          />
+        )}
+
+        {canTransfer && (
+          <TransferPanel
+            caseId={caseRecord.id}
+            currentJurisdictionId={caseRecord.jurisdiction_id}
+            jurisdictions={jurisdictions}
           />
         )}
 

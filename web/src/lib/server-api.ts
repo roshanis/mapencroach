@@ -10,6 +10,7 @@ import {
   getCase,
   getCaseImagery,
   getCases,
+  getJurisdictions,
   getParcel,
   getParcelContext,
   getParcels,
@@ -23,6 +24,7 @@ import type {
   BBox,
   Case,
   CaseImagery,
+  Jurisdiction,
   Parcel,
   ParcelContext,
   WatchEntry,
@@ -131,4 +133,9 @@ export async function getCaseImageryForRequest(
 ): Promise<CaseImagery | undefined> {
   const token = await serverToken();
   return getCaseImagery(caseId, token);
+}
+
+export async function getJurisdictionsForRequest(): Promise<Jurisdiction[]> {
+  const token = await serverToken();
+  return getJurisdictions(token);
 }
