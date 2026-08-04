@@ -47,6 +47,57 @@ class TestComputeRowHash:
         stringified = compute_row_hash({"t": str(datetime(2026, 1, 1, tzinfo=UTC))}, GENESIS_HASH)
         assert typed != stringified
 
+    def test_tag_shaped_mapping_cannot_forge_a_typed_value(self):
+        # A plain payload dict crafted to look like the canonicalizer's own
+        # type-tag wrapper must not collide with the genuinely typed value
+        # it imitates -- otherwise an editor could swap a datetime for a
+        # hand-built {"__type__": ...} dict without breaking verification.
+        stamp = datetime(2026, 1, 1, tzinfo=UTC)
+        typed = compute_row_hash({"t": stamp}, GENESIS_HASH)
+        crafted = compute_row_hash(
+            {"t": {"__type__": "datetime", "value": str(stamp)}}, GENESIS_HASH
+        )
+        assert typed != crafted
+
+    def test_forged_tag_tamper_is_detected_even_with_anchor(self):
+        # The end-to-end version of the forgery above: replacing an entry's
+        # typed payload with the crafted tag-shaped dict must fail
+        # verification even when head and length anchors both match.
+        stamp = datetime(2026, 1, 1, tzinfo=UTC)
+        chain: list = []
+        entry = append_entry(chain, {"t": stamp})
+        chain[0] = dataclasses.replace(
+            entry, payload={"t": {"__type__": "datetime", "value": str(stamp)}}
+        )
+        result = verify_chain(
+            chain, expected_head=current_head(chain), expected_length=1
+        )
+        assert result.ok is False
+        assert result.first_bad_index == 0
+
+    def test_tuple_and_list_are_deliberately_equivalent(self):
+        # Tuples normalize to their JSON list form on purpose: JSON has one
+        # sequence type, and a payload that later round-trips through JSON
+        # storage (tuple in, list out) must re-verify against the same hash.
+        # This is a documented equivalence, not an injectivity gap -- the
+        # two values are indistinguishable in every serialized output.
+        assert compute_row_hash({"v": (1, 2)}, GENESIS_HASH) == compute_row_hash(
+            {"v": [1, 2]}, GENESIS_HASH
+        )
+
+    def test_scalar_and_container_categories_are_disjoint(self):
+        # A genuine list that mimics a constructor-tagged node must not
+        # collide with the value that node would encode.
+        stamp = datetime(2026, 1, 1, tzinfo=UTC)
+        typed = compute_row_hash({"t": stamp}, GENESIS_HASH)
+        mimic = compute_row_hash(
+            {"t": ["obj", type(stamp).__name__, str(stamp)]}, GENESIS_HASH
+        )
+        assert typed != mimic
+        assert compute_row_hash({"v": "1"}, GENESIS_HASH) != compute_row_hash(
+            {"v": 1}, GENESIS_HASH
+        )
+
     def test_non_string_keys_raise_a_clear_error_instead_of_crashing(self):
         with pytest.raises(TypeError, match="must be strings"):
             compute_row_hash({1: "a", "b": "c"}, GENESIS_HASH)

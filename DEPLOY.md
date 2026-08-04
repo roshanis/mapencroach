@@ -23,20 +23,21 @@ The site already works at this point, on built-in fixture data.
 
 ## 2. Backend on Render
 
-1. Generate a real JWT secret and save it somewhere safe:
-   ```bash
-   openssl rand -hex 32
-   ```
-2. render.com → **New → Web Service** → connect `roshanis/mapencroach`
-3. **Root Directory**: `backend` — Render detects the Dockerfile automatically
-4. Instance type: **Free** is fine for a demo
-5. Environment variables:
+1. render.com → **New → Web Service** → connect `roshanis/mapencroach`
+2. **Root Directory**: `backend` — Render detects the Dockerfile automatically
+3. Instance type: **Free** is fine for a demo
+4. Environment variables:
 
    | Key | Value |
    |-----|-------|
    | `MAPENCROACH_DEMO` | `1` (seeds Haridwar–Roorkee demo data on boot) |
-   | `MAPENCROACH_JWT_SECRET` | the value from step 1 |
    | `MAPENCROACH_CORS_ORIGINS` | `https://<your-app>.vercel.app,http://localhost:3000` |
+
+   Do **not** set `MAPENCROACH_JWT_SECRET` here: demo mode always signs with
+   the published dev secret and **refuses to start** if a custom secret is
+   set alongside it (that combination usually means demo mode leaked into a
+   production config). A real deployment sets `MAPENCROACH_JWT_SECRET` and
+   drops `MAPENCROACH_DEMO` — never both.
 
 6. Deploy, then note the URL, e.g. `https://mapencroach-api.onrender.com`
 7. Sanity check — should return `401`:
@@ -51,17 +52,24 @@ transitions made through the API reset. Both are fine for demos.
 
 ## 3. Mint a long-lived demo token
 
-From `backend/` on your machine (90 days so the deployed demo doesn't expire
-mid-week; rotate by re-minting and redeploying):
+From `backend/` on your machine, **checked out at the same commit the
+backend deploy runs** (tokens carry required claims — `exp`, `iss`, `aud` —
+so a token minted from older code is rejected by a newer backend). 90 days
+so the deployed demo doesn't expire mid-week; rotate by re-minting and
+redeploying:
 
 ```bash
-MAPENCROACH_JWT_SECRET='<the-secret-from-step-2.1>' .venv/bin/python -c "
-import os
+.venv/bin/python -c "
 from datetime import datetime, timedelta, UTC
 from mapencroach.api.auth import create_token
 print(create_token('demo-officer', 'case_officer', 'state',
-      os.environ['MAPENCROACH_JWT_SECRET'], datetime.now(UTC)+timedelta(days=90)))"
+      'dev-secret-do-not-deploy', datetime.now(UTC)+timedelta(days=90)))"
 ```
+
+The dev-default signing secret is public, which is fine for this demo
+deployment by design: demo mode already exposes `POST /demo/login`, which
+mints a token for any persona with no credentials at all. Never point this
+at real data.
 
 ## 4. Point Vercel at the backend
 
@@ -106,7 +114,8 @@ ID is public configuration; the API key must never be committed to this repo.
 | Symptom | Cause |
 |---------|-------|
 | Map empty, console shows CORS errors | Vercel URL missing from `MAPENCROACH_CORS_ORIGINS` (exact match, `https://`, no trailing slash) |
-| Everything 401 | Token minted with a different secret than the Render env var, or expired |
+| Everything 401 | Token minted with a different secret than the backend signs with, minted from older code (missing `exp`/`iss`/`aud` claims), or expired |
+| Render deploy fails at startup (old build keeps serving) | `MAPENCROACH_JWT_SECRET` is set alongside `MAPENCROACH_DEMO=1` — remove the secret; demo mode refuses that combination |
 | First load takes a minute | Render free tier waking up — warm it before demos |
 | Site shows fixture data (parcels named PCL-…) | `NEXT_PUBLIC_API_URL` not set at build time — set env vars, then redeploy |
 | Everything 503 with `"backend not configured"` | `MAPENCROACH_BACKEND_URL` missing on the Vercel deployment — set it and redeploy (server-only; no `NEXT_PUBLIC_` prefix) |

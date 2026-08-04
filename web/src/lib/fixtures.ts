@@ -1054,7 +1054,13 @@ const DATA_ADMIN_CAPABILITIES = [
   "Cannot move cases through the legal chain",
 ];
 
-// Mirrors the 5 demo personas served by GET /demo/personas so the personas
+const LEGAL_OFFICER_CAPABILITIES = [
+  "Record hearings as held, issue orders, record court stays",
+  "Dismiss, refer, or close a case",
+  "Cannot upgrade boundary grades",
+];
+
+// Mirrors the 6 demo personas served by GET /demo/personas so the personas
 // page (and PersonaCard) can be exercised without a backend.
 export const FIXTURE_PERSONAS: Persona[] = [
   {
@@ -1111,6 +1117,17 @@ export const FIXTURE_PERSONAS: Persona[] = [
       "Maintains parcel records and tags across the authority; does not act on cases.",
     visible_parcels: 30,
     capabilities: DATA_ADMIN_CAPABILITIES,
+  },
+  {
+    id: "legal-hrda",
+    name: "Legal Officer, HRDA",
+    role: "legal_officer",
+    jurisdiction_id: "state",
+    jurisdiction_name: "Haridwar–Roorkee Development Authority",
+    description:
+      "Holds legal authority across the whole Haridwar–Roorkee authority. Alone can record a hearing as held, issue an order, record a court stay, or end a case (dismissal, legacy referral, or closure).",
+    visible_parcels: 30,
+    capabilities: LEGAL_OFFICER_CAPABILITIES,
   },
 ];
 

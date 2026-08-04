@@ -155,6 +155,15 @@ _DEMO_PERSONAS: list[dict[str, str]] = [
         "description": "Manages parcel records and tags authority-wide, but "
         "cannot move a case through the legal chain.",
     },
+    {
+        "id": "legal-hrda",
+        "name": "Legal Officer, HRDA",
+        "role": "legal_officer",
+        "jurisdiction_id": "state",
+        "description": "Holds legal authority across the whole Haridwar-Roorkee "
+        "authority. Alone can record a hearing as held, issue an order, record "
+        "a court stay, or end a case (dismissal, legacy referral, or closure).",
+    },
 ]
 
 
@@ -178,6 +187,11 @@ _ROLE_CAPABILITIES: dict[str, list[str]] = {
     "data_admin": [
         "Manage parcel records and tags in scope",
         "Cannot move cases through the legal chain",
+    ],
+    "legal_officer": [
+        "Record hearings as held, issue orders, record court stays",
+        "Dismiss, refer, or close a case",
+        "Cannot upgrade boundary grades",
     ],
 }
 
@@ -934,6 +948,19 @@ def create_app(store: Store | None = None) -> FastAPI:
                 detail=f"unknown case state {body.to_state!r}",
             ) from exc
 
+        # Sequence check first: an illegal jump reports the engine's own
+        # 409 wording, not a 403 -- attempting an out-of-order move is a
+        # process error, not a permissions problem, even for a role that
+        # otherwise lacks legal authority over the destination state (the
+        # demo script's signature refusal depends on this ordering).
+        if to_state not in allowed_transitions(record.case):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(InvalidTransition(record.case.state, to_state)),
+            )
+
+        # Only once the move is confirmed legal do we ask whether *this*
+        # caller is allowed to make it.
         if to_state in _LEGAL_AUTHORITY_STATES and user.role not in (
             Role.LEGAL_OFFICER,
             Role.SYSTEM_ADMIN,

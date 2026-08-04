@@ -102,11 +102,23 @@ from types import MappingProxyType
 from typing import Any
 
 from mapencroach.api.store import Store, WatchEntryRecord
-from mapencroach.audit.chain import AuditEntry, verify_chain
+from mapencroach.audit.chain import (
+    AuditEntry,
+    rehash_chain,
+    verify_chain,
+    verify_legacy_chain,
+)
 from mapencroach.imagery.capture import CaptureAttempt, CaptureStatus
 from mapencroach.imagery.registry import SceneRecord
 
-_STATE_VERSION = 1
+# Version 2: audit row hashes use the injective constructor-tagged
+# canonicalization (see mapencroach.audit.chain). Version-1 files are
+# verified under the retired encoding they were written with, then
+# migrated in memory; the next save writes version 2. Migration changes
+# the chain's head hash, so any externally recorded head anchor must be
+# re-captured after upgrading.
+_STATE_VERSION = 2
+_LEGACY_STATE_VERSION = 1
 _DEFAULT_STATE_PATH = "data/state.json"
 
 
@@ -324,18 +336,41 @@ class StatePersister:
             }
             scene_records = [_scene_record_from_json(raw) for raw in payload["scene_records"]]
             audit_chain = [_audit_entry_from_json(raw) for raw in payload["audit_chain"]]
+            version = payload.get("version")
         except Exception as exc:
             raise StateCorruptionError(
                 f"state file {self.path} is corrupt or unreadable: {exc}"
             ) from exc
 
-        verification = verify_chain(audit_chain)
-        if not verification.ok:
+        if version == _LEGACY_STATE_VERSION:
+            # Written before the constructor-tagged hash encoding: verify
+            # under the encoding the file was actually written with, then
+            # migrate. Rehashing an unverified chain would launder
+            # tampering, so the order here is load -> verify -> rehash.
+            legacy_verification = verify_legacy_chain(audit_chain)
+            if not legacy_verification.ok:
+                raise StateCorruptionError(
+                    f"state file {self.path} (version 1) audit chain failed "
+                    f"verification at index {legacy_verification.first_bad_index} "
+                    "-- entries do not hash-chain consistently under the "
+                    "version-1 encoding (tampered or corrupted on disk); "
+                    "refusing to load"
+                )
+            audit_chain = rehash_chain(audit_chain)
+        elif version == _STATE_VERSION:
+            verification = verify_chain(audit_chain)
+            if not verification.ok:
+                raise StateCorruptionError(
+                    f"state file {self.path} audit chain failed verification at "
+                    f"index {verification.first_bad_index} -- entries do not "
+                    "hash-chain consistently (tampered or corrupted on disk); "
+                    "refusing to load"
+                )
+        else:
             raise StateCorruptionError(
-                f"state file {self.path} audit chain failed verification at "
-                f"index {verification.first_bad_index} -- entries do not "
-                "hash-chain consistently (tampered or corrupted on disk); "
-                "refusing to load"
+                f"state file {self.path} has unsupported version {version!r}; "
+                f"this build reads versions {_LEGACY_STATE_VERSION} and "
+                f"{_STATE_VERSION}. Refusing to guess at an unknown format."
             )
 
         return PersistedState(
