@@ -47,6 +47,25 @@ def cell_boundary_geojson(cell: str) -> dict[str, Any]:
     return {"type": "Polygon", "coordinates": [ring]}
 
 
+def is_valid_cell(cell: str) -> bool:
+    """Whether the string is a real H3 cell id (never raises)."""
+    try:
+        return h3.is_valid_cell(cell)
+    except (ValueError, TypeError):
+        return False
+
+
+def cell_center(cell: str) -> tuple[float, float]:
+    """The cell center as (lng, lat) — GeoJSON axis order."""
+    lat, lng = h3.cell_to_latlng(cell)
+    return (lng, lat)
+
+
+def cell_resolution(cell: str) -> int:
+    """The resolution encoded in a cell id."""
+    return h3.get_resolution(cell)
+
+
 def neighbors(cell: str, k: int = 1) -> frozenset[str]:
     """The cell plus its k-ring neighborhood (for smoothing / adjacency)."""
     return frozenset(h3.grid_disk(cell, k))

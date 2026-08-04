@@ -15,6 +15,7 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -86,6 +87,27 @@ class ParcelTag(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     parcel_id: Mapped[str] = mapped_column(ForeignKey("parcel.id"), nullable=False)
     tag: Mapped[str] = mapped_column(String(40), nullable=False)
+
+
+class ParcelH3(Base):
+    """H3 cells covering a parcel, per resolution — the portable spatial index.
+
+    A cell id is just a string, so cell-window lookups ("parcels in this
+    hex") cost one indexed equality query on SQLite and PostGIS alike.
+    Derived data: rebuilt from parcel geometry at any time; the geometry
+    stays the legal authority.
+    """
+
+    __tablename__ = "parcel_h3"
+    __table_args__ = (
+        UniqueConstraint("parcel_id", "resolution", "cell", name="uq_parcel_h3"),
+        Index("ix_parcel_h3_res_cell", "resolution", "cell"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    parcel_id: Mapped[str] = mapped_column(ForeignKey("parcel.id"), nullable=False)
+    resolution: Mapped[int] = mapped_column(Integer, nullable=False)
+    cell: Mapped[str] = mapped_column(String(16), nullable=False)
 
 
 class ParcelContextSnapshot(Base):

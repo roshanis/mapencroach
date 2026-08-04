@@ -95,6 +95,7 @@ class Store:
 
     def __post_init__(self) -> None:
         self._tree: JurisdictionTree | None = None
+        self._h3_index: dict[int, dict[str, set[str]]] = {}
         if self.jurisdiction_rows:
             self._tree = JurisdictionTree(self.jurisdiction_rows)
 
@@ -158,6 +159,27 @@ class Store:
             return None
         tags.remove(tag)
         return parcel
+
+    def parcel_h3_index(self, resolution: int) -> dict[str, set[str]]:
+        """cell id -> parcel ids at `resolution`, built lazily from geometry.
+
+        Derived data (the geometry is the legal authority); rebuilt with
+        `reindex_parcels_h3` after bulk parcel loads.
+        """
+        cached = self._h3_index.get(resolution)
+        if cached is None:
+            cached = self.reindex_parcels_h3(resolution)
+        return cached
+
+    def reindex_parcels_h3(self, resolution: int) -> dict[str, set[str]]:
+        from mapencroach.spatial.h3grid import cells_for_geometry
+
+        index: dict[str, set[str]] = {}
+        for parcel_id, parcel in self.parcels.items():
+            for cell in cells_for_geometry(parcel["geometry"], resolution):
+                index.setdefault(cell, set()).add(parcel_id)
+        self._h3_index[resolution] = index
+        return index
 
     def save_alert(self, alert: dict[str, Any]) -> None:
         self.alerts[alert["id"]] = alert

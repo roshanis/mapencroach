@@ -284,11 +284,32 @@ def create_app(store: Store | None = None) -> FastAPI:
     # ------------------------------------------------------------------
 
     @app.get("/parcels")
-    def list_parcels(store: StoreDep, user: CurrentUser) -> dict[str, Any]:
+    def list_parcels(
+        store: StoreDep,
+        user: CurrentUser,
+        h3_cell: str | None = Query(default=None),
+    ) -> dict[str, Any]:
+        """All parcels in scope, optionally restricted to one H3 cell.
+
+        ?h3_cell=<cell id> answers "what parcels are under this hexagon"
+        via the parcel_h3 index (the cell id encodes its own resolution)
+        — the fast map-window lookup that stays O(cell) at 100k parcels.
+        """
         scope = _user_scope(store, user)
+        parcels = store.parcels
+        if h3_cell is not None:
+            from mapencroach.spatial.h3grid import cell_resolution, is_valid_cell
+
+            if not is_valid_cell(h3_cell):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail="h3_cell is not a valid H3 cell id",
+                )
+            ids = store.parcel_h3_index(cell_resolution(h3_cell)).get(h3_cell, set())
+            parcels = {pid: parcels[pid] for pid in sorted(ids) if pid in parcels}
         features = [
             _parcel_to_feature(p)
-            for p in store.parcels.values()
+            for p in parcels.values()
             if p["jurisdiction_id"] in scope
         ]
         return {"type": "FeatureCollection", "features": features}
@@ -891,6 +912,82 @@ def create_app(store: Store | None = None) -> FastAPI:
         ]
         cells.sort(key=lambda c: (-c["alert_count"], c["cell"]))
         return {"resolution": resolution, "cells": cells}
+
+    @app.get("/analytics/coverage")
+    def imagery_coverage(
+        store: StoreDep,
+        user: CurrentUser,
+        resolution: int = Query(default=8, ge=5, le=11),
+        month: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
+        max_cloud_pct: float = Query(default=10.0, ge=0.0, le=100.0),
+    ) -> dict[str, Any]:
+        """Which hexes over the caller's parcels lack a cloud-free capture.
+
+        The monitoring-gap rollup: every H3 cell that touches a scoped
+        parcel, marked covered only when a qualifying scene's STAC
+        footprint contains the cell center — captured in `month`
+        (YYYY-MM, all time when omitted) with cloud cover at or below
+        `max_cloud_pct`. A scene without a footprint bbox proves
+        nothing, so it never covers a cell: absence of evidence is
+        absence of coverage. Uncovered cells come back with boundaries,
+        gappiest (most parcels unmonitored) first — the tasking list
+        for the next USAC programming request.
+        """
+        from mapencroach.spatial.h3grid import cell_boundary_geojson, cell_center
+
+        scope = _user_scope(store, user)
+        scoped_ids = {
+            pid for pid, p in store.parcels.items() if p["jurisdiction_id"] in scope
+        }
+        index = store.parcel_h3_index(resolution)
+        cell_parcels = {
+            cell: ids & scoped_ids
+            for cell, ids in index.items()
+            if ids & scoped_ids
+        }
+
+        footprints: list[tuple[float, float, float, float]] = []
+        for scene in store.scenes.values():
+            bbox = (scene.get("stac_item") or {}).get("bbox")
+            if bbox is None or len(bbox) != 4:
+                continue
+            cloud = scene.get("cloud_pct")
+            if cloud is None or cloud > max_cloud_pct:
+                continue
+            if month is not None and not str(scene["captured_at"]).startswith(month):
+                continue
+            footprints.append(tuple(bbox))
+
+        covered: list[str] = []
+        uncovered: list[dict[str, Any]] = []
+        for cell in sorted(cell_parcels):
+            lng, lat = cell_center(cell)
+            if any(
+                minx <= lng <= maxx and miny <= lat <= maxy
+                for minx, miny, maxx, maxy in footprints
+            ):
+                covered.append(cell)
+            else:
+                uncovered.append(
+                    {
+                        "cell": cell,
+                        "parcel_count": len(cell_parcels[cell]),
+                        "boundary": cell_boundary_geojson(cell),
+                    }
+                )
+        uncovered.sort(key=lambda c: (-c["parcel_count"], c["cell"]))
+
+        total = len(cell_parcels)
+        return {
+            "resolution": resolution,
+            "month": month,
+            "max_cloud_pct": max_cloud_pct,
+            "scenes_considered": len(footprints),
+            "total_cells": total,
+            "covered_cells": covered,
+            "uncovered": uncovered,
+            "coverage_pct": round(100.0 * len(covered) / total, 1) if total else 0.0,
+        }
 
     # ------------------------------------------------------------------
     # Cases

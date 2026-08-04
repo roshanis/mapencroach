@@ -101,12 +101,21 @@ The satellite side of the platform lives in three backend packages:
   intersection, ELU/PLU mismatch, right-of-way breach, water proximity).
   `POST /parcels/{id}/surveys` records DGPS/ETS results and promotes the
   boundary grade — surveys only ever improve the map.
+- **`spatial/h3grid.py`** — Uber H3 hexagonal analytics.
+  `GET /analytics/hotspots` aggregates visible alerts onto the hex grid
+  (the collector-dashboard heat view); `GET /analytics/coverage` reports
+  which hexes over your parcels lack a cloud-free capture for a month
+  (the tasking list for the next USAC programming request);
+  `GET /parcels?h3_cell=…` looks parcels up by hexagon via the
+  `parcel_h3` index table. Cell ids are plain strings, so all of it runs
+  identically on SQLite and PostGIS; the parcel geometry remains the
+  legal authority.
 
 ## Tests
 
 ```bash
-cd backend && .venv/bin/pytest --cov && .venv/bin/ruff check .   # 455 tests
-cd web && npm test && npm run build                              # 213 tests
+cd backend && .venv/bin/pytest --cov && .venv/bin/ruff check .   # 568 tests
+cd web && npm test && npm run build                              # 216 tests
 ```
 
 ## Full dev stack (PostGIS, Keycloak, MinIO, TiTiler)

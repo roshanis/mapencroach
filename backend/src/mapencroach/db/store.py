@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import Any
 
-from sqlalchemy import Engine, create_engine, select
+from sqlalchemy import Engine, create_engine, delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from mapencroach.api.store import JURISDICTION_NAMES, CaseRecord, Store
@@ -316,6 +316,46 @@ class DatabaseStore:
             session.delete(existing)
             session.commit()
             return self._parcel_dict(session, row)
+
+    def parcel_h3_index(self, resolution: int) -> dict[str, set[str]]:
+        """cell id -> parcel ids at `resolution`, from the parcel_h3 table.
+
+        Lazily materialized: the first call at a resolution computes the
+        cells from parcel geometry and persists them, so subsequent
+        lookups are indexed equality queries. Derived data — the parcel
+        geometry remains the legal authority; `reindex_parcels_h3`
+        rebuilds after bulk parcel loads.
+        """
+        with self._session_factory() as session:
+            rows = session.execute(
+                select(models.ParcelH3.cell, models.ParcelH3.parcel_id).where(
+                    models.ParcelH3.resolution == resolution
+                )
+            ).all()
+        if not rows and self.parcels:
+            return self.reindex_parcels_h3(resolution)
+        index: dict[str, set[str]] = {}
+        for cell, parcel_id in rows:
+            index.setdefault(cell, set()).add(parcel_id)
+        return index
+
+    def reindex_parcels_h3(self, resolution: int) -> dict[str, set[str]]:
+        from mapencroach.spatial.h3grid import cells_for_geometry
+
+        index: dict[str, set[str]] = {}
+        with self._session_factory() as session:
+            session.execute(
+                delete(models.ParcelH3).where(models.ParcelH3.resolution == resolution)
+            )
+            parcel_rows = session.execute(select(models.Parcel)).scalars().all()
+            for row in parcel_rows:
+                for cell in sorted(cells_for_geometry(row.geometry, resolution)):
+                    session.add(
+                        models.ParcelH3(parcel_id=row.id, resolution=resolution, cell=cell)
+                    )
+                    index.setdefault(cell, set()).add(row.id)
+            session.commit()
+        return index
 
     def context_for_parcel(self, parcel_id: str) -> ParcelContext:
         with self._session_factory() as session:
