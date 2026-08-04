@@ -74,6 +74,16 @@ from mapencroach.domain.case_engine import (
     required_artifacts_for,
     transition,
 )
+from mapencroach.hexgrid.grid import (
+    ALERT_DEDUP_RES,
+    PARCEL_INDEX_RES,
+    CellBudgetExceeded,
+    cell_parent,
+    cells_geojson,
+    compact,
+    interior_cell,
+    polygon_cells,
+)
 from mapencroach.imagery.capture import CaptureAttempt, CaptureStatus, capture_week
 from mapencroach.imagery.registry import DuplicateScene, SceneRecord
 from mapencroach.imagery.schedule import WeekRef, due_weeks, weeks_from
@@ -830,9 +840,74 @@ def create_app(
                 "expires_in_hours": _DEMO_TOKEN_HOURS,
             }
 
+    @app.get("/parcels/{parcel_id}/h3")
+    def parcel_h3(
+        parcel_id: str,
+        store: StoreDep,
+        user: CurrentUser,
+        res: Annotated[int, Query(ge=7, le=15)] = PARCEL_INDEX_RES,
+    ) -> dict[str, Any]:
+        """H3 cell cover of a parcel — an index/display layer, never the
+        legal boundary (that stays the exact parcel geometry)."""
+        parcel = store.parcels.get(parcel_id)
+        scope = _user_scope(store, user)
+        if parcel is None or parcel["jurisdiction_id"] not in scope:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="parcel not found")
+        try:
+            cells = sorted(polygon_cells(parcel["geometry"], res))
+        except CellBudgetExceeded as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+            ) from exc
+        return {
+            "parcel_id": parcel_id,
+            "resolution": res,
+            "count": len(cells),
+            "cells": cells,
+            "compact_cells": sorted(compact(cells)),
+            "geojson": cells_geojson(cells),
+        }
+
     # ------------------------------------------------------------------
     # Alerts
     # ------------------------------------------------------------------
+
+    @app.get("/alerts/h3-summary")
+    def alerts_h3_summary(
+        store: StoreDep,
+        user: CurrentUser,
+        res: Annotated[int, Query(ge=5, le=ALERT_DEDUP_RES)] = 9,
+        status_filter: str | None = Query(default=None, alias="status"),
+    ) -> dict[str, Any]:
+        """In-scope alert density rolled up to H3 cells for dashboard
+        heatmaps: res 9 reads well at village zoom, res 7 at taluk zoom.
+
+        Each alert keys to its parcel's res-12 dedup cell, then rolls up
+        to the requested resolution, so distinct alerts sharing a res-12
+        cell (same probable encroachment) still count separately here —
+        the rollup is alert volume, not deduped encroachment count.
+        """
+        scope = _user_scope(store, user)
+        total = 0
+        rows: dict[str, dict[str, Any]] = {}
+        for alert in store.alerts.values():
+            parcel = store.parcels.get(alert["parcel_id"])
+            if parcel is None or parcel["jurisdiction_id"] not in scope:
+                continue
+            if status_filter is not None and alert["status"] != status_filter:
+                continue
+            cell = alert.get("h3_cell") or interior_cell(parcel["geometry"], ALERT_DEDUP_RES)
+            parent = cell_parent(cell, res)
+            row = rows.setdefault(parent, {"count": 0, "max_severity": 0.0})
+            row["count"] += 1
+            row["max_severity"] = max(row["max_severity"], float(alert["severity_score"]))
+            total += 1
+        return {
+            "resolution": res,
+            "total_alerts": total,
+            "cells": [{"cell": cell, **props} for cell, props in sorted(rows.items())],
+            "geojson": cells_geojson(rows),
+        }
 
     @app.get("/alerts")
     def list_alerts(
@@ -881,6 +956,9 @@ def create_app(
             "area_m2": body.area_m2,
             "status": "OPEN",
             "detected_at": body.detected_at.isoformat(),
+            # Spatial dedup key: two detections in the same ~20m res-12
+            # cell are almost certainly the same encroachment.
+            "h3_cell": interior_cell(parcel["geometry"], ALERT_DEDUP_RES),
         }
         with store.lock:
             store.alerts[alert_id] = alert

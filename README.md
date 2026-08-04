@@ -68,6 +68,24 @@ only enters the hash-on-ingest registry once its bytes are downloaded
 and sha256-hashed (`mapencroach.imagery.stac_search.ingest_candidate`).
 Point at a different STAC catalog with `MAPENCROACH_STAC_URL`.
 
+## H3 spatial index (Uber H3)
+
+H3 hexagons are an analytical/index layer only — the exact parcel geometry
+remains the legal authority for every case decision. Resolutions are matched
+to Indian parcel sizes:
+
+```
+GET /parcels/{id}/h3?res=13      cell cover of a parcel (res 13 ≈ 44 m² cells)
+GET /alerts/h3-summary?res=9     in-scope alert density for dashboard heatmaps
+```
+
+Created alerts carry an `h3_cell` (res 12, ~20 m across): two detections in
+the same cell are almost certainly the same encroachment, making it a natural
+spatial dedup key. Rollups use the H3 hierarchy, so fine cells aggregate to
+village (res 9) or taluk (res 7) views for free. The console's existing H3
+grid control (`web/src/lib/h3-grid.ts`) renders the same cell scheme
+client-side.
+
 ## Tests
 
 ```bash
@@ -173,6 +191,7 @@ See [DEPLOY.md](DEPLOY.md) — console on Vercel, API on Render (demo data only)
 | `backend/src/mapencroach/domain/` | Jurisdiction tree (row-level scoping), case state machine (due process encoded), alert severity |
 | `backend/src/mapencroach/cadastral/` | Topology QA + file ingestion (accept / quarantine / reject) |
 | `backend/src/mapencroach/audit/` | Tamper-evident hash chain |
+| `backend/src/mapencroach/hexgrid/` | Uber H3 indexing: parcel cell covers, alert dedup keys, density rollups |
 | `backend/src/mapencroach/imagery/` | Hash-on-ingest scene registry (STAC), ISO-week capture scheduling, Sentinel-2 / demo providers |
 | `backend/src/mapencroach/api/` | FastAPI: JWT auth, RBAC, jurisdiction-scoped endpoints |
 | `web/` | Next.js console with Google Maps and a MapLibre fallback |
