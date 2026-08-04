@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FIXTURE_ALERTS, FIXTURE_PARCELS } from "@/lib/fixtures";
 import GoogleMap from "./GoogleMap";
+import type { H3FeatureCollection } from "./map-types";
 
 const loaderMocks = vi.hoisted(() => ({
   setOptions: vi.fn(),
@@ -12,6 +13,14 @@ vi.mock("@googlemaps/js-api-loader", () => loaderMocks);
 
 class FakeLatLngBounds {
   extend = vi.fn().mockReturnThis();
+}
+
+class FakeData {
+  addGeoJson = vi.fn();
+  setStyle = vi.fn();
+  setMap = vi.fn();
+  forEach = vi.fn();
+  remove = vi.fn();
 }
 
 afterEach(() => {
@@ -33,6 +42,7 @@ describe("GoogleMap", () => {
 
     vi.stubGlobal("google", {
       maps: {
+        Data: FakeData,
         LatLngBounds: class extends FakeLatLngBounds {
           constructor() {
             super();
@@ -185,6 +195,7 @@ describe("GoogleMap", () => {
 
     vi.stubGlobal("google", {
       maps: {
+        Data: FakeData,
         LatLngBounds: FakeLatLngBounds,
       },
     });
@@ -250,5 +261,200 @@ describe("GoogleMap", () => {
       expect.any(HTMLElement),
       expect.objectContaining({ mapTypeId: "roadmap" })
     );
+  });
+
+  it("renders H3 cells on a separate layer and updates its data and visibility without remounting", async () => {
+    const mapConstructor = vi.fn();
+    const parcelAddGeoJson = vi.fn();
+    const parcelSetStyle = vi.fn();
+    const h3AddGeoJson = vi.fn();
+    const h3SetStyle = vi.fn();
+    const h3SetMap = vi.fn();
+    const h3Remove = vi.fn();
+    const dataConstructor = vi.fn();
+
+    const firstCells: H3FeatureCollection = {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "Polygon",
+            coordinates: [
+              [
+                [78.0, 29.9],
+                [78.01, 29.9],
+                [78.01, 29.91],
+                [78.0, 29.91],
+                [78.0, 29.9],
+              ],
+            ],
+          },
+          properties: {
+            h3Index: "8b3da2192948fff",
+            resolution: 11,
+            parcelIds: [FIXTURE_PARCELS[0].id],
+          },
+        },
+      ],
+    };
+    const replacementCells: H3FeatureCollection = {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "Polygon",
+            coordinates: [
+              [
+                [78.02, 29.92],
+                [78.03, 29.92],
+                [78.03, 29.93],
+                [78.02, 29.93],
+                [78.02, 29.92],
+              ],
+            ],
+          },
+          properties: {
+            h3Index: "8b3da2192949fff",
+            resolution: 10,
+            parcelIds: [FIXTURE_PARCELS[1].id],
+          },
+        },
+      ],
+    };
+
+    class FakeData {
+      features: unknown[] = [];
+
+      constructor() {
+        dataConstructor();
+      }
+
+      addGeoJson(collection: H3FeatureCollection) {
+        h3AddGeoJson(collection);
+        const added = collection.features.map((feature) => ({ feature }));
+        this.features.push(...added);
+        return added;
+      }
+
+      setStyle(style: google.maps.Data.StylingFunction | google.maps.Data.StyleOptions) {
+        h3SetStyle(style);
+      }
+
+      setMap(map: google.maps.Map | null) {
+        h3SetMap(map);
+      }
+
+      forEach(callback: (feature: unknown) => void) {
+        [...this.features].forEach(callback);
+      }
+
+      remove(feature: unknown) {
+        h3Remove(feature);
+        this.features = this.features.filter((candidate) => candidate !== feature);
+      }
+    }
+
+    vi.stubGlobal("google", {
+      maps: {
+        Data: FakeData,
+        LatLngBounds: FakeLatLngBounds,
+      },
+    });
+
+    class FakeMap {
+      data = { addGeoJson: parcelAddGeoJson, setStyle: parcelSetStyle };
+      setMapTypeId = vi.fn();
+      panTo = vi.fn();
+      setZoom = vi.fn();
+      fitBounds = vi.fn();
+
+      constructor(container: HTMLElement, options: google.maps.MapOptions) {
+        mapConstructor(container, options);
+      }
+    }
+
+    class FakeAdvancedMarkerElement {
+      map: unknown;
+
+      constructor(options: google.maps.marker.AdvancedMarkerElementOptions) {
+        this.map = options.map;
+      }
+    }
+
+    loaderMocks.importLibrary.mockImplementation(async (library: string) => {
+      if (library === "maps") return { Map: FakeMap };
+      if (library === "marker") {
+        return { AdvancedMarkerElement: FakeAdvancedMarkerElement };
+      }
+      throw new Error(`Unexpected library: ${library}`);
+    });
+
+    const baseProps = {
+      apiKey: "restricted-browser-key",
+      mapId: "map-id",
+      parcels: FIXTURE_PARCELS.slice(0, 2),
+      alerts: [],
+      onProviderError: vi.fn(),
+    };
+    const { rerender, unmount } = render(
+      <GoogleMap
+        {...baseProps}
+        h3Cells={firstCells}
+        h3Visible
+      />
+    );
+
+    await waitFor(() => expect(dataConstructor).toHaveBeenCalledOnce());
+
+    expect(mapConstructor).toHaveBeenCalledOnce();
+    expect(parcelAddGeoJson).toHaveBeenCalledOnce();
+    expect(h3AddGeoJson).toHaveBeenCalledWith(firstCells);
+    expect(h3SetStyle).toHaveBeenCalledWith({
+      clickable: false,
+      fillColor: "#06b6d4",
+      fillOpacity: 0.14,
+      strokeColor: "#0891b2",
+      strokeOpacity: 0.9,
+      strokeWeight: 1.5,
+      zIndex: 1,
+    });
+    expect(h3SetMap).toHaveBeenLastCalledWith(expect.any(FakeMap));
+
+    rerender(
+      <GoogleMap
+        {...baseProps}
+        h3Cells={firstCells}
+        h3Visible={false}
+      />
+    );
+    expect(h3SetMap).toHaveBeenLastCalledWith(null);
+    expect(h3AddGeoJson).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <GoogleMap
+        {...baseProps}
+        h3Cells={replacementCells}
+        h3Visible={false}
+      />
+    );
+    expect(h3Remove).toHaveBeenCalledOnce();
+    expect(h3AddGeoJson).toHaveBeenLastCalledWith(replacementCells);
+    expect(dataConstructor).toHaveBeenCalledOnce();
+    expect(mapConstructor).toHaveBeenCalledOnce();
+
+    rerender(
+      <GoogleMap
+        {...baseProps}
+        h3Cells={replacementCells}
+        h3Visible
+      />
+    );
+    expect(h3SetMap).toHaveBeenLastCalledWith(expect.any(FakeMap));
+    expect(h3AddGeoJson).toHaveBeenCalledTimes(2);
+
+    unmount();
+    expect(h3SetMap).toHaveBeenLastCalledWith(null);
   });
 });
