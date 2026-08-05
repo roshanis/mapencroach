@@ -1,66 +1,88 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { FIXTURE_PARCELS } from "@/lib/fixtures";
-import {
-  LATEST_MAX_OFFSET_DAYS,
-  LATEST_START_OFFSET_DAYS,
-} from "@/lib/latest-imagery";
+import { monthlyScenes } from "@/lib/latest-imagery";
 import { HistoricalImageryTimeline } from "./HistoricalImageryTimeline";
 
+// The component builds its scenes from the real clock; derive expectations the
+// same way so the suite stays green as months roll over.
+const SCENES = monthlyScenes();
+const YEAR = SCENES[0].startDate.slice(0, 4);
+const FIRST_MONTH = SCENES[0];
+
+function latestImage() {
+  return screen.getByRole("img", {
+    name: /Latest .* HLS Sentinel-2 true-color snapshot/i,
+  });
+}
+
 describe("HistoricalImageryTimeline", () => {
-  it("defaults to the Latest scene and keeps the historical years available", () => {
+  it("offers only current-year monthly snapshots plus Latest, defaulting to Latest", () => {
     render(<HistoricalImageryTimeline parcel={FIXTURE_PARCELS[0]} />);
 
     expect(
       screen.getByRole("heading", { name: "Imagery Timeline" })
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /1985/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /1990/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /2000/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /2010/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Latest/ })).toHaveAttribute(
+    expect(
+      screen.getByText(new RegExp(`Monthly ${YEAR} true-color snapshots`))
+    ).toBeInTheDocument();
+
+    // no archival years anywhere
+    for (const year of ["1985", "1990", "2000", "2010"]) {
+      expect(
+        screen.queryByRole("button", { name: new RegExp(year) })
+      ).not.toBeInTheDocument();
+    }
+
+    const monthGroup = screen.getByRole("group", { name: "Imagery month" });
+    expect(monthGroup).toBeInTheDocument();
+    for (const scene of SCENES) {
+      expect(
+        screen.getByRole("button", { name: scene.label })
+      ).toBeInTheDocument();
+    }
+    expect(screen.getByRole("button", { name: "Latest" })).toHaveAttribute(
       "aria-pressed",
       "true"
     );
+
+    const src = decodeURIComponent(latestImage().getAttribute("src") ?? "");
+    expect(src).toContain("gibs.earthdata.nasa.gov");
+    expect(src).toContain("HLS_S30_Nadir_BRDF_Adjusted_Reflectance");
+    expect(src).toContain(`TIME=${SCENES[SCENES.length - 1].endDate}`);
+  });
+
+  it("switching to a month requests that month's window end date", () => {
+    render(<HistoricalImageryTimeline parcel={FIXTURE_PARCELS[0]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: FIRST_MONTH.label }));
+
     const image = screen.getByRole("img", {
-      name: /Latest HLS Sentinel-2 true-color historical context/i,
+      name: new RegExp(
+        `${FIRST_MONTH.label} ${YEAR} HLS Sentinel-2 true-color snapshot`,
+        "i"
+      ),
     });
-    expect(image).toHaveAttribute(
-      "src",
-      expect.stringContaining("gibs.earthdata.nasa.gov")
-    );
-    expect(image).toHaveAttribute(
-      "src",
-      expect.stringContaining("HLS_S30_Nadir_BRDF_Adjusted_Reflectance")
-    );
-    // requests a current date, not an archival one
-    const currentYear = new Date().getFullYear().toString();
     expect(decodeURIComponent(image.getAttribute("src") ?? "")).toContain(
-      `TIME=${currentYear}`
+      `TIME=${FIRST_MONTH.endDate}`
     );
-  });
-
-  it("keeps the 2010 MODIS scene reachable from the year switcher", () => {
-    render(<HistoricalImageryTimeline parcel={FIXTURE_PARCELS[0]} />);
-
-    fireEvent.click(screen.getByRole("button", { name: /2010/ }));
-
     expect(
-      screen.getByRole("img", {
-        name: /2010 MODIS Terra true-color historical context/i,
-      })
-    ).toHaveAttribute("src", expect.stringContaining("gibs.earthdata.nasa.gov"));
-    expect(screen.getByText("2010-10-15 observation")).toBeInTheDocument();
+      screen.getByText(`searching back from ${FIRST_MONTH.endDate}…`)
+    ).toBeInTheDocument();
   });
 
-  it("steps the Latest search one day back per failed load, then reports a coverage gap", () => {
+  it("steps a month's search day by day and reports a coverage gap at the window start", () => {
     render(<HistoricalImageryTimeline parcel={FIXTURE_PARCELS[0]} />);
+    fireEvent.click(screen.getByRole("button", { name: FIRST_MONTH.label }));
 
+    const daysInWindow =
+      Number(FIRST_MONTH.endDate.slice(8, 10)) -
+      Number(FIRST_MONTH.startDate.slice(8, 10)) +
+      1;
     const requestedTimes = new Set<string>();
-    // walk from the start offset past the max lookback
-    for (let attempt = 0; attempt <= LATEST_MAX_OFFSET_DAYS; attempt += 1) {
+    for (let attempt = 0; attempt <= daysInWindow; attempt += 1) {
       const image = screen.queryByRole("img", {
-        name: /Latest HLS Sentinel-2 true-color historical context/i,
+        name: /HLS Sentinel-2 true-color snapshot/i,
       });
       if (!image) break;
       const time = /TIME=([0-9-]+)/.exec(
@@ -70,102 +92,64 @@ describe("HistoricalImageryTimeline", () => {
       fireEvent.error(image);
     }
 
-    // each retry asked GIBS for a different (earlier) date
-    expect(requestedTimes.size).toBe(
-      LATEST_MAX_OFFSET_DAYS - LATEST_START_OFFSET_DAYS + 1
-    );
-    expect(screen.getByText(/No recent clear pass/i)).toBeInTheDocument();
+    expect(requestedTimes.size).toBe(daysInWindow);
+    expect(screen.getByText(/No clear pass/)).toBeInTheDocument();
     expect(
-      screen.getByText(/No usable Harmonized Landsat Sentinel-2 pass/i)
+      screen.getByText(
+        new RegExp(
+          `between ${FIRST_MONTH.startDate} and ${FIRST_MONTH.endDate}`
+        )
+      )
     ).toBeInTheDocument();
   });
 
-  it("accepts a Latest image whose pixels cannot be verified (no canvas in jsdom)", async () => {
+  it("accepts an image whose pixels cannot be verified and shows its capture date", async () => {
     render(<HistoricalImageryTimeline parcel={FIXTURE_PARCELS[0]} />);
 
-    const image = screen.getByRole("img", {
-      name: /Latest HLS Sentinel-2 true-color historical context/i,
-    });
-    fireEvent.load(image);
+    fireEvent.load(latestImage());
 
     // next/image resolves the user onLoad asynchronously (img.decode())
     await waitFor(() =>
       expect(screen.queryByRole("status")).not.toBeInTheDocument()
     );
-    expect(screen.getByText(/observation$/)).toBeInTheDocument();
-  });
-
-  it("switches scenes and explains source, resolution, and evidentiary limits", () => {
-    render(<HistoricalImageryTimeline parcel={FIXTURE_PARCELS[0]} />);
-
-    fireEvent.click(screen.getByRole("button", { name: /2000/ }));
-
     expect(
-      screen.getByRole("img", {
-        name: /2000 Landsat WELD true-color historical context/i,
-      })
+      screen.getByText(
+        `${SCENES[SCENES.length - 1].endDate} observation`
+      )
     ).toBeInTheDocument();
-    expect(screen.getByText("30 m annual composite")).toBeInTheDocument();
-    expect(screen.getByText(/NASA GIBS · Landsat WELD/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Harmonized Landsat Sentinel-2/)
+    ).toBeInTheDocument();
     expect(
       screen.getByText(/Planning context only.*not enforcement evidence/i)
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /NASA GIBS/i })).toHaveAttribute(
-      "href",
-      "https://nasa-gibs.github.io/gibs-api-docs/"
-    );
   });
 
-  it("shows honest coverage and network failure states", () => {
+  it("compares the first month against Latest with the parcel boundary", () => {
     render(<HistoricalImageryTimeline parcel={FIXTURE_PARCELS[0]} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /1985/ }));
-    expect(
-      screen.getByText(/No usable 1985 Landsat coverage/i)
-    ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: /1990/ }));
-    fireEvent.error(
-      screen.getByRole("img", {
-        name: /1990 Landsat WELD true-color historical context/i,
-      })
-    );
-    expect(
-      screen.getByText(/Historical image unavailable/i)
-    ).toBeInTheDocument();
-  });
-
-  it("exposes the year switcher to assistive tech as a labeled group, not a bare div", () => {
-    render(<HistoricalImageryTimeline parcel={FIXTURE_PARCELS[0]} />);
-
-    expect(
-      screen.getByRole("group", { name: "Historical imagery year" })
-    ).toBeInTheDocument();
-  });
-
-  it("offers an aligned same-sensor before and after comparison with the parcel boundary", () => {
-    render(<HistoricalImageryTimeline parcel={FIXTURE_PARCELS[0]} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Compare years" }));
+    fireEvent.click(screen.getByRole("button", { name: "Compare months" }));
 
     expect(screen.getByTestId("imagery-comparison")).toBeInTheDocument();
     expect(
-      screen.getByRole("img", { name: /1990 before image/i })
+      screen.getByRole("img", {
+        name: new RegExp(`${FIRST_MONTH.label} ${YEAR} before image`, "i"),
+      })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("img", { name: /2000 after image/i })
+      screen.getByRole("img", { name: /Latest after image/i })
     ).toBeInTheDocument();
     expect(screen.getByTestId("parcel-boundary-overlay")).toBeInTheDocument();
     expect(
-      screen.getByText(/same Landsat WELD source, 30 m resolution, and map extent/i)
+      screen.getByText(/same HLS Sentinel-2 source, 30 m resolution, and map extent/i)
     ).toBeInTheDocument();
   });
 
   it("lets keyboard and touch users control how much of the after image is revealed", () => {
     render(<HistoricalImageryTimeline parcel={FIXTURE_PARCELS[0]} />);
-    fireEvent.click(screen.getByRole("button", { name: "Compare years" }));
+    fireEvent.click(screen.getByRole("button", { name: "Compare months" }));
 
-    const slider = screen.getByRole("slider", { name: "Reveal 2000 imagery" });
+    const slider = screen.getByRole("slider", { name: "Reveal Latest imagery" });
     expect(slider).toHaveValue("50");
 
     fireEvent.change(slider, { target: { value: "72" } });
