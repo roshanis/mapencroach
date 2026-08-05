@@ -23,6 +23,66 @@ export function isoDateDaysAgo(daysAgo: number, now: Date = new Date()): string 
   return then.toISOString().slice(0, 10);
 }
 
+export function isoDayBefore(isoDate: string): string {
+  const day = new Date(`${isoDate}T00:00:00Z`);
+  return new Date(day.getTime() - 86_400_000).toISOString().slice(0, 10);
+}
+
+/**
+ * A timeline scene backed by a date window: the component requests `endDate`
+ * first and walks one day back per blank/failed load until `startDate`, at
+ * which point the scene reports a coverage gap.
+ */
+export interface SceneWindow {
+  id: string;
+  label: string;
+  startDate: string;
+  endDate: string;
+}
+
+const MONTH_LABELS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+/**
+ * Monthly snapshot scenes for the current (UTC) year — one per completed
+ * month, newest last — followed by a Latest scene that trails today by the
+ * HLS publication latency. In January there are no completed months yet and
+ * only Latest is returned.
+ */
+export function monthlyScenes(now: Date = new Date()): SceneWindow[] {
+  const year = now.getUTCFullYear();
+  const scenes: SceneWindow[] = [];
+  for (let month = 0; month < now.getUTCMonth(); month += 1) {
+    const monthNumber = String(month + 1).padStart(2, "0");
+    const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+    scenes.push({
+      id: `${year}-${monthNumber}`,
+      label: MONTH_LABELS[month],
+      startDate: `${year}-${monthNumber}-01`,
+      endDate: `${year}-${monthNumber}-${String(lastDay).padStart(2, "0")}`,
+    });
+  }
+  scenes.push({
+    id: "latest",
+    label: "Latest",
+    startDate: isoDateDaysAgo(LATEST_MAX_OFFSET_DAYS, now),
+    endDate: isoDateDaysAgo(LATEST_START_OFFSET_DAYS, now),
+  });
+  return scenes;
+}
+
 /**
  * True when a sampled RGBA buffer is effectively empty: almost no pixels that
  * are both opaque and non-black. GIBS renders "no data" as transparent (PNG)

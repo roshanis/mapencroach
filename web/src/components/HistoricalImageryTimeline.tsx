@@ -1,82 +1,24 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   LATEST_IMAGERY_LAYER,
-  LATEST_MAX_OFFSET_DAYS,
-  LATEST_START_OFFSET_DAYS,
-  isoDateDaysAgo,
+  type SceneWindow,
+  isoDayBefore,
+  monthlyScenes,
   sampleImageBlankness,
 } from "@/lib/latest-imagery";
 import type { Parcel } from "@/lib/types";
 
-interface ImageryScene {
-  id: string;
-  year: string;
-  date: string;
-  label: string;
-  source: string;
-  resolution: string;
-  endpoint?: string;
-  layer?: string;
-  unavailableMessage?: string;
-}
+// Every scene is the same sensor at the same resolution, which is what makes
+// month-to-month comparison honest.
+const SCENE_SOURCE = "NASA GIBS · Harmonized Landsat Sentinel-2 (HLS S30)";
+const SCENE_RESOLUTION = "30 m, most recent clear pass of the period";
+const WMS_ENDPOINT = "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi";
 
 type ImageryView = "single" | "compare";
-
-const IMAGERY_SCENES: ImageryScene[] = [
-  {
-    id: "1985",
-    year: "1985",
-    date: "1985 annual mosaic",
-    label: "Landsat WELD",
-    source: "NASA GIBS · Landsat WELD",
-    resolution: "30 m annual composite",
-    unavailableMessage:
-      "No usable 1985 Landsat coverage is available for this parcel area from the NASA GIBS annual mosaic.",
-  },
-  {
-    id: "1990",
-    year: "1990",
-    date: "1990-12-01 annual mosaic",
-    label: "Landsat WELD",
-    source: "NASA GIBS · Landsat WELD",
-    resolution: "30 m annual composite",
-    endpoint: "https://gibs.earthdata.nasa.gov/wms/epsg4326/all/wms.cgi",
-    layer: "Landsat_WELD_CorrectedReflectance_TrueColor_Global_Annual",
-  },
-  {
-    id: "2000",
-    year: "2000",
-    date: "2000-12-01 annual mosaic",
-    label: "Landsat WELD",
-    source: "NASA GIBS · Landsat WELD",
-    resolution: "30 m annual composite",
-    endpoint: "https://gibs.earthdata.nasa.gov/wms/epsg4326/all/wms.cgi",
-    layer: "Landsat_WELD_CorrectedReflectance_TrueColor_Global_Annual",
-  },
-  {
-    id: "2010",
-    year: "2010",
-    date: "2010-10-15 observation",
-    label: "MODIS Terra",
-    source: "NASA GIBS · MODIS Terra",
-    resolution: "250 m daily observation",
-    endpoint: "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi",
-    layer: "MODIS_Terra_CorrectedReflectance_TrueColor",
-  },
-  {
-    id: "latest",
-    year: "Latest",
-    date: "most recent clear pass",
-    label: "HLS Sentinel-2",
-    source: "NASA GIBS · Harmonized Landsat Sentinel-2 (HLS S30)",
-    resolution: "30 m, published within days of capture",
-    endpoint: "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi",
-    layer: LATEST_IMAGERY_LAYER,
-  },
-];
+type SceneStatus = "loaded" | "failed";
 
 function imageBounds(parcel: Parcel): [number, number, number, number] {
   const [longitude, latitude] = parcel.centroid;
@@ -88,24 +30,13 @@ function imageBounds(parcel: Parcel): [number, number, number, number] {
   ];
 }
 
-function buildWmsImageUrl(
-  scene: ImageryScene,
-  parcel: Parcel,
-  timeOverride?: string
-) {
-  if (!scene.endpoint || !scene.layer) return null;
-
+function buildWmsImageUrl(parcel: Parcel, time: string) {
   const boundingBox = imageBounds(parcel)
     .map((coordinate) => coordinate.toFixed(6))
     .join(",");
-  const time = timeOverride ?? scene.date.slice(0, 10);
-  // PNG + transparency for the date-searching Latest scene, so a date with no
-  // satellite pass yields detectably transparent pixels instead of a black JPEG.
-  const format = timeOverride
-    ? "FORMAT=image/png&TRANSPARENT=TRUE"
-    : "FORMAT=image/jpeg&TRANSPARENT=FALSE";
-
-  return `${scene.endpoint}?SERVICE=WMS&REQUEST=GetMap&VERSION=1.1.1&LAYERS=${scene.layer}&STYLES=&${format}&SRS=EPSG:4326&BBOX=${boundingBox}&WIDTH=960&HEIGHT=540&TIME=${time}`;
+  // PNG + transparency so a date with no satellite pass yields detectably
+  // transparent pixels instead of an opaque black JPEG.
+  return `${WMS_ENDPOINT}?SERVICE=WMS&REQUEST=GetMap&VERSION=1.1.1&LAYERS=${LATEST_IMAGERY_LAYER}&STYLES=&FORMAT=image/png&TRANSPARENT=TRUE&SRS=EPSG:4326&BBOX=${boundingBox}&WIDTH=960&HEIGHT=540&TIME=${time}`;
 }
 
 function ParcelBoundaryOverlay({ parcel }: { parcel: Parcel }) {
@@ -149,68 +80,73 @@ function ParcelBoundaryOverlay({ parcel }: { parcel: Parcel }) {
 }
 
 export function HistoricalImageryTimeline({ parcel }: { parcel: Parcel }) {
+  const scenes = useMemo(() => monthlyScenes(), []);
+  const year = scenes[0].startDate.slice(0, 4);
   const [view, setView] = useState<ImageryView>("single");
   const [selectedId, setSelectedId] = useState("latest");
   const [afterReveal, setAfterReveal] = useState(50);
-  const [failedSceneIds, setFailedSceneIds] = useState<string[]>([]);
-  const [loadedSceneIds, setLoadedSceneIds] = useState<string[]>([]);
-  // The Latest scene walks backwards one day at a time from the publication
-  // latency floor until a date actually has a pass over this parcel.
-  const [latestOffsetDays, setLatestOffsetDays] = useState(
-    LATEST_START_OFFSET_DAYS
-  );
+  // Per-scene search state: the date currently being tried (defaults to the
+  // scene window's end) and the outcome once the search settles.
+  const [attemptDates, setAttemptDates] = useState<Record<string, string>>({});
+  const [statuses, setStatuses] = useState<Record<string, SceneStatus>>({});
+
   const selectedScene =
-    IMAGERY_SCENES.find((scene) => scene.id === selectedId) ??
-    IMAGERY_SCENES[IMAGERY_SCENES.length - 1];
-  const isLatestScene = selectedScene.id === "latest";
-  const latestDate = isoDateDaysAgo(latestOffsetDays);
-  const imageUrl = buildWmsImageUrl(
-    selectedScene,
-    parcel,
-    isLatestScene ? latestDate : undefined
-  );
-  const imageFailed = failedSceneIds.includes(selectedScene.id);
-  const latestSettled =
-    loadedSceneIds.includes("latest") || failedSceneIds.includes("latest");
+    scenes.find((scene) => scene.id === selectedId) ?? scenes[scenes.length - 1];
 
-  const advanceLatestSearch = () => {
-    if (latestOffsetDays < LATEST_MAX_OFFSET_DAYS) {
-      setLatestOffsetDays(latestOffsetDays + 1);
+  const attemptDateFor = (scene: SceneWindow) =>
+    attemptDates[scene.id] ?? scene.endDate;
+
+  const advanceSearch = (scene: SceneWindow) => {
+    const previous = isoDayBefore(attemptDateFor(scene));
+    if (previous < scene.startDate) {
+      setStatuses((current) => ({ ...current, [scene.id]: "failed" }));
     } else {
-      setFailedSceneIds((current) =>
-        current.includes("latest") ? current : [...current, "latest"]
-      );
+      setAttemptDates((current) => ({ ...current, [scene.id]: previous }));
     }
   };
 
-  const handleImageLoad = (image: HTMLImageElement) => {
-    if (isLatestScene && !latestSettled) {
-      // A date with no pass still loads as a valid, blank image; only a
-      // verifiably non-blank load ends the search. Unverifiable pixels
-      // (no canvas / CORS taint) are accepted rather than discarded.
-      if (sampleImageBlankness(image) === true) {
-        advanceLatestSearch();
-        return;
-      }
-    }
-    setLoadedSceneIds((current) =>
-      current.includes(selectedScene.id) ? current : [...current, selectedScene.id]
-    );
-  };
-
-  const handleImageError = () => {
-    if (isLatestScene && !latestSettled) {
-      advanceLatestSearch();
+  const handleImageLoad = (scene: SceneWindow, image: HTMLImageElement) => {
+    if (statuses[scene.id]) return;
+    // A date with no pass still loads as a valid, blank image; only a
+    // verifiably non-blank load ends the search. Unverifiable pixels
+    // (no canvas / CORS taint) are accepted rather than discarded.
+    if (sampleImageBlankness(image) === true) {
+      advanceSearch(scene);
       return;
     }
-    setFailedSceneIds((current) =>
-      current.includes(selectedScene.id) ? current : [...current, selectedScene.id]
-    );
+    setStatuses((current) => ({ ...current, [scene.id]: "loaded" }));
   };
-  const comparisonBefore = IMAGERY_SCENES[1];
-  const comparisonAfter = IMAGERY_SCENES[2];
-  const comparisonBeforeUrl = buildWmsImageUrl(comparisonBefore, parcel);
-  const comparisonAfterUrl = buildWmsImageUrl(comparisonAfter, parcel);
+
+  const handleImageError = (scene: SceneWindow) => {
+    if (statuses[scene.id]) return;
+    advanceSearch(scene);
+  };
+
+  const sceneImage = (scene: SceneWindow, alt: string) => (
+    <Image
+      key={`${scene.id}-${attemptDateFor(scene)}`}
+      src={buildWmsImageUrl(parcel, attemptDateFor(scene))}
+      alt={alt}
+      fill
+      sizes="(max-width: 1024px) 100vw, 960px"
+      className="object-cover"
+      crossOrigin="anonymous"
+      onLoad={(event) => handleImageLoad(scene, event.currentTarget)}
+      onError={() => handleImageError(scene)}
+    />
+  );
+
+  const selectedStatus = statuses[selectedScene.id];
+  const comparisonBefore = scenes[0];
+  const comparisonAfter = scenes[scenes.length - 1];
+  const comparisonAvailable = scenes.length > 1;
+
+  const captureText = (scene: SceneWindow) => {
+    const status = statuses[scene.id];
+    if (status === "loaded") return `${attemptDateFor(scene)} observation`;
+    if (status === "failed") return `no clear pass ${scene.label} ${year}`;
+    return `searching back from ${attemptDateFor(scene)}…`;
+  };
 
   return (
     <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
@@ -220,38 +156,40 @@ export function HistoricalImageryTimeline({ parcel }: { parcel: Parcel }) {
             Imagery Timeline
           </h2>
           <p className="mt-1 text-sm text-gray-500">
-            Historical true-color context around Survey {parcel.survey_no}
+            Monthly {year} true-color snapshots around Survey {parcel.survey_no}
           </p>
         </div>
         <div className="flex flex-col items-stretch gap-2 sm:items-end">
-          <div
-            role="group"
-            aria-label="Imagery view"
-            className="grid grid-cols-2 gap-1 rounded-lg bg-gray-100 p-1"
-          >
-            {(["single", "compare"] as const).map((option) => (
-              <button
-                key={option}
-                type="button"
-                aria-pressed={view === option}
-                onClick={() => setView(option)}
-                className={`min-h-11 rounded-md px-3 py-2 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-gov focus:ring-offset-1 ${
-                  view === option
-                    ? "bg-white text-gov shadow-sm"
-                    : "text-gray-600 hover:text-gray-900"
-                }`}
-              >
-                {option === "single" ? "Single year" : "Compare years"}
-              </button>
-            ))}
-          </div>
+          {comparisonAvailable && (
+            <div
+              role="group"
+              aria-label="Imagery view"
+              className="grid grid-cols-2 gap-1 rounded-lg bg-gray-100 p-1"
+            >
+              {(["single", "compare"] as const).map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  aria-pressed={view === option}
+                  onClick={() => setView(option)}
+                  className={`min-h-11 rounded-md px-3 py-2 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-gov focus:ring-offset-1 ${
+                    view === option
+                      ? "bg-white text-gov shadow-sm"
+                      : "text-gray-600 hover:text-gray-900"
+                  }`}
+                >
+                  {option === "single" ? "Single month" : "Compare months"}
+                </button>
+              ))}
+            </div>
+          )}
           {view === "single" && (
             <div
               role="group"
-              aria-label="Historical imagery year"
-              className="grid grid-cols-5 gap-1 rounded-lg bg-gray-100 p-1"
+              aria-label="Imagery month"
+              className="flex flex-wrap justify-end gap-1 rounded-lg bg-gray-100 p-1"
             >
-              {IMAGERY_SCENES.map((scene) => {
+              {scenes.map((scene) => {
                 const selected = scene.id === selectedScene.id;
                 return (
                   <button
@@ -265,7 +203,7 @@ export function HistoricalImageryTimeline({ parcel }: { parcel: Parcel }) {
                         : "text-gray-600 hover:bg-white hover:text-gray-900"
                     }`}
                   >
-                    {scene.year}
+                    {scene.label}
                   </button>
                 );
               })}
@@ -274,33 +212,23 @@ export function HistoricalImageryTimeline({ parcel }: { parcel: Parcel }) {
         </div>
       </div>
 
-      {view === "compare" ? (
+      {view === "compare" && comparisonAvailable ? (
         <div className="mt-4" data-testid="imagery-comparison">
           <div className="relative aspect-video overflow-hidden rounded-lg border border-gray-200 bg-gray-100">
-            {comparisonBeforeUrl && (
-              <Image
-                src={comparisonBeforeUrl}
-                alt="1990 before image from Landsat WELD"
-                fill
-                sizes="(max-width: 1024px) 100vw, 960px"
-                className="object-cover"
-              />
+            {sceneImage(
+              comparisonBefore,
+              `${comparisonBefore.label} ${year} before image from HLS Sentinel-2`
             )}
-            {comparisonAfterUrl && (
-              <div
-                data-testid="after-image-layer"
-                className="absolute inset-0"
-                style={{ clipPath: `inset(0 0 0 ${100 - afterReveal}%)` }}
-              >
-                <Image
-                  src={comparisonAfterUrl}
-                  alt="2000 after image from Landsat WELD"
-                  fill
-                  sizes="(max-width: 1024px) 100vw, 960px"
-                  className="object-cover"
-                />
-              </div>
-            )}
+            <div
+              data-testid="after-image-layer"
+              className="absolute inset-0"
+              style={{ clipPath: `inset(0 0 0 ${100 - afterReveal}%)` }}
+            >
+              {sceneImage(
+                comparisonAfter,
+                `${comparisonAfter.label} after image from HLS Sentinel-2`
+              )}
+            </div>
             <div
               aria-hidden
               className="pointer-events-none absolute inset-y-0 w-0.5 bg-white shadow"
@@ -308,17 +236,17 @@ export function HistoricalImageryTimeline({ parcel }: { parcel: Parcel }) {
             />
             <ParcelBoundaryOverlay parcel={parcel} />
             <span className="absolute left-3 top-3 rounded bg-gray-950/75 px-2 py-1 text-xs font-semibold text-white">
-              Before · 1990
+              Before · {comparisonBefore.label} {year}
             </span>
             <span className="absolute right-3 top-3 rounded bg-gray-950/75 px-2 py-1 text-xs font-semibold text-white">
-              After · 2000
+              After · {comparisonAfter.label}
             </span>
           </div>
           <label className="mt-3 flex flex-col gap-2 text-xs font-medium text-gray-700">
-            Reveal 2000 imagery
+            Reveal {comparisonAfter.label} imagery
             <input
               type="range"
-              aria-label="Reveal 2000 imagery"
+              aria-label={`Reveal ${comparisonAfter.label} imagery`}
               min="0"
               max="100"
               value={afterReveal}
@@ -327,107 +255,86 @@ export function HistoricalImageryTimeline({ parcel }: { parcel: Parcel }) {
             />
           </label>
           <div className="mt-3 grid gap-2 text-xs text-gray-600 sm:grid-cols-2">
-            <p><b className="text-gray-800">Before:</b> {comparisonBefore.date}</p>
-            <p><b className="text-gray-800">After:</b> {comparisonAfter.date}</p>
+            <p>
+              <b className="text-gray-800">Before:</b>{" "}
+              {captureText(comparisonBefore)}
+            </p>
+            <p>
+              <b className="text-gray-800">After:</b>{" "}
+              {captureText(comparisonAfter)}
+            </p>
           </div>
           <p className="mt-3 rounded-md bg-blue-50 px-3 py-2 text-xs leading-5 text-gov-dark">
-            Comparable pair: same Landsat WELD source, 30 m resolution, and map extent. The outlined shape is the parcel boundary.
+            Comparable pair: same HLS Sentinel-2 source, 30 m resolution, and map
+            extent. The outlined shape is the parcel boundary.
           </p>
         </div>
       ) : (
-      <div className="mt-4 overflow-hidden rounded-lg border border-gray-200 bg-gray-100">
-        {selectedScene.unavailableMessage ? (
-          <div className="flex aspect-video items-center justify-center px-6 text-center">
-            <div>
-              <p className="text-sm font-semibold text-gray-700">
-                Coverage gap
-              </p>
-              <p className="mt-2 max-w-lg text-sm leading-6 text-gray-500">
-                {selectedScene.unavailableMessage}
-              </p>
-            </div>
-          </div>
-        ) : imageFailed ? (
-          <div className="flex aspect-video items-center justify-center px-6 text-center">
-            <div>
-              <p className="text-sm font-semibold text-gray-700">
-                {isLatestScene
-                  ? "No recent clear pass"
-                  : "Historical image unavailable"}
-              </p>
-              <p className="mt-2 text-sm text-gray-500">
-                {isLatestScene
-                  ? `No usable Harmonized Landsat Sentinel-2 pass over this parcel in the last ${LATEST_MAX_OFFSET_DAYS} days — likely persistent cloud cover. Choose another year or try again later.`
-                  : "NASA GIBS could not load this scene. Choose another year or try again later."}
-              </p>
-            </div>
-          </div>
-        ) : imageUrl ? (
-          <div className="relative aspect-video">
-            <Image
-              key={`${selectedScene.id}-${isLatestScene ? latestOffsetDays : ""}`}
-              src={imageUrl}
-              alt={`${selectedScene.year} ${selectedScene.label} true-color historical context`}
-              fill
-              sizes="(max-width: 1024px) 100vw, 960px"
-              className="object-cover"
-              crossOrigin={isLatestScene ? "anonymous" : undefined}
-              onLoad={(event) => handleImageLoad(event.currentTarget)}
-              onError={handleImageError}
-            />
-            {!loadedSceneIds.includes(selectedScene.id) && (
-              <div
-                role="status"
-                className="absolute inset-0 grid place-items-center bg-gray-100 text-sm font-medium text-gray-500"
-              >
-                {isLatestScene
-                  ? "Searching recent satellite passes…"
-                  : "Loading historical image…"}
+        <div className="mt-4 overflow-hidden rounded-lg border border-gray-200 bg-gray-100">
+          {selectedStatus === "failed" ? (
+            <div className="flex aspect-video items-center justify-center px-6 text-center">
+              <div>
+                <p className="text-sm font-semibold text-gray-700">
+                  No clear pass
+                </p>
+                <p className="mt-2 max-w-lg text-sm leading-6 text-gray-500">
+                  No usable Harmonized Landsat Sentinel-2 pass over this parcel
+                  between {selectedScene.startDate} and {selectedScene.endDate} —
+                  likely persistent cloud cover. Choose another month or try
+                  again later.
+                </p>
               </div>
-            )}
-            <div
-              aria-hidden
-              className="absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-[3px] border-white bg-tier-red shadow-[0_0_0_5px_rgba(196,50,31,0.24)]"
-            />
-            <span className="absolute left-1/2 top-[calc(50%+1rem)] -translate-x-1/2 rounded bg-gray-950/75 px-2 py-1 text-[10px] font-medium text-white">
-              Parcel center
-            </span>
-          </div>
-        ) : null}
-      </div>
-
+            </div>
+          ) : (
+            <div className="relative aspect-video">
+              {sceneImage(
+                selectedScene,
+                `${selectedScene.label} ${year} HLS Sentinel-2 true-color snapshot`
+              )}
+              {selectedStatus !== "loaded" && (
+                <div
+                  role="status"
+                  className="absolute inset-0 grid place-items-center bg-gray-100 text-sm font-medium text-gray-500"
+                >
+                  Searching satellite passes…
+                </div>
+              )}
+              <div
+                aria-hidden
+                className="absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-[3px] border-white bg-tier-red shadow-[0_0_0_5px_rgba(196,50,31,0.24)]"
+              />
+              <span className="absolute left-1/2 top-[calc(50%+1rem)] -translate-x-1/2 rounded bg-gray-950/75 px-2 py-1 text-[10px] font-medium text-white">
+                Parcel center
+              </span>
+            </div>
+          )}
+        </div>
       )}
 
-      {view === "single" && <div className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
-            Capture
-          </p>
-          <p className="mt-1 font-medium text-gray-700">
-            {isLatestScene
-              ? latestSettled && !imageFailed
-                ? `${latestDate} observation`
-                : `searching back from ${isoDateDaysAgo(LATEST_START_OFFSET_DAYS)}…`
-              : selectedScene.date}
-          </p>
+      {view === "single" && (
+        <div className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
+              Capture
+            </p>
+            <p className="mt-1 font-medium text-gray-700">
+              {captureText(selectedScene)}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
+              Source
+            </p>
+            <p className="mt-1 font-medium text-gray-700">{SCENE_SOURCE}</p>
+          </div>
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
+              Resolution
+            </p>
+            <p className="mt-1 font-medium text-gray-700">{SCENE_RESOLUTION}</p>
+          </div>
         </div>
-        <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
-            Source
-          </p>
-          <p className="mt-1 font-medium text-gray-700">
-            {selectedScene.source}
-          </p>
-        </div>
-        <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
-            Resolution
-          </p>
-          <p className="mt-1 font-medium text-gray-700">
-            {selectedScene.resolution}
-          </p>
-        </div>
-      </div>}
+      )}
 
       <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-5 text-amber-900">
         Planning context only — this imagery is not enforcement evidence. Confirm
