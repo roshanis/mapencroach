@@ -41,7 +41,7 @@ def client(store: Store) -> TestClient:
 
 @pytest.fixture
 def state_token(store: Store) -> str:
-    return token_for("state-admin", Role.DATA_ADMIN, store.root_jurisdiction_id)
+    return token_for("state-admin", Role.DATA_ADMIN, store.primary_authority_id)
 
 
 @pytest.fixture

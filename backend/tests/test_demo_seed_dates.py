@@ -24,7 +24,7 @@ def _auth_headers(store: Store) -> dict[str, str]:
     token = create_token(
         sub="state-user",
         role=Role.DATA_ADMIN,
-        jurisdiction_id=store.root_jurisdiction_id,
+        jurisdiction_id=store.primary_authority_id,
         secret=SECRET,
         expires_at=datetime.now(UTC) + timedelta(hours=1),
     )

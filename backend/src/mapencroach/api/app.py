@@ -175,6 +175,29 @@ _DEMO_PERSONAS: list[dict[str, str]] = [
         "authority. Alone can record a hearing as held, issue an order, record "
         "a court stay, or end a case (dismissal, legacy referral, or closure).",
     },
+    # Kerala. These exist to show scoping holding across two genuinely
+    # unrelated authorities, not just across divisions of one: an
+    # Alappuzha officer and a Haridwar officer are mutually invisible.
+    # Nothing is scoped at the deployment root on purpose -- see the
+    # jurisdiction rows in `Store.seed_demo`.
+    {
+        "id": "collector-alappuzha",
+        "name": "District Collector, Alappuzha",
+        "role": "viewer",
+        "jurisdiction_id": "dist-alappuzha",
+        "description": "Sees Alappuzha district's estate - backwater, canal, "
+        "paddy and coastal land. Read-only, and Haridwar-Roorkee parcels do "
+        "not exist for this login.",
+    },
+    {
+        "id": "co-ambalapuzha",
+        "name": "Taluk Officer, Ambalapuzha",
+        "role": "case_officer",
+        "jurisdiction_id": "taluk-ambalapuzha",
+        "description": "Runs encroachment cases for Ambalapuzha taluk, "
+        "including reclamation of the Vembanad backwater. Cannot see the "
+        "rest of Kerala, let alone Uttarakhand.",
+    },
 ]
 
 
@@ -1020,8 +1043,11 @@ def create_app(
 
         # Non-raising membership check: scope_ids(root) is every node in the
         # tree, so `in` never throws for an unknown id the way scope_ids of
-        # the (possibly bogus) target itself would.
-        known_jurisdiction_ids = store.tree.scope_ids(store.root_jurisdiction_id)
+        # the (possibly bogus) target itself would. This must be the tree's
+        # own root, not the primary authority -- with more than one authority
+        # seeded, the latter's scope excludes every sibling authority and
+        # would reject transfers to real jurisdictions as "unknown".
+        known_jurisdiction_ids = store.tree.scope_ids(store.tree.root_id)
         to_jurisdiction_id = body.to_jurisdiction_id
         if to_jurisdiction_id not in known_jurisdiction_ids:
             raise HTTPException(
@@ -1039,6 +1065,35 @@ def create_app(
         # Cross-scope handover is the point of this endpoint: the target may
         # lie outside the caller's own scope (dist-a officer -> dist-b), and
         # the caller may lose visibility on the case immediately afterwards.
+        #
+        # Crossing an *authority* boundary is a different thing entirely and
+        # is refused. Districts of one authority share a chain of command
+        # that can actually receive a handover; two authorities (HRDA and
+        # Kerala) do not. Allowing it would move a case into a government
+        # with no power over the land, delete it from the only officers who
+        # can act on it, and write that as an accomplished fact into the
+        # audit chain. Refused as 409 -- the target exists and the caller is
+        # entitled to name it; the transfer itself is what cannot happen.
+        from_authority = store.authority_of(from_jurisdiction_id)
+        to_authority = store.authority_of(to_jurisdiction_id)
+        if from_authority != to_authority:
+            # Named, not id'd: "state-kl" tells the officer reading the
+            # refusal nothing about why their handover was rejected. A node
+            # above every authority (the deployment root) has no name to
+            # give, so it is described rather than printed as "None".
+            def _authority_label(authority_id: str | None) -> str:
+                if authority_id is None:
+                    return "no authority"
+                return JURISDICTION_NAMES.get(authority_id, authority_id)
+
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"cannot transfer a case from {_authority_label(from_authority)} "
+                    f"to {_authority_label(to_authority)}: "
+                    "they are separate authorities"
+                ),
+            )
         with store.lock:
             record.jurisdiction_id = to_jurisdiction_id
             store.record_audit(

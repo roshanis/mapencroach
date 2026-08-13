@@ -6,7 +6,9 @@ notify, and enforce through a legally defensible workflow. Full plan: [PLAN.md](
 
 ## Quick start (demo, no database needed)
 
-**1. Backend API** (seeded with 30 demo parcels across six Haridwar–Roorkee taluks):
+**1. Backend API** (seeded with 30 demo parcels across six Haridwar–Roorkee
+taluks, plus 5 in Ambalapuzha taluk, Kerala — see
+[Two authorities](#two-authorities-in-the-demo-seed)):
 
 ```bash
 cd backend
@@ -50,6 +52,47 @@ Google Maps is the production map provider when both
 console falls back to MapLibre when either value is absent or Google cannot
 load; never commit the API key, and restrict it to approved web referrers and
 the Maps JavaScript API.
+
+## Two authorities in the demo seed
+
+The seed spans two unrelated governments so that jurisdiction scoping can be
+demonstrated across a real boundary, not just between divisions of one body:
+
+```
+mapencroach demo deployment          <- deployment root, no officer is scoped here
+├── Haridwar–Roorkee Development Authority   (Uttarakhand)  30 parcels
+│   ├── Haridwar Division  → Haridwar City, Kankhal, Laksar
+│   └── Roorkee Division   → Roorkee City, Bahadarabad, Narsan
+└── Government of Kerala
+    └── Alappuzha District → Ambalapuzha Taluk               5 parcels
+```
+
+Ambalapuzha is a sibling of HRDA, not a taluk inside it — it is ~2,000 km away
+and under a different state government, and modelling it as an HRDA taluk would
+put a false claim about Indian administrative geography in front of every
+officer. The `deployment` root exists only because the tree is single-rooted by
+construction; **no persona is scoped to it**, since a login spanning Uttarakhand
+and Kerala would frame the map on all of India and corresponds to no real
+officer.
+
+Two consequences worth knowing:
+
+- **Authority-wide is not deployment-wide.** A token scoped to `state` sees all
+  30 HRDA parcels and none of Kerala's. Anything that means "every jurisdiction
+  that exists" must use the tree's own root (`tree.root_id`), not an authority.
+- **Cases cannot be transferred across authorities.** Handover between districts
+  of one authority is the point of `POST /cases/{id}/transfer`; handing an HRDA
+  case to Kerala is refused with 409, because it would move the case to a
+  government with no power over the land and delete it from the only officers
+  who can act on it.
+
+Parcel geometry traces the real taluk: the Vembanad/Punnamada backwater on its
+east, the Alappuzha–Changanassery canal through the middle, Kuttanad's
+below-sea-level paddy to the south-east, the temple town on NH-66, and the
+coastal strip on the Arabian Sea.
+
+The console's built-in fixture mode (no backend) is a separate illustrative
+dataset with `PCL-…` parcel ids and does not mirror this seed, Kerala included.
 
 ## Real Sentinel-2 scenes over a parcel
 
@@ -188,7 +231,7 @@ See [DEPLOY.md](DEPLOY.md) — console on Vercel, API on Render (demo data only)
 
 | Path | What |
 |------|------|
-| `backend/src/mapencroach/domain/` | Jurisdiction tree (row-level scoping), case state machine (due process encoded), alert severity |
+| `backend/src/mapencroach/domain/` | Jurisdiction tree (row-level scoping, multi-authority), case state machine (due process encoded), alert severity |
 | `backend/src/mapencroach/cadastral/` | Topology QA + file ingestion (accept / quarantine / reject) |
 | `backend/src/mapencroach/audit/` | Tamper-evident hash chain |
 | `backend/src/mapencroach/hexgrid/` | Uber H3 indexing: parcel cell covers, alert dedup keys, density rollups |

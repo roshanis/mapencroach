@@ -117,7 +117,16 @@ def _square_polygon(center_lon: float, center_lat: float, half_size: float) -> d
 
 # Human-readable names for seed jurisdiction ids. Ids are the stable API
 # surface (tokens pin them); names are presentation only.
+#
+# The demo carries two unrelated authorities, ~2,000 km apart: the
+# Haridwar-Roorkee corridor in Uttarakhand and Ambalapuzha taluk in
+# Alappuzha, Kerala. They are siblings under a deployment-level root
+# rather than one being nested inside the other, because Ambalapuzha is
+# in no sense part of HRDA -- modelling it as an HRDA taluk would put a
+# false statement about Indian administrative geography into the record
+# every officer sees.
 JURISDICTION_NAMES: dict[str, str] = {
+    "deployment": "mapencroach demo deployment",
     "state": "Haridwar–Roorkee Development Authority",
     "dist-a": "Haridwar Division",
     "dist-b": "Roorkee Division",
@@ -127,6 +136,9 @@ JURISDICTION_NAMES: dict[str, str] = {
     "taluk-b1": "Roorkee City",
     "taluk-b2": "Bahadarabad",
     "taluk-b3": "Narsan",
+    "state-kl": "Government of Kerala",
+    "dist-alappuzha": "Alappuzha District",
+    "taluk-ambalapuzha": "Ambalapuzha Taluk",
 }
 
 
@@ -193,9 +205,20 @@ class Store:
     audit_chain: list[AuditEntry] = field(default_factory=list)
     watchlist: dict[str, WatchEntryRecord] = field(default_factory=dict)
 
-    root_jurisdiction_id: str = "state"
+    # The demo's *primary* authority (HRDA), not the tree's root -- the
+    # seeded tree also carries a second, unrelated authority in Kerala, so
+    # this id's scope is a strict subset of the tree. Anything that means
+    # "every jurisdiction that exists" must use `tree.root_id` instead.
+    primary_authority_id: str = "state"
     district_a_id: str = "dist-a"
     district_b_id: str = "dist-b"
+
+    # Top-level authorities in the tree, if it is partitioned into more
+    # than one. Empty (the default) means a single authority, where every
+    # transfer is internal by construction -- exactly the pre-existing
+    # behaviour. When populated, `authority_of` uses it to keep cases from
+    # being handed to a government that has no relationship to them.
+    authority_ids: set[str] = field(default_factory=set)
 
     _next_alert_seq: int = 0
     _next_case_seq: int = 0
@@ -247,6 +270,21 @@ class Store:
         if self._tree is None:
             raise RuntimeError("jurisdiction tree not initialized")
         return self._tree
+
+    def authority_of(self, jurisdiction_id: str) -> str | None:
+        """Which top-level authority `jurisdiction_id` belongs to.
+
+        Returns None when `authority_ids` is empty -- a tree holding a
+        single authority has no boundary to enforce, so callers see the
+        pre-existing "everything is one authority" behaviour unchanged.
+
+        Raises KeyError for an unknown id; callers are expected to have
+        already checked membership against `tree.root_id`'s scope.
+        """
+        for authority_id in sorted(self.authority_ids):
+            if self.tree.is_within(authority_id, jurisdiction_id):
+                return authority_id
+        return None
 
     @property
     def dist_a_scope(self) -> set[str]:
@@ -351,13 +389,32 @@ class Store:
 
     @classmethod
     def seed_demo(cls) -> "Store":
-        """Build a demo store for the Haridwar–Roorkee Development Authority (HRDA)
-        corridor: state -> 2 districts -> 6 named taluks, 30 parcels (5 per
+        """Build a demo store spanning two unrelated authorities.
+
+        Primary: the Haridwar–Roorkee Development Authority (HRDA) corridor
+        in Uttarakhand -- 2 districts -> 6 named taluks, 30 parcels (5 per
         taluk), 10 alerts across every tier/status, 5 cases including two
         paused states. parcel-1..8 / alert-1..4 / case-1..2 are the original
-        demo protagonists and must not change."""
+        demo protagonists and must not change.
+
+        Secondary: Ambalapuzha taluk in Alappuzha, Kerala -- 5 parcels and
+        2 alerts on backwater, canal, paddy, town and coastal land. It hangs
+        off its own state, sibling to HRDA under a deployment-level root, so
+        neither authority's officers can see the other's parcels.
+
+        New jurisdictions/parcels/alerts must be *appended*: alert and case
+        ids are handed out sequentially, so inserting ahead of the existing
+        specs would renumber the protagonists above.
+        """
         rows: list[tuple[str, str | None]] = [
-            ("state", None),
+            # Deployment root. Not a real administrative body -- it exists
+            # because the tree is single-rooted by construction and the two
+            # authorities below it are genuine peers, neither containing
+            # the other. No demo persona is scoped here: a login spanning
+            # Uttarakhand and Kerala would frame the map on all of India
+            # and represents no real officer.
+            ("deployment", None),
+            ("state", "deployment"),
             ("dist-a", "state"),
             ("dist-b", "state"),
             ("taluk-a1", "dist-a"),
@@ -366,8 +423,11 @@ class Store:
             ("taluk-b1", "dist-b"),
             ("taluk-b2", "dist-b"),
             ("taluk-b3", "dist-b"),
+            ("state-kl", "deployment"),
+            ("dist-alappuzha", "state-kl"),
+            ("taluk-ambalapuzha", "dist-alappuzha"),
         ]
-        store = cls(jurisdiction_rows=rows)
+        store = cls(jurisdiction_rows=rows, authority_ids={"state", "state-kl"})
 
         # Captured once so every seeded timestamp below is relative to "now"
         # at seed/startup time -- the demo should never read as stale no
@@ -423,8 +483,30 @@ class Store:
             ("parcel-28", "SN-128", "taluk-b3", "housing", "A", 77.842, 29.845),
             ("parcel-29", "SN-129", "taluk-b3", "industrial", "C", 77.882, 29.840),
             ("parcel-30", "SN-130", "taluk-b3", "waterbody", "B", 77.862, 29.850),
+            # --- taluk-ambalapuzha (Ambalapuzha, Alappuzha district, Kerala) ---
+            # Coordinates trace the real taluk: the Vembanad/Punnamada
+            # backwater on its east, the Alappuzha-Changanassery canal
+            # through its middle, Kuttanad's below-sea-level paddy to the
+            # south-east, the temple town on NH-66, and the Arabian Sea
+            # coastal strip on its west.
+            ("parcel-31", "AMB-201", "taluk-ambalapuzha", "waterbody", "A", 76.398, 9.452),
+            ("parcel-32", "AMB-202", "taluk-ambalapuzha", "irrigation", "A", 76.372, 9.401),
+            ("parcel-33", "AMB-203", "taluk-ambalapuzha", "revenue", "B", 76.412, 9.372),
+            ("parcel-34", "AMB-204", "taluk-ambalapuzha", "municipal", "B", 76.353, 9.379),
+            ("parcel-35", "AMB-205", "taluk-ambalapuzha", "housing", "C", 76.331, 9.345),
         ]
+        # Kerala parcels are listed explicitly because the
+        # category->department fallback below is Uttarakhand-specific;
+        # a Kerala backwater is not held by an Uttarakhand department.
+        _KERALA_DEPARTMENTS = {
+            "parcel-31": "Irrigation Department, Kerala",
+            "parcel-32": "Irrigation Department, Kerala",
+            "parcel-33": "Revenue Department, Kerala",
+            "parcel-34": "Ambalapuzha Grama Panchayat",
+            "parcel-35": "Kerala State Housing Board",
+        }
         _OWNING_DEPARTMENTS = {
+            **_KERALA_DEPARTMENTS,
             "parcel-1": "Irrigation Department, Uttarakhand",
             "parcel-2": "Revenue Department",
             "parcel-3": "Forest Department, Uttarakhand",
@@ -443,6 +525,9 @@ class Store:
             "industrial": "SIDCUL",
             "revenue": "Revenue Department",
         }
+        # ULPIN carries the state and district it was issued under, so it
+        # cannot be one fixed prefix once the demo spans two states.
+        _ULPIN_CODES = {"taluk-ambalapuzha": ("KL", "AL")}
         for i, (
             parcel_id,
             survey_no,
@@ -453,10 +538,11 @@ class Store:
             center_lat,
         ) in enumerate(parcel_specs):
             geometry = _square_polygon(center_lon, center_lat, _PARCEL_SIZE_DEG / 2)
+            state_code, district_code = _ULPIN_CODES.get(jurisdiction_id, ("UK", "HR"))
             store.parcels[parcel_id] = {
                 "id": parcel_id,
                 "survey_no": survey_no,
-                "ulpin": f"UK{i:010d}HR",
+                "ulpin": f"{state_code}{i:010d}{district_code}",
                 "owning_department": _OWNING_DEPARTMENTS.get(
                     parcel_id, _DEPARTMENT_BY_CATEGORY[land_category]
                 ),
@@ -558,6 +644,13 @@ class Store:
             ("parcel-20", AlertTier.AMBER, 2500.0, "OPEN", 11, 15, 15),
             ("parcel-23", AlertTier.RED, 5200.0, "OPEN", 3, 20, 0),
             ("parcel-26", AlertTier.LEGACY, 9000.0, "UNDER_REVIEW", 17, 6, 25),
+            # Ambalapuzha. Appended, never inserted -- alert ids are issued
+            # in this order and alert-1..4 are pinned demo protagonists.
+            # parcel-31 is Grade A backwater, so it scores RED: reclamation
+            # of Vembanad-system water is the encroachment Alappuzha
+            # actually litigates.
+            ("parcel-31", AlertTier.RED, 5600.0, "OPEN", 5, 10, 35),
+            ("parcel-33", AlertTier.AMBER, 2800.0, "OPEN", 12, 14, 55),
         ]
         alert_ids: list[str] = []
         for parcel_id, tier, area_m2, status, days_ago, hour, minute in alert_specs:

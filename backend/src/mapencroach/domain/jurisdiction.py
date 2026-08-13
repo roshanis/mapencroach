@@ -31,6 +31,21 @@ class JurisdictionTree:
         roots = [node_id for node_id, parent_id in rows if parent_id is None]
         if len(roots) != 1:
             raise ValueError(f"expected exactly one root jurisdiction, found {len(roots)}")
+        self._root_id = roots[0]
+
+    @property
+    def root_id(self) -> str:
+        """The single root, whose scope is every node in the tree.
+
+        Callers that need "is this a jurisdiction we know about at all?"
+        must ask for `scope_ids(root_id)` rather than the scope of some
+        particular authority. The two coincide only while the tree holds
+        exactly one authority; once it holds siblings (a second state, a
+        second development authority) an authority's scope is a strict
+        subset, and using it as the known-id set silently rejects every
+        node outside that one branch.
+        """
+        return self._root_id
 
     def _reject_dangling_parents(self, rows: list[tuple[str, str | None]]) -> None:
         known = set(self._parent)

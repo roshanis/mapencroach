@@ -119,7 +119,7 @@ def client(app) -> TestClient:
 
 @pytest.fixture
 def state_officer_token(store: Store) -> str:
-    return token_for("state-case-officer", Role.CASE_OFFICER, store.root_jurisdiction_id)
+    return token_for("state-case-officer", Role.CASE_OFFICER, store.primary_authority_id)
 
 
 @pytest.fixture
@@ -134,7 +134,7 @@ def dist_b_officer_token(store: Store) -> str:
 
 @pytest.fixture
 def state_viewer_token(store: Store) -> str:
-    return token_for("state-viewer", Role.VIEWER, store.root_jurisdiction_id)
+    return token_for("state-viewer", Role.VIEWER, store.primary_authority_id)
 
 
 # ---------------------------------------------------------------------

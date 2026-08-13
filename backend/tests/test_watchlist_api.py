@@ -55,7 +55,20 @@ def first_red_alert(store: Store) -> tuple[str, dict]:
 
 
 def all_red_alerts(store: Store) -> list[str]:
-    return [aid for aid, a in store.alerts.items() if a["tier"] == "RED"]
+    """RED alerts inside the primary authority only.
+
+    The seeded tree holds a second, unrelated authority (Kerala), and
+    these tests drive it with an HRDA-scoped token. Returning every RED
+    alert in the store would hand that token an alert it is correctly
+    forbidden to see, so the 404 would read as a watch bug rather than
+    scoping working as designed.
+    """
+    scope = store.tree.scope_ids(store.primary_authority_id)
+    return [
+        aid
+        for aid, a in store.alerts.items()
+        if a["tier"] == "RED" and store.parcels[a["parcel_id"]]["jurisdiction_id"] in scope
+    ]
 
 
 def first_non_red_alert(store: Store) -> str:
@@ -117,7 +130,7 @@ def client(app) -> TestClient:
 
 @pytest.fixture
 def state_officer_token(store: Store) -> str:
-    return token_for("state-case-officer", Role.CASE_OFFICER, store.root_jurisdiction_id)
+    return token_for("state-case-officer", Role.CASE_OFFICER, store.primary_authority_id)
 
 
 @pytest.fixture
@@ -132,17 +145,17 @@ def dist_b_officer_token(store: Store) -> str:
 
 @pytest.fixture
 def state_viewer_token(store: Store) -> str:
-    return token_for("state-viewer", Role.VIEWER, store.root_jurisdiction_id)
+    return token_for("state-viewer", Role.VIEWER, store.primary_authority_id)
 
 
 @pytest.fixture
 def state_legal_officer_token(store: Store) -> str:
-    return token_for("state-legal", Role.LEGAL_OFFICER, store.root_jurisdiction_id)
+    return token_for("state-legal", Role.LEGAL_OFFICER, store.primary_authority_id)
 
 
 @pytest.fixture
 def state_system_admin_token(store: Store) -> str:
-    return token_for("state-admin", Role.SYSTEM_ADMIN, store.root_jurisdiction_id)
+    return token_for("state-admin", Role.SYSTEM_ADMIN, store.primary_authority_id)
 
 
 # ---------------------------------------------------------------------

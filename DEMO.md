@@ -155,15 +155,29 @@ Click **View as** on **Enforcement Officer, Haridwar**:
 
 The console reloads scoped to their jurisdiction — 15 Haridwar-side parcels and
 an amber "Viewing as" banner on every page; the Roorkee parcels aren't hidden,
-they *don't exist* for this officer (direct URLs 404 too). Then view as
-**Vice Chairman, HRDA** and try to add a tag:
+they *don't exist* for this officer (direct URLs 404 too).
+
+For the strongest version of this, view as **Taluk Officer, Ambalapuzha**:
+
+> "Same software, a different state entirely. This officer is in Alappuzha,
+> Kerala — backwater, canal, paddy and coastal land. Watch the map move
+> 2,000 km."
+
+Five Ambalapuzha parcels, and the whole Haridwar–Roorkee estate is gone — not
+filtered, *absent*. The Vice Chairman of HRDA cannot see these five either.
+Ambalapuzha is a sibling of HRDA under the deployment root, not a taluk inside
+it, and no login is scoped above both: a single officer over Uttarakhand and
+Kerala is not a real thing, so the demo does not pretend it is.
+
+Then view as **Vice Chairman, HRDA** and try to add a tag:
 
 > "The Vice Chairman sees everything — and can change nothing."
 
-The tag is refused with the role message on screen. Six demo personas cover the
+The tag is refused with the role message on screen. Eight demo personas cover the
 spread: statewide viewer, district case officer, district survey officer,
-taluk-level case officer, statewide data admin, statewide legal officer. "Exit persona" in the banner
-returns to the default officer.
+taluk-level case officer, statewide data admin, statewide legal officer, and two
+in a second authority — the Alappuzha district collector and the Ambalapuzha
+taluk officer. "Exit persona" in the banner returns to the default officer.
 
 For a survey handoff, switch to **Survey Officer, Roorkee**, open
 `/parcels/parcel-7`, and use **Boundary grade review** to record a new grade with
@@ -198,7 +212,23 @@ curl -s -X POST http://localhost:8000/cases/case-1/transitions \
 #   artifact(s): dismissal_reason"
 ```
 
-Worth mentioning: 720+ backend tests at ~99% coverage; every mutation lands in a
+Cross-authority scoping is demonstrable the same way. A Haridwar officer's
+token cannot reach Ambalapuzha, and a case cannot be handed across the
+boundary at all:
+
+```bash
+# HRDA case -> a Kerala taluk → refused (authority boundary)
+curl -s -X POST http://localhost:8000/cases/case-1/transfer \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"to_jurisdiction_id":"taluk-ambalapuzha","reason":"demo"}'
+# → 409 "cannot transfer a case from Haridwar–Roorkee Development Authority
+#   to Government of Kerala: they are separate authorities"
+#
+# The same call to a taluk inside HRDA succeeds — handover between districts
+# of one authority is exactly what the endpoint is for.
+```
+
+Worth mentioning: 800+ backend tests at ~99% coverage; every mutation lands in a
 tamper-evident hash-chained audit log (editing or reordering any entry breaks
 verification; dropping entries off the end is caught by verifying against a
 retained head anchor — built for evidence-integrity requirements under BSA 2023

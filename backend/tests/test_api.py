@@ -36,6 +36,22 @@ def auth_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+# The seeded tree holds two unrelated authorities (HRDA in Uttarakhand and
+# Alappuzha in Kerala). `state_token` below is scoped to HRDA, so comparing
+# what it returns against whole-store counts would assert that scoping has
+# *failed*. These give the subset an HRDA token is entitled to see.
+def primary_parcels(store: Store) -> dict[str, dict]:
+    scope = store.tree.scope_ids(store.primary_authority_id)
+    return {
+        pid: p for pid, p in store.parcels.items() if p["jurisdiction_id"] in scope
+    }
+
+
+def primary_alerts(store: Store) -> dict[str, dict]:
+    visible = primary_parcels(store)
+    return {aid: a for aid, a in store.alerts.items() if a["parcel_id"] in visible}
+
+
 @pytest.fixture
 def store() -> Store:
     return Store.seed_demo()
@@ -49,7 +65,7 @@ def client(store: Store) -> TestClient:
 
 @pytest.fixture
 def state_token(store: Store) -> str:
-    return token_for("state-user", Role.DATA_ADMIN, store.root_jurisdiction_id)
+    return token_for("state-user", Role.DATA_ADMIN, store.primary_authority_id)
 
 
 @pytest.fixture
@@ -69,7 +85,7 @@ def survey_officer_dist_a_token(store: Store) -> str:
 
 @pytest.fixture
 def viewer_token(store: Store) -> str:
-    return token_for("state-viewer", Role.VIEWER, store.root_jurisdiction_id)
+    return token_for("state-viewer", Role.VIEWER, store.primary_authority_id)
 
 
 @pytest.fixture
@@ -90,7 +106,7 @@ class TestAuth:
         expired = create_token(
             sub="x",
             role=Role.VIEWER,
-            jurisdiction_id=store.root_jurisdiction_id,
+            jurisdiction_id=store.primary_authority_id,
             secret=SECRET,
             expires_at=datetime.now(UTC) - timedelta(hours=1),
         )
@@ -99,7 +115,7 @@ class TestAuth:
 
     def test_wrong_secret_token_is_401(self, client: TestClient, store: Store):
         bad = token_for(
-            "x", Role.VIEWER, store.root_jurisdiction_id, secret="wrong-secret"  # noqa: S106
+            "x", Role.VIEWER, store.primary_authority_id, secret="wrong-secret"  # noqa: S106
         )
         resp = client.get("/parcels", headers=auth_headers(bad))
         assert resp.status_code == 401
@@ -114,7 +130,7 @@ class TestAuth:
         payload = {
             "sub": "x",
             "role": "not-a-real-role",
-            "jurisdiction_id": store.root_jurisdiction_id,
+            "jurisdiction_id": store.primary_authority_id,
             "exp": datetime.now(UTC) + timedelta(hours=1),
         }
         bad = pyjwt.encode(payload, SECRET, algorithm="HS256")
@@ -172,12 +188,40 @@ class TestSecretGuard:
 
 
 class TestParcelsScoping:
-    def test_state_user_sees_all_parcels(self, client: TestClient, state_token: str, store: Store):
+    def test_state_user_sees_every_parcel_of_its_own_authority(
+        self, client: TestClient, state_token: str, store: Store
+    ):
         resp = client.get("/parcels", headers=auth_headers(state_token))
         assert resp.status_code == 200
         body = resp.json()
         assert body["type"] == "FeatureCollection"
-        assert len(body["features"]) == len(store.parcels)
+        assert {f["properties"]["id"] for f in body["features"]} == set(primary_parcels(store))
+
+    def test_authority_wide_token_still_cannot_see_a_sibling_authority(
+        self, client: TestClient, state_token: str, store: Store
+    ):
+        """The widest HRDA login must not reach Kerala.
+
+        `state` is the top of its own authority, which is exactly the
+        scope that invites a "sees everything" shortcut somewhere in the
+        query path. It must still stop at the authority boundary.
+        """
+        other = {
+            pid
+            for pid, p in store.parcels.items()
+            if p["jurisdiction_id"] not in store.tree.scope_ids(store.primary_authority_id)
+        }
+        assert other, "seed no longer has a sibling authority to test isolation against"
+
+        resp = client.get("/parcels", headers=auth_headers(state_token))
+        visible = {f["properties"]["id"] for f in resp.json()["features"]}
+        assert visible.isdisjoint(other)
+
+        # Not merely filtered out of the list -- unreachable, and 404 (not
+        # 403) so the response cannot confirm the parcel exists.
+        for pid in sorted(other):
+            detail = client.get(f"/parcels/{pid}", headers=auth_headers(state_token))
+            assert detail.status_code == 404
 
     def test_district_officer_does_not_see_other_district_parcels(
         self, client: TestClient, dist_a_token: str, store: Store
@@ -398,7 +442,7 @@ class TestAlerts:
         resp = client.get("/alerts", headers=auth_headers(state_token))
         assert resp.status_code == 200
         body = resp.json()
-        assert len(body) == len(store.alerts)
+        assert len(body) == len(primary_alerts(store))
         for item in body:
             for key in (
                 "id",
@@ -685,7 +729,7 @@ class TestCaseTransitions:
 
     def test_unknown_case_is_404(self, client: TestClient, store: Store):
         officer_token = token_for(
-            "case-officer-unknown", Role.CASE_OFFICER, store.root_jurisdiction_id
+            "case-officer-unknown", Role.CASE_OFFICER, store.primary_authority_id
         )
         resp = client.post(
             "/cases/no-such-case/transitions",
@@ -832,7 +876,7 @@ class TestRequireRoles:
     def test_multiple_allowed_roles(self, client: TestClient, store: Store):
         # data_admin is allowed on boundary-grade patch alongside survey_officer
         parcel_id = next(iter(store.parcels))
-        admin_token = token_for("admin-x", Role.DATA_ADMIN, store.root_jurisdiction_id)
+        admin_token = token_for("admin-x", Role.DATA_ADMIN, store.primary_authority_id)
         resp = client.patch(
             f"/parcels/{parcel_id}/boundary-grade",
             headers=auth_headers(admin_token),
@@ -906,7 +950,7 @@ class TestRequiredArtifactsInCaseDetail:
         self, client: TestClient, store: Store
     ):
         officer_token = token_for(
-            "case-officer-req", Role.CASE_OFFICER, store.root_jurisdiction_id
+            "case-officer-req", Role.CASE_OFFICER, store.primary_authority_id
         )
         resp = client.post(
             "/cases/case-1/transitions",
@@ -965,7 +1009,7 @@ class TestParcelTags:
             assert resp.status_code == 422, bad
 
     def test_viewer_cannot_tag(self, client: TestClient, store: Store):
-        viewer = token_for("viewer-1", Role.VIEWER, store.root_jurisdiction_id)
+        viewer = token_for("viewer-1", Role.VIEWER, store.primary_authority_id)
         resp = client.post(
             "/parcels/parcel-2/tags",
             headers=auth_headers(viewer),
@@ -1055,7 +1099,7 @@ class TestDemoPersonas:
             1 for p in store.parcels.values() if p["jurisdiction_id"] in store.dist_a_scope
         )
         assert len(features) == expected
-        assert 0 < expected < len(store.parcels)
+        assert 0 < expected < len(primary_parcels(store))
 
     def test_viewer_persona_reads_but_cannot_mutate(self, store: Store, monkeypatch):
         app_client = self._demo_client(store, monkeypatch)
@@ -1064,7 +1108,7 @@ class TestDemoPersonas:
         ).json()["token"]
         assert (
             len(app_client.get("/parcels", headers=auth_headers(token)).json()["features"])
-            == len(store.parcels)
+            == len(primary_parcels(store))
         )
         resp = app_client.post(
             "/parcels/parcel-1/tags",
@@ -1086,9 +1130,9 @@ class TestExpandedSeed:
     parcels/cases byte-identical so the demo script stays true."""
 
     def test_thirty_parcels_five_per_taluk(self, store: Store):
-        assert len(store.parcels) == 30
+        assert len(primary_parcels(store)) == 30
         by_taluk: dict[str, int] = {}
-        for p in store.parcels.values():
+        for p in primary_parcels(store).values():
             by_taluk[p["jurisdiction_id"]] = by_taluk.get(p["jurisdiction_id"], 0) + 1
         assert set(by_taluk) == {
             "taluk-a1", "taluk-a2", "taluk-a3", "taluk-b1", "taluk-b2", "taluk-b3"
@@ -1096,7 +1140,7 @@ class TestExpandedSeed:
         assert all(count == 5 for count in by_taluk.values()), by_taluk
 
     def test_all_parcels_inside_corridor_bbox(self, store: Store):
-        for p in store.parcels.values():
+        for p in primary_parcels(store).values():
             ring = p["geometry"]["coordinates"][0]
             lon = sum(pt[0] for pt in ring[:-1]) / 4
             lat = sum(pt[1] for pt in ring[:-1]) / 4
@@ -1264,7 +1308,7 @@ class TestTokenClaimsHardened:
         payload = {
             "sub": "no-exp-user",
             "role": "viewer",
-            "jurisdiction_id": store.root_jurisdiction_id,
+            "jurisdiction_id": store.primary_authority_id,
             "iss": auth_module._ISSUER,
             "aud": auth_module._AUDIENCE,
         }
@@ -1326,9 +1370,9 @@ class TestListPagination:
     ):
         resp = client.get("/parcels", headers=auth_headers(state_token))
         assert resp.status_code == 200
-        assert resp.headers["X-Total-Count"] == str(len(store.parcels))
+        assert resp.headers["X-Total-Count"] == str(len(primary_parcels(store)))
         assert isinstance(resp.json()["features"], list)
-        assert len(resp.json()["features"]) == len(store.parcels)
+        assert len(resp.json()["features"]) == len(primary_parcels(store))
 
     def test_parcels_limit_and_offset_slice_in_stable_order(
         self, client: TestClient, state_token: str, store: Store
@@ -1338,7 +1382,7 @@ class TestListPagination:
             "/parcels", params={"limit": 5, "offset": 10}, headers=auth_headers(state_token)
         )
         assert resp.status_code == 200
-        assert resp.headers["X-Total-Count"] == str(len(store.parcels))
+        assert resp.headers["X-Total-Count"] == str(len(primary_parcels(store)))
         page = resp.json()["features"]
         assert len(page) == 5
         assert [f["properties"]["id"] for f in page] == [
@@ -1369,13 +1413,13 @@ class TestListPagination:
         )
         assert resp.status_code == 200
         assert isinstance(resp.json(), list)
-        assert resp.headers["X-Total-Count"] == str(len(store.alerts))
+        assert resp.headers["X-Total-Count"] == str(len(primary_alerts(store)))
         assert len(resp.json()) == 3
 
     def test_alerts_total_count_reflects_the_filtered_set(
         self, client: TestClient, state_token: str, store: Store
     ):
-        red_count = sum(1 for a in store.alerts.values() if a["tier"] == "RED")
+        red_count = sum(1 for a in primary_alerts(store).values() if a["tier"] == "RED")
         resp = client.get("/alerts", params={"tier": "RED"}, headers=auth_headers(state_token))
         assert resp.status_code == 200
         assert resp.headers["X-Total-Count"] == str(red_count)
@@ -1782,13 +1826,17 @@ class TestJurisdictions:
         assert resp.status_code == 200
         by_id = {row["id"]: row for row in resp.json()}
         assert by_id["dist-a"]["name"] == JURISDICTION_NAMES["dist-a"]
-        assert by_id["state"]["parent_id"] is None
         assert by_id["dist-a"]["parent_id"] == "state"
+        # HRDA is an authority, not the tree root: the deployment root sits
+        # above it so a second authority can be a sibling rather than a
+        # child. Only that root has no parent.
+        assert by_id["state"]["parent_id"] == "deployment"
+        assert by_id["deployment"]["parent_id"] is None
 
     def test_unknown_id_falls_back_to_the_raw_id(self, client: TestClient, state_token: str):
         store = Store(
             jurisdiction_rows=[("state", None), ("mystery-node", "state")],
-            root_jurisdiction_id="state",
+            primary_authority_id="state",
         )
         app = create_app(store)
         local_client = TestClient(app)

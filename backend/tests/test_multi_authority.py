@@ -1,0 +1,310 @@
+"""The seeded tree holds two unrelated authorities.
+
+HRDA (Uttarakhand) and Ambalapuzha taluk in Alappuzha (Kerala) are ~2,000 km
+apart and share no chain of command. They are siblings under a deployment
+root rather than one nested inside the other.
+
+Scoping is authorization here, so the interesting cases are all about the
+boundary *between* authorities -- which is a boundary that did not exist
+while the demo held a single authority, and which nothing in the original
+test suite could have exercised.
+"""
+
+from datetime import UTC, datetime, timedelta
+
+import pytest
+from fastapi.testclient import TestClient
+
+from conftest import TEST_JWT_SECRET
+from mapencroach.api.app import create_app
+from mapencroach.api.auth import Role, create_token
+from mapencroach.api.store import JURISDICTION_NAMES, Store
+from mapencroach.domain.jurisdiction import JurisdictionTree
+
+SECRET = TEST_JWT_SECRET
+
+KERALA_PARCELS = {"parcel-31", "parcel-32", "parcel-33", "parcel-34", "parcel-35"}
+
+
+def token_for(sub: str, role: Role, jurisdiction_id: str) -> str:
+    return create_token(
+        sub=sub,
+        role=role,
+        jurisdiction_id=jurisdiction_id,
+        secret=SECRET,
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+
+
+def auth_headers(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+def demo_client_for(store: Store, monkeypatch) -> TestClient:
+    # Demo mode always signs with the dev default secret and refuses to
+    # start next to a custom one, so drop the autouse test secret here.
+    monkeypatch.delenv("MAPENCROACH_JWT_SECRET", raising=False)
+    monkeypatch.setenv("MAPENCROACH_DEMO", "1")
+    return TestClient(create_app(store))
+
+
+@pytest.fixture
+def store() -> Store:
+    return Store.seed_demo()
+
+
+@pytest.fixture
+def client(store: Store) -> TestClient:
+    return TestClient(create_app(store))
+
+
+@pytest.fixture
+def hrda_token() -> str:
+    return token_for("hrda-officer", Role.CASE_OFFICER, "state")
+
+
+@pytest.fixture
+def kerala_token() -> str:
+    return token_for("kl-officer", Role.CASE_OFFICER, "taluk-ambalapuzha")
+
+
+class TestTreeRoot:
+    def test_root_id_is_the_single_parentless_node(self):
+        tree = JurisdictionTree([("r", None), ("a", "r"), ("b", "a")])
+        assert tree.root_id == "r"
+        assert tree.scope_ids(tree.root_id) == {"r", "a", "b"}
+
+    def test_seeded_root_is_the_deployment_not_an_authority(self, store: Store):
+        assert store.tree.root_id == "deployment"
+        # The regression this guards: `primary_authority_id` reads like the
+        # root but is not, and its scope silently excludes all of Kerala.
+        assert store.primary_authority_id == "state"
+        assert store.tree.scope_ids(store.primary_authority_id) < store.tree.scope_ids(
+            store.tree.root_id
+        )
+
+    def test_every_seeded_jurisdiction_is_reachable_from_the_root(self, store: Store):
+        reachable = store.tree.scope_ids(store.tree.root_id)
+        assert {"state", "state-kl", "dist-alappuzha", "taluk-ambalapuzha"} <= reachable
+        # Every parcel's jurisdiction resolves, or it would be invisible to
+        # every possible caller.
+        for parcel in store.parcels.values():
+            assert parcel["jurisdiction_id"] in reachable
+
+
+class TestAmbalapuzhaSeed:
+    def test_taluk_hangs_off_kerala_not_hrda(self, store: Store):
+        assert store.tree.is_within("state-kl", "taluk-ambalapuzha")
+        assert not store.tree.is_within("state", "taluk-ambalapuzha")
+
+    def test_five_parcels_all_in_the_taluk(self, store: Store):
+        ids = {
+            pid
+            for pid, p in store.parcels.items()
+            if p["jurisdiction_id"] == "taluk-ambalapuzha"
+        }
+        assert ids == KERALA_PARCELS
+
+    def test_parcels_sit_inside_the_real_taluk_bbox(self, store: Store):
+        """Ambalapuzha, not a copy of the Haridwar corridor nudged sideways."""
+        for pid in KERALA_PARCELS:
+            ring = store.parcels[pid]["geometry"]["coordinates"][0]
+            lon = sum(pt[0] for pt in ring[:-1]) / 4
+            lat = sum(pt[1] for pt in ring[:-1]) / 4
+            assert 76.30 <= lon <= 76.45, (pid, lon)
+            assert 9.30 <= lat <= 9.50, (pid, lat)
+
+    def test_kerala_land_is_not_held_by_uttarakhand_departments(self, store: Store):
+        for pid in KERALA_PARCELS:
+            department = store.parcels[pid]["owning_department"]
+            assert "Uttarakhand" not in department, (pid, department)
+            assert "Haridwar" not in department, (pid, department)
+
+    def test_ulpin_carries_the_issuing_state(self, store: Store):
+        for pid in KERALA_PARCELS:
+            assert store.parcels[pid]["ulpin"].startswith("KL")
+        assert store.parcels["parcel-1"]["ulpin"].startswith("UK")
+
+    def test_named_for_the_console(self):
+        assert JURISDICTION_NAMES["taluk-ambalapuzha"] == "Ambalapuzha Taluk"
+        assert JURISDICTION_NAMES["dist-alappuzha"] == "Alappuzha District"
+
+    def test_protagonist_ids_did_not_shift(self, store: Store):
+        """Kerala rows are appended, so the demo script stays true."""
+        assert store.alerts["alert-1"]["parcel_id"] == "parcel-1"
+        assert store.parcels["parcel-1"]["jurisdiction_id"] == "taluk-a1"
+        assert store.cases["case-1"].parcel_id == "parcel-1"
+
+
+class TestAuthorityIsolation:
+    def test_kerala_officer_cannot_see_hrda_parcels(
+        self, client: TestClient, kerala_token: str
+    ):
+        resp = client.get("/parcels", headers=auth_headers(kerala_token))
+        assert resp.status_code == 200
+        assert {f["properties"]["id"] for f in resp.json()["features"]} == KERALA_PARCELS
+
+        assert client.get(
+            "/parcels/parcel-1", headers=auth_headers(kerala_token)
+        ).status_code == 404
+
+    def test_hrda_officer_cannot_see_kerala_parcels(
+        self, client: TestClient, hrda_token: str
+    ):
+        visible = {
+            f["properties"]["id"]
+            for f in client.get("/parcels", headers=auth_headers(hrda_token)).json()[
+                "features"
+            ]
+        }
+        assert visible.isdisjoint(KERALA_PARCELS)
+        for pid in sorted(KERALA_PARCELS):
+            assert client.get(
+                f"/parcels/{pid}", headers=auth_headers(hrda_token)
+            ).status_code == 404
+
+    def test_alerts_are_scoped_to_the_authority_too(
+        self, client: TestClient, kerala_token: str, hrda_token: str
+    ):
+        kl = client.get("/alerts", headers=auth_headers(kerala_token)).json()
+        assert kl, "Ambalapuzha should have seeded alerts to triage"
+        assert {a["parcel_id"] for a in kl} <= KERALA_PARCELS
+
+        hr = client.get("/alerts", headers=auth_headers(hrda_token)).json()
+        assert {a["parcel_id"] for a in hr}.isdisjoint(KERALA_PARCELS)
+
+    def test_a_kerala_officer_cannot_tag_an_hrda_parcel(
+        self, client: TestClient, store: Store
+    ):
+        admin = token_for("kl-admin", Role.DATA_ADMIN, "state-kl")
+        resp = client.post(
+            "/parcels/parcel-1/tags",
+            headers=auth_headers(admin),
+            json={"tag": "reaching-across-india"},
+        )
+        assert resp.status_code == 404
+        assert store.parcels["parcel-1"]["tags"] == ["court-monitored"]
+
+
+class TestCaseTransferAcrossAuthorities:
+    """`POST /cases/{id}/transfer` exists for handovers within an authority.
+
+    Adding a second authority made "any known jurisdiction" too permissive,
+    and the membership check itself too *strict* -- both are covered here.
+    """
+
+    def _hrda_case(self, store: Store) -> str:
+        return next(
+            cid
+            for cid, rec in store.cases.items()
+            if store.tree.is_within("state", rec.jurisdiction_id)
+        )
+
+    def test_transfer_within_the_authority_still_works(
+        self, client: TestClient, store: Store, hrda_token: str
+    ):
+        case_id = self._hrda_case(store)
+        target = (
+            "taluk-b1"
+            if store.tree.is_within("dist-a", store.cases[case_id].jurisdiction_id)
+            else "taluk-a1"
+        )
+        resp = client.post(
+            f"/cases/{case_id}/transfer",
+            headers=auth_headers(hrda_token),
+            json={"to_jurisdiction_id": target, "reason": "survey handover"},
+        )
+        assert resp.status_code == 200
+        assert store.cases[case_id].jurisdiction_id == target
+
+    def test_transfer_to_another_authority_is_refused(
+        self, client: TestClient, store: Store, hrda_token: str
+    ):
+        case_id = self._hrda_case(store)
+        before = store.cases[case_id].jurisdiction_id
+
+        resp = client.post(
+            f"/cases/{case_id}/transfer",
+            headers=auth_headers(hrda_token),
+            json={"to_jurisdiction_id": "taluk-ambalapuzha", "reason": "nope"},
+        )
+        assert resp.status_code == 409
+        detail = resp.json()["detail"]
+        assert "separate authorities" in detail
+        # Named so the officer can tell what was refused; raw ids like
+        # "state-kl" would explain nothing.
+        assert "Haridwar" in detail and "Kerala" in detail
+        assert "state-kl" not in detail
+        # Refused means unchanged, not "moved and then complained".
+        assert store.cases[case_id].jurisdiction_id == before
+
+    def test_refusal_does_not_claim_the_target_is_unknown(
+        self, client: TestClient, store: Store, hrda_token: str
+    ):
+        """A false 'unknown jurisdiction' would send an officer hunting for a
+        typo in an id that is perfectly real."""
+        case_id = self._hrda_case(store)
+        resp = client.post(
+            f"/cases/{case_id}/transfer",
+            headers=auth_headers(hrda_token),
+            json={"to_jurisdiction_id": "taluk-ambalapuzha", "reason": "nope"},
+        )
+        assert "unknown jurisdiction" not in resp.json()["detail"]
+
+    def test_a_genuinely_unknown_jurisdiction_is_still_a_400(
+        self, client: TestClient, store: Store, hrda_token: str
+    ):
+        case_id = self._hrda_case(store)
+        resp = client.post(
+            f"/cases/{case_id}/transfer",
+            headers=auth_headers(hrda_token),
+            json={"to_jurisdiction_id": "taluk-atlantis", "reason": "nope"},
+        )
+        assert resp.status_code == 400
+        assert "unknown jurisdiction" in resp.json()["detail"]
+
+
+class TestAuthorityOf:
+    def test_resolves_nodes_to_their_authority(self, store: Store):
+        assert store.authority_of("taluk-a1") == "state"
+        assert store.authority_of("dist-b") == "state"
+        assert store.authority_of("taluk-ambalapuzha") == "state-kl"
+        assert store.authority_of("dist-alappuzha") == "state-kl"
+
+    def test_the_deployment_root_belongs_to_no_authority(self, store: Store):
+        assert store.authority_of("deployment") is None
+
+    def test_a_single_authority_tree_is_unpartitioned(self):
+        """Stores that never opt in keep the old behaviour exactly."""
+        store = Store(jurisdiction_rows=[("state", None), ("dist-a", "state")])
+        assert store.authority_ids == set()
+        assert store.authority_of("dist-a") is None
+
+
+class TestPersonas:
+    def test_kerala_personas_are_offered_and_scoped(self, store: Store, monkeypatch):
+        demo_client = demo_client_for(store, monkeypatch)
+        personas = {p["id"]: p for p in demo_client.get("/demo/personas").json()}
+
+        assert "co-ambalapuzha" in personas
+        assert personas["co-ambalapuzha"]["jurisdiction_id"] == "taluk-ambalapuzha"
+        assert personas["co-ambalapuzha"]["jurisdiction_name"] == "Ambalapuzha Taluk"
+        assert personas["co-ambalapuzha"]["visible_parcels"] == len(KERALA_PARCELS)
+
+    def test_no_persona_spans_both_authorities(self, store: Store, monkeypatch):
+        """A login covering Uttarakhand and Kerala would frame the console's
+        map on all of India and corresponds to no real officer."""
+        demo_client = demo_client_for(store, monkeypatch)
+        for persona in demo_client.get("/demo/personas").json():
+            assert store.authority_of(persona["jurisdiction_id"]) is not None, persona["id"]
+
+    def test_logging_in_as_ambalapuzha_yields_a_working_scoped_token(
+        self, store: Store, monkeypatch
+    ):
+        demo_client = demo_client_for(store, monkeypatch)
+        token = demo_client.post(
+            "/demo/login", json={"persona_id": "co-ambalapuzha"}
+        ).json()["token"]
+        resp = demo_client.get("/parcels", headers=auth_headers(token))
+        assert resp.status_code == 200
+        assert {f["properties"]["id"] for f in resp.json()["features"]} == KERALA_PARCELS
