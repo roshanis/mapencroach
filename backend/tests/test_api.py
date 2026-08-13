@@ -1801,23 +1801,57 @@ class TestCaseTransfer:
 
 
 class TestJurisdictions:
-    """GET /jurisdictions is administrative reference data (the full tree,
-    not scoped to the caller) used to populate handover-target pickers --
-    any authenticated role may read it, since choosing a transfer target
-    requires seeing jurisdictions outside one's own scope."""
+    """GET /jurisdictions is administrative reference data used to populate
+    handover-target pickers. It is not scoped to the caller's own
+    jurisdiction -- choosing a transfer target requires seeing outside it --
+    but it IS scoped to the caller's authority, because a transfer across
+    authorities is refused and listing another government's nodes would
+    offer targets that can only fail."""
 
-    def test_returns_full_tree_in_stored_row_order(
+    def test_returns_the_callers_whole_authority_in_stored_row_order(
         self, client: TestClient, dist_a_token: str, store: Store
     ):
         resp = client.get("/jurisdictions", headers=auth_headers(dist_a_token))
         assert resp.status_code == 200
         body = resp.json()
-        assert len(body) == len(store.jurisdiction_rows)
-        assert [(row["id"], row["parent_id"]) for row in body] == list(
-            store.jurisdiction_rows
-        )
+        # A dist-a officer still sees all of HRDA, dist-b included: that is
+        # the whole point of not scoping this to their own subtree.
+        hrda = store.tree.scope_ids("state")
+        assert [row["id"] for row in body] == [
+            jid for jid, _ in store.jurisdiction_rows if jid in hrda
+        ]
         for row in body:
             assert set(row) == {"id", "name", "parent_id"}
+
+    def test_another_authority_is_not_listed(
+        self, client: TestClient, dist_a_token: str
+    ):
+        ids = {
+            row["id"]
+            for row in client.get(
+                "/jurisdictions", headers=auth_headers(dist_a_token)
+            ).json()
+        }
+        assert ids.isdisjoint({"state-kl", "dist-alappuzha", "taluk-ambalapuzha"})
+        # The deployment root is above every authority and is not a legal
+        # transfer target either.
+        assert "deployment" not in ids
+
+    def test_the_authority_is_reported_as_a_root_not_a_dangling_edge(
+        self, client: TestClient, state_token: str
+    ):
+        """`state`'s real parent is the deployment root, which is not in the
+        response -- emitting it would hand the client an edge to a node it
+        was never sent."""
+        by_id = {
+            row["id"]: row
+            for row in client.get(
+                "/jurisdictions", headers=auth_headers(state_token)
+            ).json()
+        }
+        assert by_id["state"]["parent_id"] is None
+        parents = {row["parent_id"] for row in by_id.values()} - {None}
+        assert parents <= set(by_id), "every parent_id must resolve within the response"
 
     def test_names_come_from_jurisdiction_names_map(
         self, client: TestClient, state_token: str
@@ -1827,11 +1861,6 @@ class TestJurisdictions:
         by_id = {row["id"]: row for row in resp.json()}
         assert by_id["dist-a"]["name"] == JURISDICTION_NAMES["dist-a"]
         assert by_id["dist-a"]["parent_id"] == "state"
-        # HRDA is an authority, not the tree root: the deployment root sits
-        # above it so a second authority can be a sibling rather than a
-        # child. Only that root has no parent.
-        assert by_id["state"]["parent_id"] == "deployment"
-        assert by_id["deployment"]["parent_id"] is None
 
     def test_unknown_id_falls_back_to_the_raw_id(self, client: TestClient, state_token: str):
         store = Store(

@@ -84,7 +84,9 @@ Two consequences worth knowing:
   of one authority is the point of `POST /cases/{id}/transfer`; handing an HRDA
   case to Kerala is refused with 409, because it would move the case to a
   government with no power over the land and delete it from the only officers
-  who can act on it.
+  who can act on it. `GET /jurisdictions` is scoped to the caller's authority to
+  match — it feeds the console's transfer-target picker, so every option it
+  offers must be one the API will actually accept.
 
 Parcel geometry traces the real taluk: the Vembanad/Punnamada backwater on its
 east, the Alappuzha–Changanassery canal through the middle, Kuttanad's

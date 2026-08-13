@@ -1575,17 +1575,39 @@ def create_app(
 
     @app.get("/jurisdictions")
     def list_jurisdictions(store: StoreDep, user: CurrentUser) -> list[dict[str, Any]]:
-        # Deliberately NOT jurisdiction-scoped: this is administrative
-        # reference data (the full tree), needed so a caller can pick a
+        # Deliberately NOT scoped to the caller's own jurisdiction: this is
+        # administrative reference data, needed so a caller can pick a
         # handover target outside their own scope -- e.g. the case-transfer
         # UI must be able to list dist-b's taluks for a dist-a officer.
+        #
+        # It is scoped to the caller's *authority*, though. Two reasons:
+        # a transfer across authorities is refused (see transfer_case), so
+        # listing another government's nodes here would populate the
+        # transfer UI with targets that can only ever fail; and one
+        # authority's officers have no business enumerating another's
+        # internal division structure. An unpartitioned deployment (no
+        # `authority_ids`) still gets the whole tree, exactly as before.
+        authority_id = (
+            store.authority_of(user.jurisdiction_id)
+            if user.jurisdiction_id in store.tree.scope_ids(store.tree.root_id)
+            else None
+        )
+        visible = store.tree.scope_ids(authority_id) if authority_id else None
         return [
             {
                 "id": jurisdiction_id,
+                # The authority's own parent (the deployment root) is not in
+                # the visible set, so report it as a root here rather than
+                # emitting a parent_id that dangles -- a client building a
+                # tree from these rows would otherwise be handed an edge to
+                # a node it was never sent.
                 "name": JURISDICTION_NAMES.get(jurisdiction_id, jurisdiction_id),
-                "parent_id": parent_id,
+                "parent_id": (
+                    parent_id if visible is None or parent_id in visible else None
+                ),
             }
             for jurisdiction_id, parent_id in store.jurisdiction_rows
+            if visible is None or jurisdiction_id in visible
         ]
 
     # ------------------------------------------------------------------

@@ -308,3 +308,68 @@ class TestPersonas:
         resp = demo_client.get("/parcels", headers=auth_headers(token))
         assert resp.status_code == 200
         assert {f["properties"]["id"] for f in resp.json()["features"]} == KERALA_PARCELS
+
+
+class TestJurisdictionsAreAuthorityScoped:
+    """`GET /jurisdictions` populates the case-transfer target picker.
+
+    It is deliberately not scoped to the caller's own jurisdiction (a
+    dist-a officer must be able to hand a case to dist-b), but once a
+    second authority exists, listing the whole tree would offer targets
+    that `transfer_case` can only refuse -- and would hand one government
+    the internal division structure of another.
+    """
+
+    def test_hrda_officer_sees_all_of_hrda_and_none_of_kerala(
+        self, client: TestClient, store: Store
+    ):
+        dist_a = token_for("dist-a-officer", Role.CASE_OFFICER, "dist-a")
+        ids = {row["id"] for row in client.get(
+            "/jurisdictions", headers=auth_headers(dist_a)
+        ).json()}
+        assert ids == store.tree.scope_ids("state")
+        assert "taluk-b1" in ids, "cross-district handover targets must still be offered"
+        assert ids.isdisjoint({"state-kl", "dist-alappuzha", "taluk-ambalapuzha"})
+        assert "deployment" not in ids
+
+    def test_kerala_officer_sees_only_kerala(
+        self, client: TestClient, store: Store, kerala_token: str
+    ):
+        ids = {row["id"] for row in client.get(
+            "/jurisdictions", headers=auth_headers(kerala_token)
+        ).json()}
+        assert ids == store.tree.scope_ids("state-kl")
+
+    def test_every_offered_target_is_actually_transferable(
+        self, client: TestClient, store: Store, hrda_token: str
+    ):
+        """The picker must not offer a target the API will refuse.
+
+        This is the invariant the endpoint exists to preserve: the console
+        builds its dropdown from exactly this list.
+        """
+        case_id = next(
+            cid for cid, rec in store.cases.items()
+            if store.tree.is_within("state", rec.jurisdiction_id)
+        )
+        offered = [
+            row["id"] for row in client.get(
+                "/jurisdictions", headers=auth_headers(hrda_token)
+            ).json()
+        ]
+        for target in offered:
+            if target == store.cases[case_id].jurisdiction_id:
+                continue
+            resp = client.post(
+                f"/cases/{case_id}/transfer",
+                headers=auth_headers(hrda_token),
+                json={"to_jurisdiction_id": target, "reason": "picker check"},
+            )
+            assert resp.status_code == 200, (target, resp.status_code, resp.text)
+
+    def test_parent_ids_never_dangle(self, client: TestClient, kerala_token: str):
+        rows = client.get("/jurisdictions", headers=auth_headers(kerala_token)).json()
+        ids = {row["id"] for row in rows}
+        parents = {row["parent_id"] for row in rows} - {None}
+        assert parents <= ids
+        assert sum(1 for row in rows if row["parent_id"] is None) == 1
