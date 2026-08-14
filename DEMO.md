@@ -1,9 +1,9 @@
 # mapencroach — 5-Minute Demo Script
 
-Working software on **seeded demo data**: 30 parcels across six taluks of the
-Haridwar–Roorkee Development Authority (10 alerts, 5 cases), plus a second,
-unrelated authority — 5 parcels in Ambalapuzha taluk, Alappuzha, Kerala
-(2 alerts, 1 case).
+Working software on **seeded demo data**: 42 parcels across three unrelated
+authorities in three states — 30 in the Haridwar–Roorkee Development Authority
+(Uttarakhand), 5 in Ambalapuzha taluk, Alappuzha (Kerala), and 7 across Haveli
+and Mulshi taluks in Pune district (Maharashtra). 15 alerts, 7 cases.
 Say that up front — it builds trust, and the workflow you're showing is fully real.
 
 ---
@@ -166,13 +166,26 @@ For the strongest version of this, view as **Taluk Officer, Ambalapuzha**:
 > Kerala — backwater, canal, paddy and coastal land. Watch the map move
 > 2,000 km."
 
-The persona menu groups by authority, so Kerala is its own labelled section
-rather than two entries lost at the bottom of a list. Five Ambalapuzha
+The persona menu groups by authority, so Kerala and Maharashtra are their own
+labelled sections rather than entries lost at the bottom of a list. Five Ambalapuzha
 parcels, and the whole Haridwar–Roorkee estate is gone — not filtered,
 *absent*. This officer has their own case too, so the Stop 4 due-process
 walkthrough works here as well: it sits at Inspected, and trying to issue a
 show-cause notice without the notice document and dispatch proof is refused
-by the evidence guard. The Vice Chairman of HRDA cannot see these five either.
+by the evidence guard.
+
+Then **Taluk Officer, Haveli** for the third authority — Pune district,
+Maharashtra:
+
+> "A third government, and the same story: the Mula-Mutha riverbed, the
+> Khadakwasla canal, the hill forests. Neither Uttarakhand nor Kerala exists
+> for this officer — and neither does Mulshi, the taluk next door in their own
+> district."
+
+Pune's case sits one step further along, at Show Cause Issued, so the refusal
+it demonstrates is the **sequence** guard (jumping straight to an order) rather
+than Ambalapuzha's **evidence** guard. Between the two you can show two
+different guards without touching the HRDA data at all. The Vice Chairman of HRDA cannot see these five either.
 Ambalapuzha is a sibling of HRDA under the deployment root, not a taluk inside
 it, and no login is scoped above both: a single officer over Uttarakhand and
 Kerala is not a real thing, so the demo does not pretend it is.
@@ -181,11 +194,13 @@ Then view as **Vice Chairman, HRDA** and try to add a tag:
 
 > "The Vice Chairman sees everything — and can change nothing."
 
-The tag is refused with the role message on screen. Eight demo personas cover the
+The tag is refused with the role message on screen. Ten demo personas cover the
 spread: statewide viewer, district case officer, district survey officer,
 taluk-level case officer, statewide data admin, statewide legal officer, and two
-in a second authority — the Alappuzha district collector and the Ambalapuzha
-taluk officer. "Exit persona" in the banner returns to the default officer.
+each in the other two authorities — the Alappuzha district collector and
+Ambalapuzha taluk officer in Kerala, the Pune district collector and Haveli
+taluk officer in Maharashtra. "Exit persona" in the banner returns to the
+default officer.
 
 For a survey handoff, switch to **Survey Officer, Roorkee**, open
 `/parcels/parcel-7`, and use **Boundary grade review** to record a new grade with

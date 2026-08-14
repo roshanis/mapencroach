@@ -198,6 +198,27 @@ _DEMO_PERSONAS: list[dict[str, str]] = [
         "including reclamation of the Vembanad backwater. Cannot see the "
         "rest of Kerala, let alone Uttarakhand.",
     },
+    # Maharashtra. A third authority, so the console's authority grouping
+    # is exercised beyond the two-column case and scoping is shown to hold
+    # across states generally rather than as a one-off pairing.
+    {
+        "id": "collector-pune",
+        "name": "District Collector, Pune",
+        "role": "viewer",
+        "jurisdiction_id": "dist-pune",
+        "description": "Sees both Pune taluks in the demo - riverbed, canal, "
+        "hill forest, reservoir and the IT-belt fringe. Read-only, and "
+        "neither Kerala nor Uttarakhand exists for this login.",
+    },
+    {
+        "id": "co-haveli",
+        "name": "Taluk Officer, Haveli",
+        "role": "case_officer",
+        "jurisdiction_id": "taluk-haveli",
+        "description": "Runs cases for Haveli taluk, which wraps Pune city - "
+        "including filling in the Mula-Mutha riverbed. Cannot see Mulshi, "
+        "the neighbouring taluk in the same district.",
+    },
 ]
 
 

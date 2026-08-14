@@ -1,8 +1,8 @@
-"""The seeded tree holds two unrelated authorities.
+"""The seeded tree holds three unrelated authorities.
 
-HRDA (Uttarakhand) and Ambalapuzha taluk in Alappuzha (Kerala) are ~2,000 km
-apart and share no chain of command. They are siblings under a deployment
-root rather than one nested inside the other.
+HRDA (Uttarakhand), Ambalapuzha taluk in Alappuzha (Kerala) and Pune district
+(Maharashtra) span three states and share no chain of command. They are
+siblings under a deployment root rather than nested inside one another.
 
 Scoping is authorization here, so the interesting cases are all about the
 boundary *between* authorities -- which is a boundary that did not exist
@@ -482,17 +482,198 @@ class TestPersonaAuthorityLabelling:
         assert by_id["co-ambalapuzha"]["authority_id"] == "state-kl"
         assert by_id["co-ambalapuzha"]["authority_name"] == "Government of Kerala"
 
-    def test_personas_split_into_exactly_two_authorities(
-        self, store: Store, monkeypatch
-    ):
+    def test_personas_cover_every_seeded_authority(self, store: Store, monkeypatch):
+        """Asserts the authority *set*, not a count: a bare count silently
+        passes when an authority is added but given no persona, which is
+        exactly the state that makes a jurisdiction invisible in the
+        console's switcher."""
         demo_client = demo_client_for(store, monkeypatch)
         personas = demo_client.get("/demo/personas").json()
-        authorities = {p["authority_name"] for p in personas}
-        assert len(authorities) == 2, authorities
+        authorities = {p["authority_id"] for p in personas}
         assert None not in authorities, "every persona must sit under an authority"
+        assert authorities == store.authority_ids, (
+            "every seeded authority needs at least one persona, or it cannot "
+            "be reached from the console"
+        )
 
     def test_a_single_authority_deployment_reports_none(self):
         """`authority_of` returns None when nothing opted into a partition,
         which is what keeps that console's switcher a flat list."""
         plain = Store(jurisdiction_rows=[("state", None), ("dist-a", "state")])
         assert plain.authority_of("dist-a") is None
+
+
+PUNE_HAVELI_PARCELS = {"parcel-36", "parcel-37", "parcel-38", "parcel-39"}
+PUNE_MULSHI_PARCELS = {"parcel-40", "parcel-41", "parcel-42"}
+PUNE_PARCELS = PUNE_HAVELI_PARCELS | PUNE_MULSHI_PARCELS
+
+
+@pytest.fixture
+def pune_district_token() -> str:
+    return token_for("pune-collector", Role.VIEWER, "dist-pune")
+
+
+@pytest.fixture
+def haveli_token() -> str:
+    return token_for("haveli-officer", Role.CASE_OFFICER, "taluk-haveli")
+
+
+class TestPuneSeed:
+    def test_pune_hangs_off_maharashtra(self, store: Store):
+        assert store.tree.is_within("state-mh", "taluk-haveli")
+        assert store.tree.is_within("state-mh", "taluk-mulshi")
+        assert not store.tree.is_within("state", "dist-pune")
+        assert not store.tree.is_within("state-kl", "dist-pune")
+
+    def test_parcels_land_in_their_taluks(self, store: Store):
+        by_taluk: dict[str, set[str]] = {}
+        for pid, p in store.parcels.items():
+            by_taluk.setdefault(p["jurisdiction_id"], set()).add(pid)
+        assert by_taluk["taluk-haveli"] == PUNE_HAVELI_PARCELS
+        assert by_taluk["taluk-mulshi"] == PUNE_MULSHI_PARCELS
+
+    def test_parcels_sit_inside_the_real_pune_bbox(self, store: Store):
+        """Pune district, not the Haridwar corridor moved south."""
+        for pid in PUNE_PARCELS:
+            ring = store.parcels[pid]["geometry"]["coordinates"][0]
+            lon = sum(pt[0] for pt in ring[:-1]) / 4
+            lat = sum(pt[1] for pt in ring[:-1]) / 4
+            assert 73.40 <= lon <= 74.00, (pid, lon)
+            assert 18.30 <= lat <= 18.70, (pid, lat)
+
+    def test_land_is_held_by_maharashtra_departments(self, store: Store):
+        for pid in PUNE_PARCELS:
+            department = store.parcels[pid]["owning_department"]
+            assert not any(
+                wrong in department
+                for wrong in ("Uttarakhand", "Haridwar", "Kerala", "Ambalapuzha")
+            ), (pid, department)
+
+    def test_ulpin_carries_maharashtra(self, store: Store):
+        for pid in PUNE_PARCELS:
+            assert store.parcels[pid]["ulpin"].startswith("MH"), pid
+
+    def test_named_for_the_console(self):
+        assert JURISDICTION_NAMES["dist-pune"] == "Pune District"
+        assert JURISDICTION_NAMES["taluk-haveli"] == "Haveli Taluk"
+        assert JURISDICTION_NAMES["state-mh"] == "Government of Maharashtra"
+
+    def test_earlier_authorities_are_undisturbed(self, store: Store):
+        """Pune rows are appended, so nothing upstream renumbers."""
+        assert store.alerts["alert-1"]["parcel_id"] == "parcel-1"
+        assert store.alerts["alert-11"]["parcel_id"] == "parcel-31"
+        assert store.cases["case-1"].parcel_id == "parcel-1"
+        assert store.cases["case-6"].parcel_id == "parcel-31"
+
+
+class TestThreeWayIsolation:
+    def test_each_authority_sees_only_its_own(self, client: TestClient, store: Store):
+        cases = [
+            (token_for("u", Role.CASE_OFFICER, "state"), "state"),
+            (token_for("k", Role.CASE_OFFICER, "state-kl"), "state-kl"),
+            (token_for("m", Role.CASE_OFFICER, "state-mh"), "state-mh"),
+        ]
+        for token, authority in cases:
+            visible = {
+                f["properties"]["id"]
+                for f in client.get("/parcels", headers=auth_headers(token)).json()[
+                    "features"
+                ]
+            }
+            expected = {
+                pid
+                for pid, p in store.parcels.items()
+                if store.authority_of(p["jurisdiction_id"]) == authority
+            }
+            assert visible == expected, authority
+
+    def test_pune_cannot_reach_the_other_two(
+        self, client: TestClient, pune_district_token: str
+    ):
+        for pid in ("parcel-1", "parcel-31"):
+            assert client.get(
+                f"/parcels/{pid}", headers=auth_headers(pune_district_token)
+            ).status_code == 404
+
+    def test_neither_of_the_others_can_reach_pune(
+        self, client: TestClient, hrda_token: str, kerala_token: str
+    ):
+        for token in (hrda_token, kerala_token):
+            for pid in sorted(PUNE_PARCELS):
+                assert client.get(
+                    f"/parcels/{pid}", headers=auth_headers(token)
+                ).status_code == 404
+
+    def test_a_taluk_officer_does_not_see_the_sibling_taluk(
+        self, client: TestClient, haveli_token: str
+    ):
+        """Scoping inside an authority still bites, not just between them."""
+        visible = {
+            f["properties"]["id"]
+            for f in client.get("/parcels", headers=auth_headers(haveli_token)).json()[
+                "features"
+            ]
+        }
+        assert visible == PUNE_HAVELI_PARCELS
+        assert visible.isdisjoint(PUNE_MULSHI_PARCELS)
+
+    def test_transfer_from_pune_to_kerala_is_refused(
+        self, client: TestClient, store: Store, haveli_token: str
+    ):
+        case_id = next(
+            cid for cid, rec in store.cases.items()
+            if rec.jurisdiction_id == "taluk-haveli"
+        )
+        resp = client.post(
+            f"/cases/{case_id}/transfer",
+            headers=auth_headers(haveli_token),
+            json={"to_jurisdiction_id": "taluk-ambalapuzha", "reason": "nope"},
+        )
+        assert resp.status_code == 409
+        assert "separate authorities" in resp.json()["detail"]
+
+    def test_transfer_within_pune_district_works(
+        self, client: TestClient, store: Store, haveli_token: str
+    ):
+        case_id = next(
+            cid for cid, rec in store.cases.items()
+            if rec.jurisdiction_id == "taluk-haveli"
+        )
+        resp = client.post(
+            f"/cases/{case_id}/transfer",
+            headers=auth_headers(haveli_token),
+            json={"to_jurisdiction_id": "taluk-mulshi", "reason": "district handover"},
+        )
+        assert resp.status_code == 200
+        assert store.cases[case_id].jurisdiction_id == "taluk-mulshi"
+
+
+class TestPuneHasAWorkingCase:
+    def test_the_haveli_officer_has_a_case(
+        self, client: TestClient, haveli_token: str
+    ):
+        cases = client.get("/cases", headers=auth_headers(haveli_token)).json()
+        assert len(cases) == 1
+        assert cases[0]["parcel_id"] in PUNE_HAVELI_PARCELS
+        assert cases[0]["state"] == "SHOW_CAUSE_ISSUED"
+
+    def test_the_sequence_guard_bites(self, client: TestClient, haveli_token: str):
+        """Pune sits one step past Ambalapuzha, so the refusal it
+        demonstrates is a sequence violation rather than a missing
+        artifact -- the two new authorities show different guards."""
+        case_id = client.get("/cases", headers=auth_headers(haveli_token)).json()[0]["id"]
+        resp = client.post(
+            f"/cases/{case_id}/transitions",
+            headers=auth_headers(haveli_token),
+            json={"to_state": "ORDER_ISSUED"},
+        )
+        assert resp.status_code in (403, 409)
+
+    def test_the_legal_next_step_works(self, client: TestClient, haveli_token: str):
+        case_id = client.get("/cases", headers=auth_headers(haveli_token)).json()[0]["id"]
+        resp = client.post(
+            f"/cases/{case_id}/transitions",
+            headers=auth_headers(haveli_token),
+            json={"to_state": "RESPONSE_WINDOW"},
+        )
+        assert resp.status_code == 201, resp.text

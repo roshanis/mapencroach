@@ -6,9 +6,9 @@ notify, and enforce through a legally defensible workflow. Full plan: [PLAN.md](
 
 ## Quick start (demo, no database needed)
 
-**1. Backend API** (seeded with 30 demo parcels across six Haridwar–Roorkee
-taluks, plus 5 in Ambalapuzha taluk, Kerala — see
-[Two authorities](#two-authorities-in-the-demo-seed)):
+**1. Backend API** (seeded with 42 demo parcels across three unrelated
+authorities in three states — see
+[Three authorities](#three-authorities-in-the-demo-seed)):
 
 ```bash
 cd backend
@@ -53,27 +53,30 @@ console falls back to MapLibre when either value is absent or Google cannot
 load; never commit the API key, and restrict it to approved web referrers and
 the Maps JavaScript API.
 
-## Two authorities in the demo seed
+## Three authorities in the demo seed
 
-The seed spans two unrelated governments so that jurisdiction scoping can be
-demonstrated across a real boundary, not just between divisions of one body:
+The seed spans three unrelated governments in three states, so jurisdiction
+scoping can be demonstrated across real boundaries rather than only between
+divisions of one body:
 
 ```
 mapencroach demo deployment          <- deployment root, no officer is scoped here
 ├── Haridwar–Roorkee Development Authority   (Uttarakhand)  30 parcels
 │   ├── Haridwar Division  → Haridwar City, Kankhal, Laksar
 │   └── Roorkee Division   → Roorkee City, Bahadarabad, Narsan
-└── Government of Kerala
-    └── Alappuzha District → Ambalapuzha Taluk               5 parcels
+├── Government of Kerala
+│   └── Alappuzha District → Ambalapuzha Taluk               5 parcels
+└── Government of Maharashtra
+    └── Pune District      → Haveli Taluk, Mulshi Taluk      7 parcels
 ```
 
-Ambalapuzha is a sibling of HRDA, not a taluk inside it — it is ~2,000 km away
-and under a different state government, and modelling it as an HRDA taluk would
+Each is a sibling of the others, not nested inside one: they sit in different
+states under different governments, and modelling any as a taluk of HRDA would
 put a false claim about Indian administrative geography in front of every
 officer. The `deployment` root exists only because the tree is single-rooted by
-construction; **no persona is scoped to it**, since a login spanning Uttarakhand
-and Kerala would frame the map on all of India and corresponds to no real
-officer.
+construction; **no persona is scoped to it**, since a login spanning Uttarakhand,
+Kerala and Maharashtra would frame the map on all of India and corresponds to no
+real officer.
 
 Two consequences worth knowing:
 
@@ -88,18 +91,24 @@ Two consequences worth knowing:
   match — it feeds the console's transfer-target picker, so every option it
   offers must be one the API will actually accept.
 
-Ambalapuzha carries its own case (backwater reclamation, parked at
-`INSPECTED`) so a Kerala login has a real due-process rail to work, not
-just alerts. The console groups the persona switcher by authority, so the
-two governments read as separate rather than as one long list.
+Kerala and Maharashtra each carry their own case, so those logins have a real
+due-process rail to work rather than only alerts — and they sit at different
+steps on purpose: Ambalapuzha at `INSPECTED`, where the **evidence** guard
+refuses a show-cause notice with no notice document or dispatch proof, and Pune
+at `SHOW_CAUSE_ISSUED`, where the **sequence** guard refuses a jump straight to
+an order. The console groups the persona switcher by authority, so the three
+governments read as separate rather than as one long list.
 
-Parcel geometry traces the real taluk: the Vembanad/Punnamada backwater on its
-east, the Alappuzha–Changanassery canal through the middle, Kuttanad's
-below-sea-level paddy to the south-east, the temple town on NH-66, and the
-coastal strip on the Arabian Sea.
+Parcel geometry traces the real ground. Ambalapuzha: the Vembanad/Punnamada
+backwater on its east, the Alappuzha–Changanassery canal through the middle,
+Kuttanad's below-sea-level paddy to the south-east, the temple town on NH-66,
+and the coastal strip on the Arabian Sea. Pune: the Mula-Mutha riverbed and the
+Khadakwasla canal system in Haveli, the hill reserved forests, and in Mulshi the
+reservoir backwater and the Hinjawadi IT-belt fringe.
 
 The console's built-in fixture mode (no backend) is a separate illustrative
-dataset with `PCL-…` parcel ids and does not mirror this seed, Kerala included.
+dataset with `PCL-…` parcel ids and mirrors none of this seed, the Kerala and
+Maharashtra authorities included.
 
 ## Real Sentinel-2 scenes over a parcel
 

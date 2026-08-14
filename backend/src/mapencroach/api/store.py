@@ -118,13 +118,13 @@ def _square_polygon(center_lon: float, center_lat: float, half_size: float) -> d
 # Human-readable names for seed jurisdiction ids. Ids are the stable API
 # surface (tokens pin them); names are presentation only.
 #
-# The demo carries two unrelated authorities, ~2,000 km apart: the
-# Haridwar-Roorkee corridor in Uttarakhand and Ambalapuzha taluk in
-# Alappuzha, Kerala. They are siblings under a deployment-level root
-# rather than one being nested inside the other, because Ambalapuzha is
-# in no sense part of HRDA -- modelling it as an HRDA taluk would put a
-# false statement about Indian administrative geography into the record
-# every officer sees.
+# The demo carries three unrelated authorities in three states: the
+# Haridwar-Roorkee corridor in Uttarakhand, Ambalapuzha taluk in
+# Alappuzha (Kerala), and Pune district (Maharashtra). They are siblings
+# under a deployment-level root rather than nested inside one another,
+# because none of them contains the others -- modelling any as a taluk of
+# HRDA would put a false statement about Indian administrative geography
+# into the record every officer sees.
 JURISDICTION_NAMES: dict[str, str] = {
     "deployment": "mapencroach demo deployment",
     "state": "Haridwar–Roorkee Development Authority",
@@ -139,6 +139,10 @@ JURISDICTION_NAMES: dict[str, str] = {
     "state-kl": "Government of Kerala",
     "dist-alappuzha": "Alappuzha District",
     "taluk-ambalapuzha": "Ambalapuzha Taluk",
+    "state-mh": "Government of Maharashtra",
+    "dist-pune": "Pune District",
+    "taluk-haveli": "Haveli Taluk",
+    "taluk-mulshi": "Mulshi Taluk",
 }
 
 
@@ -426,8 +430,14 @@ class Store:
             ("state-kl", "deployment"),
             ("dist-alappuzha", "state-kl"),
             ("taluk-ambalapuzha", "dist-alappuzha"),
+            ("state-mh", "deployment"),
+            ("dist-pune", "state-mh"),
+            ("taluk-haveli", "dist-pune"),
+            ("taluk-mulshi", "dist-pune"),
         ]
-        store = cls(jurisdiction_rows=rows, authority_ids={"state", "state-kl"})
+        store = cls(
+            jurisdiction_rows=rows, authority_ids={"state", "state-kl", "state-mh"}
+        )
 
         # Captured once so every seeded timestamp below is relative to "now"
         # at seed/startup time -- the demo should never read as stale no
@@ -494,6 +504,21 @@ class Store:
             ("parcel-33", "AMB-203", "taluk-ambalapuzha", "revenue", "B", 76.412, 9.372),
             ("parcel-34", "AMB-204", "taluk-ambalapuzha", "municipal", "B", 76.353, 9.379),
             ("parcel-35", "AMB-205", "taluk-ambalapuzha", "housing", "C", 76.331, 9.345),
+            # --- taluk-haveli (Haveli, Pune district, Maharashtra) ---
+            # Haveli wraps Pune city. The Mula-Mutha riverbed and the
+            # Khadakwasla canal system are where Pune's encroachment
+            # disputes actually sit, and the hill reserved forests
+            # (Vetal/Taljai) are the other standing pressure.
+            ("parcel-36", "PN-301", "taluk-haveli", "waterbody", "A", 73.878, 18.552),
+            ("parcel-37", "PN-302", "taluk-haveli", "irrigation", "B", 73.790, 18.462),
+            ("parcel-38", "PN-303", "taluk-haveli", "municipal", "B", 73.807, 18.507),
+            ("parcel-39", "PN-304", "taluk-haveli", "forest", "C", 73.822, 18.497),
+            # --- taluk-mulshi (Mulshi, Pune district) ---
+            # West of the city: the Mulshi reservoir backwater, and the
+            # Hinjawadi/Bhugaon fringe where the IT belt meets it.
+            ("parcel-40", "PN-305", "taluk-mulshi", "waterbody", "A", 73.505, 18.497),
+            ("parcel-41", "PN-306", "taluk-mulshi", "industrial", "C", 73.738, 18.591),
+            ("parcel-42", "PN-307", "taluk-mulshi", "housing", "B", 73.755, 18.520),
         ]
         # Kerala parcels are listed explicitly because the
         # category->department fallback below is Uttarakhand-specific;
@@ -505,8 +530,18 @@ class Store:
             "parcel-34": "Ambalapuzha Grama Panchayat",
             "parcel-35": "Kerala State Housing Board",
         }
+        _MAHARASHTRA_DEPARTMENTS = {
+            "parcel-36": "Water Resources Department, Maharashtra",
+            "parcel-37": "Water Resources Department, Maharashtra",
+            "parcel-38": "Pune Municipal Corporation",
+            "parcel-39": "Forest Department, Maharashtra",
+            "parcel-40": "Water Resources Department, Maharashtra",
+            "parcel-41": "Maharashtra Industrial Development Corporation",
+            "parcel-42": "Pune Metropolitan Region Development Authority",
+        }
         _OWNING_DEPARTMENTS = {
             **_KERALA_DEPARTMENTS,
+            **_MAHARASHTRA_DEPARTMENTS,
             "parcel-1": "Irrigation Department, Uttarakhand",
             "parcel-2": "Revenue Department",
             "parcel-3": "Forest Department, Uttarakhand",
@@ -527,7 +562,11 @@ class Store:
         }
         # ULPIN carries the state and district it was issued under, so it
         # cannot be one fixed prefix once the demo spans two states.
-        _ULPIN_CODES = {"taluk-ambalapuzha": ("KL", "AL")}
+        _ULPIN_CODES = {
+            "taluk-ambalapuzha": ("KL", "AL"),
+            "taluk-haveli": ("MH", "PN"),
+            "taluk-mulshi": ("MH", "PN"),
+        }
         for i, (
             parcel_id,
             survey_no,
@@ -651,6 +690,12 @@ class Store:
             # actually litigates.
             ("parcel-31", AlertTier.RED, 5600.0, "OPEN", 5, 10, 35),
             ("parcel-33", AlertTier.AMBER, 2800.0, "OPEN", 12, 14, 55),
+            # Pune. Appended for the same reason as Ambalapuzha above.
+            # parcel-36 is Mula-Mutha riverbed on a Grade A boundary --
+            # riverbed filling is the encroachment Pune actually litigates.
+            ("parcel-36", AlertTier.RED, 7200.0, "OPEN", 6, 9, 15),
+            ("parcel-39", AlertTier.AMBER, 3400.0, "UNDER_REVIEW", 13, 17, 5),
+            ("parcel-40", AlertTier.GREEN, 900.0, "OPEN", 20, 8, 50),
         ]
         alert_ids: list[str] = []
         for parcel_id, tier, area_m2, status, days_ago, hour, minute in alert_specs:
@@ -968,6 +1013,54 @@ class Store:
         )
         store.record_audit(
             actor="system", action="case.seed", object_type="case", object_id=case6.case_id
+        )
+
+        # Case 7: alert-13 (parcel-36, Haveli) — Pune's own case, so the
+        # third authority is a working jurisdiction rather than a map pin,
+        # on the same reasoning as case-6 above.
+        #
+        # Taken one step further than case-6, to SHOW_CAUSE_ISSUED: from
+        # there the refused move is a *sequence* violation (jumping to an
+        # order) rather than a missing artifact, so the two new authorities
+        # between them demonstrate different guards rather than repeating
+        # the same one.
+        case7 = Case(case_id=store.next_case_id(), state=CaseState.NEW)
+        _advance(
+            case7,
+            CaseState.TRIAGED,
+            "system",
+            _ago(now, 5, 9, 30),
+            {"triage_note": "RED alert: filling in the Mula-Mutha riverbed, Grade A boundary"},
+        )
+        _advance(
+            case7,
+            CaseState.INSPECTION_ASSIGNED,
+            "system",
+            _ago(now, 4, 14, 10),
+            {"inspector_id": "inspector-4"},
+        )
+        _advance(
+            case7,
+            CaseState.INSPECTED,
+            "inspector-4",
+            _ago(now, 2, 10, 25),
+            {"inspection_report": "report-007.pdf"},
+        )
+        _advance(
+            case7,
+            CaseState.SHOW_CAUSE_ISSUED,
+            "system",
+            _ago(now, 1, 16, 0),
+            {"notice_document": "notice-007.pdf", "dispatch_proof": "dispatch-007.pdf"},
+        )
+        store.cases[case7.case_id] = CaseRecord(
+            case=case7,
+            alert_id="alert-13",
+            parcel_id="parcel-36",
+            jurisdiction_id=store.parcels["parcel-36"]["jurisdiction_id"],
+        )
+        store.record_audit(
+            actor="system", action="case.seed", object_type="case", object_id=case7.case_id
         )
 
         return store
