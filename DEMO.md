@@ -1,6 +1,9 @@
 # mapencroach — 5-Minute Demo Script
 
-Working software on **seeded demo data** (30 parcels across six taluks of the Haridwar–Roorkee Development Authority, 10 alerts, 5 cases).
+Working software on **seeded demo data**: 30 parcels across six taluks of the
+Haridwar–Roorkee Development Authority (10 alerts, 5 cases), plus a second,
+unrelated authority — 5 parcels in Ambalapuzha taluk, Alappuzha, Kerala
+(2 alerts, 1 case).
 Say that up front — it builds trust, and the workflow you're showing is fully real.
 
 ---
@@ -163,8 +166,13 @@ For the strongest version of this, view as **Taluk Officer, Ambalapuzha**:
 > Kerala — backwater, canal, paddy and coastal land. Watch the map move
 > 2,000 km."
 
-Five Ambalapuzha parcels, and the whole Haridwar–Roorkee estate is gone — not
-filtered, *absent*. The Vice Chairman of HRDA cannot see these five either.
+The persona menu groups by authority, so Kerala is its own labelled section
+rather than two entries lost at the bottom of a list. Five Ambalapuzha
+parcels, and the whole Haridwar–Roorkee estate is gone — not filtered,
+*absent*. This officer has their own case too, so the Stop 4 due-process
+walkthrough works here as well: it sits at Inspected, and trying to issue a
+show-cause notice without the notice document and dispatch proof is refused
+by the evidence guard. The Vice Chairman of HRDA cannot see these five either.
 Ambalapuzha is a sibling of HRDA under the deployment root, not a taluk inside
 it, and no login is scoped above both: a single officer over Uttarakhand and
 Kerala is not a real thing, so the demo does not pretend it is.

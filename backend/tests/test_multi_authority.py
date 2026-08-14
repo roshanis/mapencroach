@@ -373,3 +373,126 @@ class TestJurisdictionsAreAuthorityScoped:
         parents = {row["parent_id"] for row in rows} - {None}
         assert parents <= ids
         assert sum(1 for row in rows if row["parent_id"] is None) == 1
+
+
+class TestAmbalapuzhaHasAWorkingCase:
+    """Kerala is a working jurisdiction, not a map pin.
+
+    A persona with alerts but structurally no cases cannot demonstrate the
+    due-process rail or the policy guards -- the platform's whole argument.
+    """
+
+    def _case_id(self, client: TestClient, token: str) -> str:
+        cases = client.get("/cases", headers=auth_headers(token)).json()
+        assert len(cases) == 1, cases
+        return cases[0]["id"]
+
+    def test_the_taluk_officer_has_a_case_queue(
+        self, client: TestClient, kerala_token: str
+    ):
+        cases = client.get("/cases", headers=auth_headers(kerala_token)).json()
+        assert cases, "an Ambalapuzha login must have a case to work"
+        assert cases[0]["parcel_id"] in KERALA_PARCELS
+
+    def test_hrda_cannot_see_the_kerala_case(
+        self, client: TestClient, hrda_token: str, kerala_token: str
+    ):
+        kerala_case = self._case_id(client, kerala_token)
+        assert client.get(
+            f"/cases/{kerala_case}", headers=auth_headers(hrda_token)
+        ).status_code == 404
+
+    def test_the_hrda_protagonist_cases_are_untouched(self, store: Store):
+        assert store.cases["case-1"].case.state.value == "SHOW_CAUSE_ISSUED"
+        assert store.cases["case-1"].alert_id == "alert-1"
+
+    def test_it_carries_a_real_due_process_history(
+        self, client: TestClient, kerala_token: str
+    ):
+        case_id = self._case_id(client, kerala_token)
+        detail = client.get(f"/cases/{case_id}", headers=auth_headers(kerala_token)).json()
+        assert detail["state"] == "INSPECTED"
+        states = [e["to_state"] for e in detail["events"]]
+        assert states == ["TRIAGED", "INSPECTION_ASSIGNED", "INSPECTED"]
+        # The rail is only meaningful if the evidence is attached to it.
+        assert any(
+            "report-006.pdf" in str(event.get("artifacts", {}))
+            for event in detail["events"]
+        )
+
+    def test_the_evidence_guard_bites_on_the_next_step(
+        self, client: TestClient, kerala_token: str
+    ):
+        """Parked at INSPECTED precisely so this refusal is demonstrable:
+        a show-cause notice cannot issue without the notice document and
+        dispatch proof."""
+        case_id = self._case_id(client, kerala_token)
+        resp = client.post(
+            f"/cases/{case_id}/transitions",
+            headers=auth_headers(kerala_token),
+            json={"to_state": "SHOW_CAUSE_ISSUED"},
+        )
+        assert resp.status_code == 409
+        detail = resp.json()["detail"]
+        assert "notice_document" in detail and "dispatch_proof" in detail
+
+    def test_the_sequence_guard_bites_too(
+        self, client: TestClient, kerala_token: str
+    ):
+        case_id = self._case_id(client, kerala_token)
+        resp = client.post(
+            f"/cases/{case_id}/transitions",
+            headers=auth_headers(kerala_token),
+            json={"to_state": "ORDER_ISSUED"},
+        )
+        assert resp.status_code in (403, 409)
+
+    def test_the_legal_step_is_reachable_with_the_paperwork(
+        self, client: TestClient, kerala_token: str
+    ):
+        """The guard must be an evidence guard, not a dead end -- supplying
+        what it asks for has to actually work."""
+        case_id = self._case_id(client, kerala_token)
+        resp = client.post(
+            f"/cases/{case_id}/transitions",
+            headers=auth_headers(kerala_token),
+            json={
+                "to_state": "SHOW_CAUSE_ISSUED",
+                "artifacts": {
+                    "notice_document": "notice-006.pdf",
+                    "dispatch_proof": "dispatch-006.pdf",
+                },
+            },
+        )
+        assert resp.status_code == 201, resp.text
+
+
+class TestPersonaAuthorityLabelling:
+    """The console groups the persona switcher by authority, so each
+    persona has to say which authority it belongs to. Deriving it
+    client-side from the jurisdiction *name* would break the moment an
+    authority is renamed."""
+
+    def test_each_persona_reports_its_authority(self, store: Store, monkeypatch):
+        demo_client = demo_client_for(store, monkeypatch)
+        by_id = {p["id"]: p for p in demo_client.get("/demo/personas").json()}
+
+        assert by_id["vc-hrda"]["authority_id"] == "state"
+        assert by_id["vc-hrda"]["authority_name"] == JURISDICTION_NAMES["state"]
+        assert by_id["co-ambalapuzha"]["authority_id"] == "state-kl"
+        assert by_id["co-ambalapuzha"]["authority_name"] == "Government of Kerala"
+
+    def test_personas_split_into_exactly_two_authorities(
+        self, store: Store, monkeypatch
+    ):
+        demo_client = demo_client_for(store, monkeypatch)
+        personas = demo_client.get("/demo/personas").json()
+        authorities = {p["authority_name"] for p in personas}
+        assert len(authorities) == 2, authorities
+        assert None not in authorities, "every persona must sit under an authority"
+
+    def test_a_single_authority_deployment_reports_none(self):
+        """`authority_of` returns None when nothing opted into a partition,
+        which is what keeps that console's switcher a flat list."""
+        plain = Store(jurisdiction_rows=[("state", None), ("dist-a", "state")])
+        assert plain.authority_of("dist-a") is None

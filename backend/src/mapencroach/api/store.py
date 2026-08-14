@@ -927,6 +927,49 @@ class Store:
             actor="system", action="case.seed", object_type="case", object_id=case5.case_id
         )
 
+        # Case 6: alert-11 (parcel-31, Ambalapuzha) — the second authority's
+        # own case, so Kerala is a working jurisdiction rather than a map
+        # pin: an Ambalapuzha login has a case queue, a due-process rail and
+        # the policy guards to demonstrate, exactly as an HRDA login does.
+        #
+        # Deliberately parked at INSPECTED rather than mirroring an HRDA
+        # case's state. The parcel is Grade A backwater and the next step
+        # is a show-cause notice, so the case sits at the point where the
+        # evidence guard actually bites -- attempting that transition
+        # without a notice document and dispatch proof is refused, which is
+        # the demo's whole argument.
+        case6 = Case(case_id=store.next_case_id(), state=CaseState.NEW)
+        _advance(
+            case6,
+            CaseState.TRIAGED,
+            "system",
+            _ago(now, 4, 10, 15),
+            {"triage_note": "RED alert: filling on Vembanad-system backwater, Grade A boundary"},
+        )
+        _advance(
+            case6,
+            CaseState.INSPECTION_ASSIGNED,
+            "system",
+            _ago(now, 3, 15, 40),
+            {"inspector_id": "inspector-3"},
+        )
+        _advance(
+            case6,
+            CaseState.INSPECTED,
+            "inspector-3",
+            _ago(now, 1, 11, 5),
+            {"inspection_report": "report-006.pdf"},
+        )
+        store.cases[case6.case_id] = CaseRecord(
+            case=case6,
+            alert_id="alert-11",
+            parcel_id="parcel-31",
+            jurisdiction_id=store.parcels["parcel-31"]["jurisdiction_id"],
+        )
+        store.record_audit(
+            actor="system", action="case.seed", object_type="case", object_id=case6.case_id
+        )
+
         return store
 
 

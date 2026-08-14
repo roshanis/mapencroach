@@ -52,6 +52,13 @@ def primary_alerts(store: Store) -> dict[str, dict]:
     return {aid: a for aid, a in store.alerts.items() if a["parcel_id"] in visible}
 
 
+def primary_cases(store: Store):
+    scope = store.tree.scope_ids(store.primary_authority_id)
+    return {
+        cid: rec for cid, rec in store.cases.items() if rec.jurisdiction_id in scope
+    }
+
+
 @pytest.fixture
 def store() -> Store:
     return Store.seed_demo()
@@ -666,7 +673,7 @@ class TestCases:
         resp = client.get("/cases", headers=auth_headers(state_token))
         assert resp.status_code == 200
         body = resp.json()
-        assert len(body) == len(store.cases)
+        assert len(body) == len(primary_cases(store))
         for item in body:
             for key in ("id", "alert_id", "parcel_id", "state"):
                 assert key in item
@@ -1167,7 +1174,7 @@ class TestExpandedSeed:
         assert store.alerts["alert-1"]["severity_score"] == 60.0
 
     def test_case_variety_including_paused_states(self, store: Store):
-        assert len(store.cases) == 5
+        assert len(primary_cases(store)) == 5
         states = {r.case.state.value for r in store.cases.values()}
         assert {"SHOW_CAUSE_ISSUED", "CLOSED", "STAYED_BY_COURT",
                 "SURVEY_REQUESTED", "RESPONSE_WINDOW"} <= states
@@ -1431,7 +1438,7 @@ class TestListPagination:
         resp = client.get("/cases", params={"limit": 2}, headers=auth_headers(state_token))
         assert resp.status_code == 200
         assert isinstance(resp.json(), list)
-        assert resp.headers["X-Total-Count"] == str(len(store.cases))
+        assert resp.headers["X-Total-Count"] == str(len(primary_cases(store)))
         assert len(resp.json()) == 2
 
 

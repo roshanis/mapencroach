@@ -19,6 +19,47 @@ interface PersonaMeta {
   jurisdiction_name?: string;
 }
 
+interface PersonaGroup {
+  key: string;
+  /** Heading text, or null for the single-authority case (no heading). */
+  name: string | null;
+  personas: Persona[];
+}
+
+/**
+ * Groups personas under their authority so a deployment holding more than
+ * one government reads as such, instead of as one long undifferentiated
+ * list where the second authority happens to be at the bottom.
+ *
+ * Returns a single unlabelled group when every persona shares an authority
+ * (or none report one, as with fixture data), so a single-authority console
+ * is visually unchanged rather than growing a redundant header. Original
+ * order is preserved within and across groups — the backend's persona order
+ * is deliberate, and re-sorting would shuffle the demo script's first pick.
+ */
+export function groupPersonasByAuthority(personas: Persona[]): PersonaGroup[] {
+  const groups: PersonaGroup[] = [];
+  const byKey = new Map<string, PersonaGroup>();
+
+  for (const persona of personas) {
+    const key = persona.authority_id ?? "";
+    let group = byKey.get(key);
+    if (!group) {
+      group = { key: key || "all", name: persona.authority_name ?? null, personas: [] };
+      byKey.set(key, group);
+      groups.push(group);
+    }
+    group.personas.push(persona);
+  }
+
+  // One group means one authority (or an older backend that reports none):
+  // a lone heading over the whole list adds nothing, so drop it.
+  if (groups.length <= 1) {
+    return groups.map((group) => ({ ...group, name: null }));
+  }
+  return groups;
+}
+
 function readPersonaMeta(): PersonaMeta | undefined {
   const raw = readCookie(PERSONA_META_COOKIE);
   if (raw) {
@@ -151,17 +192,39 @@ export function DemoMenu() {
           </div>
 
           {personas.length > 0 ? (
-            <ul className="max-h-64 overflow-y-auto py-1">
-              {personas.map((persona) => (
-                <li key={persona.id}>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => handleSelect(persona.id)}
-                    className="block w-full rounded px-2 py-1.5 text-left hover:bg-gray-100"
-                  >
-                    {persona.name}
-                  </button>
+            // `max-h-80` rather than the previous `max-h-64`: with two
+            // authorities the list is long enough that the second one sat
+            // entirely below the fold, which reads as "Kerala is missing"
+            // rather than "scroll down". Still capped and scrollable so a
+            // short viewport can never push the footer links off-screen.
+            <ul className="max-h-80 overflow-y-auto py-1">
+              {groupPersonasByAuthority(personas).map((group) => (
+                <li key={group.key}>
+                  {group.name && (
+                    // Sticky so the authority a row belongs to stays visible
+                    // while scrolling -- an unlabelled row in a scrolled list
+                    // gives no clue which government it answers to.
+                    <p
+                      data-testid="persona-authority-heading"
+                      className="sticky top-0 bg-white px-2 pb-0.5 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400"
+                    >
+                      {group.name}
+                    </p>
+                  )}
+                  <ul>
+                    {group.personas.map((persona) => (
+                      <li key={persona.id}>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => handleSelect(persona.id)}
+                          className="block w-full rounded px-2 py-1.5 text-left hover:bg-gray-100"
+                        >
+                          {persona.name}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
                 </li>
               ))}
             </ul>

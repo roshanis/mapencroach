@@ -234,10 +234,21 @@ def _enrich_persona(persona: dict[str, str], store: Store) -> dict[str, Any]:
     """Add live, store-derived context to a persona for the console UI."""
     scope = store.tree.scope_ids(persona["jurisdiction_id"])
     visible = sum(1 for p in store.parcels.values() if p["jurisdiction_id"] in scope)
+    # Which authority this persona belongs to, so the console can group the
+    # switcher by it. Derived here rather than guessed client-side from the
+    # jurisdiction name: the console would otherwise have to infer the tree
+    # structure from display strings, and get it wrong the moment an
+    # authority is renamed. None when the deployment has no authority
+    # partition, which is how a single-authority console keeps a flat list.
+    authority_id = store.authority_of(persona["jurisdiction_id"])
     return {
         **persona,
         "jurisdiction_name": JURISDICTION_NAMES.get(
             persona["jurisdiction_id"], persona["jurisdiction_id"]
+        ),
+        "authority_id": authority_id,
+        "authority_name": (
+            JURISDICTION_NAMES.get(authority_id, authority_id) if authority_id else None
         ),
         "visible_parcels": visible,
         "capabilities": _ROLE_CAPABILITIES.get(persona["role"], []),

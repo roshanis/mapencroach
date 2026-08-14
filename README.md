@@ -88,6 +88,11 @@ Two consequences worth knowing:
   match — it feeds the console's transfer-target picker, so every option it
   offers must be one the API will actually accept.
 
+Ambalapuzha carries its own case (backwater reclamation, parked at
+`INSPECTED`) so a Kerala login has a real due-process rail to work, not
+just alerts. The console groups the persona switcher by authority, so the
+two governments read as separate rather than as one long list.
+
 Parcel geometry traces the real taluk: the Vembanad/Punnamada backwater on its
 east, the Alappuzha–Changanassery canal through the middle, Kuttanad's
 below-sea-level paddy to the south-east, the temple town on NH-66, and the

@@ -477,6 +477,14 @@ export interface Persona {
   role: string;
   jurisdiction_id: string;
   jurisdiction_name?: string;
+  /**
+   * The top-level authority this persona belongs to, when the deployment
+   * holds more than one. Absent on a single-authority deployment (and on
+   * fixture data), which is what keeps the switcher a flat, ungrouped list
+   * there instead of showing a header over every entry.
+   */
+  authority_id?: string | null;
+  authority_name?: string | null;
   description: string;
   visible_parcels?: number;
   capabilities?: string[];
