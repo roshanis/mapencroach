@@ -1135,8 +1135,15 @@ export const FIXTURE_PERSONAS: Persona[] = [
 // backend/src/mapencroach/api/store.py's JURISDICTION_NAMES and
 // Store.seed_demo's jurisdiction_rows) so the transfer-target picker can be
 // exercised without a backend.
+// Mirrors the backend seed tree in store.py (JURISDICTION_NAMES + seed_demo
+// rows), in the same stored order that GET /jurisdictions returns, so the
+// transfer dropdown shows the same options in fixture/no-backend mode as it
+// does against a live backend. The synthetic "deployment" root exists only
+// because the backend JurisdictionTree is single-rooted by construction while
+// the three authorities below it are genuine peers.
 export const FIXTURE_JURISDICTIONS: Jurisdiction[] = [
-  { id: "state", name: "Haridwar–Roorkee Development Authority", parent_id: null },
+  { id: "deployment", name: "mapencroach demo deployment", parent_id: null },
+  { id: "state", name: "Haridwar–Roorkee Development Authority", parent_id: "deployment" },
   { id: "dist-a", name: "Haridwar Division", parent_id: "state" },
   { id: "dist-b", name: "Roorkee Division", parent_id: "state" },
   { id: "taluk-a1", name: "Haridwar City", parent_id: "dist-a" },
@@ -1145,4 +1152,11 @@ export const FIXTURE_JURISDICTIONS: Jurisdiction[] = [
   { id: "taluk-b1", name: "Roorkee City", parent_id: "dist-b" },
   { id: "taluk-b2", name: "Bahadarabad", parent_id: "dist-b" },
   { id: "taluk-b3", name: "Narsan", parent_id: "dist-b" },
+  { id: "state-kl", name: "Government of Kerala", parent_id: "deployment" },
+  { id: "dist-alappuzha", name: "Alappuzha District", parent_id: "state-kl" },
+  { id: "taluk-ambalapuzha", name: "Ambalapuzha Taluk", parent_id: "dist-alappuzha" },
+  { id: "state-mh", name: "Government of Maharashtra", parent_id: "deployment" },
+  { id: "dist-pune", name: "Pune District", parent_id: "state-mh" },
+  { id: "taluk-haveli", name: "Haveli Taluk", parent_id: "dist-pune" },
+  { id: "taluk-mulshi", name: "Mulshi Taluk", parent_id: "dist-pune" },
 ];
