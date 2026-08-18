@@ -1,9 +1,28 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getPersonas } from "@/lib/api";
 import LandingPage from "./page";
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+}));
+
+vi.mock("@/lib/api", () => ({
+  getPersonas: vi.fn(),
+  loginPersona: vi.fn(),
+  TOKEN_COOKIE: "mapencroach_token",
+  PERSONA_COOKIE: "mapencroach_persona",
+}));
+
 describe("LandingPage", () => {
-  it("leads with the product outcome and a direct path into the console", () => {
+  beforeEach(() => {
+    // These tests exercise the static landing-page contract. Leave the
+    // client request pending so it cannot update component state after a
+    // synchronous assertion and produce a misleading React act() warning.
+    vi.mocked(getPersonas).mockImplementation(() => new Promise(() => {}));
+  });
+
+  it("leads with the product outcome and a direct path to jurisdiction selection", () => {
     render(<LandingPage />);
 
     expect(screen.getByTestId("landing-shell")).toHaveClass(
@@ -18,7 +37,7 @@ describe("LandingPage", () => {
     ).toBeInTheDocument();
     expect(
       screen.getAllByRole("link", { name: "Open command map" })[0]
-    ).toHaveAttribute("href", "/console");
+    ).toHaveAttribute("href", "#demo-access");
     expect(
       screen.getAllByRole("link", { name: "Open command map" })[0]
     ).toHaveClass("bg-gov");
@@ -56,5 +75,20 @@ describe("LandingPage", () => {
     expect(
       screen.getAllByRole("link", { name: "Open command map" })
     ).toHaveLength(3);
+    screen.getAllByRole("link", { name: "Open command map" }).forEach((link) => {
+      expect(link).toHaveAttribute("href", "#demo-access");
+    });
+  });
+
+  it("includes jurisdiction and persona selection on the landing page", () => {
+    render(<LandingPage />);
+
+    expect(
+      screen.getByRole("heading", { name: "Choose your jurisdiction" })
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("jurisdiction-persona-picker")).toHaveAttribute(
+      "id",
+      "demo-access"
+    );
   });
 });
