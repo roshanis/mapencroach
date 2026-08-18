@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { JurisdictionPersonaPicker } from "@/components/JurisdictionPersonaPicker";
 
 const DEMO_METRICS = [
   { value: "30", label: "Monitored parcels" },
@@ -224,7 +225,7 @@ export default function LandingPage() {
             </a>
           </nav>
           <Link
-            href="/console"
+            href="#demo-access"
             className="rounded-md bg-gov px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-gov-dark focus:outline-none focus:ring-2 focus:ring-gov focus:ring-offset-2 sm:px-5 sm:text-sm"
           >
             Open command map
@@ -250,7 +251,7 @@ export default function LandingPage() {
               </p>
               <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
                 <Link
-                  href="/console"
+                  href="#demo-access"
                   className="group inline-flex items-center justify-center gap-2 rounded-md bg-gov px-6 py-3.5 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(28,79,140,0.22)] transition hover:-translate-y-0.5 hover:bg-gov-dark focus:outline-none focus:ring-2 focus:ring-gov focus:ring-offset-2"
                 >
                   Open command map
@@ -304,6 +305,8 @@ export default function LandingPage() {
             Seeded Haridwar–Roorkee demonstration
           </p>
         </section>
+
+        <JurisdictionPersonaPicker />
 
         <section id="how-it-works" className="scroll-mt-24 bg-white px-5 py-20 sm:px-8 sm:py-28">
           <div className="mx-auto max-w-7xl">
@@ -480,11 +483,11 @@ export default function LandingPage() {
               Start with the risk. Follow it all the way to action.
             </h2>
             <p className="mx-auto mt-5 max-w-2xl text-base leading-7 text-gray-600">
-              Open the Haridwar–Roorkee demo, choose an officer role, and move
-              from a live alert to its parcel record and case workflow.
+              Choose a jurisdiction and officer role, then move from a live
+              alert to its parcel record and case workflow.
             </p>
             <Link
-              href="/console"
+              href="#demo-access"
               className="mt-8 inline-flex items-center gap-2 rounded-md bg-gov px-7 py-3.5 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(28,79,140,0.22)] transition hover:-translate-y-0.5 hover:bg-gov-dark focus:outline-none focus:ring-2 focus:ring-gov focus:ring-offset-2"
             >
               Open command map
