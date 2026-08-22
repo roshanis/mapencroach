@@ -1060,8 +1060,10 @@ const LEGAL_OFFICER_CAPABILITIES = [
   "Cannot upgrade boundary grades",
 ];
 
-// Mirrors the 6 demo personas served by GET /demo/personas so the personas
-// page (and PersonaCard) can be exercised without a backend.
+// Mirrors the 10 demo personas served by GET /demo/personas so the personas
+// page, landing-page jurisdiction picker, and PersonaCard can be exercised
+// without a backend. Fixture cards remain non-interactive: only the live
+// demo login endpoint may mint a scoped bearer token.
 export const FIXTURE_PERSONAS: Persona[] = [
   {
     id: "vc-hrda",
@@ -1069,6 +1071,8 @@ export const FIXTURE_PERSONAS: Persona[] = [
     role: "viewer",
     jurisdiction_id: "state",
     jurisdiction_name: "Haridwar–Roorkee Development Authority",
+    authority_id: "state",
+    authority_name: "Haridwar–Roorkee Development Authority",
     description:
       "Oversees the full authority with read-only visibility into every parcel, alert and case.",
     visible_parcels: 30,
@@ -1080,6 +1084,8 @@ export const FIXTURE_PERSONAS: Persona[] = [
     role: "case_officer",
     jurisdiction_id: "dist-a",
     jurisdiction_name: "Haridwar Division",
+    authority_id: "state",
+    authority_name: "Haridwar–Roorkee Development Authority",
     description:
       "Drives cases through due process for encroachments within Haridwar division.",
     visible_parcels: 15,
@@ -1091,6 +1097,8 @@ export const FIXTURE_PERSONAS: Persona[] = [
     role: "survey_officer",
     jurisdiction_id: "dist-b",
     jurisdiction_name: "Roorkee Division",
+    authority_id: "state",
+    authority_name: "Haridwar–Roorkee Development Authority",
     description:
       "Conducts ground surveys and upgrades boundary grades for parcels in Roorkee division.",
     visible_parcels: 15,
@@ -1102,6 +1110,8 @@ export const FIXTURE_PERSONAS: Persona[] = [
     role: "case_officer",
     jurisdiction_id: "taluk-b1",
     jurisdiction_name: "Roorkee City",
+    authority_id: "state",
+    authority_name: "Haridwar–Roorkee Development Authority",
     description:
       "Handles enforcement cases scoped to Roorkee City taluk only.",
     visible_parcels: 5,
@@ -1113,6 +1123,8 @@ export const FIXTURE_PERSONAS: Persona[] = [
     role: "data_admin",
     jurisdiction_id: "state",
     jurisdiction_name: "Haridwar–Roorkee Development Authority",
+    authority_id: "state",
+    authority_name: "Haridwar–Roorkee Development Authority",
     description:
       "Maintains parcel records and tags across the authority; does not act on cases.",
     visible_parcels: 30,
@@ -1124,10 +1136,64 @@ export const FIXTURE_PERSONAS: Persona[] = [
     role: "legal_officer",
     jurisdiction_id: "state",
     jurisdiction_name: "Haridwar–Roorkee Development Authority",
+    authority_id: "state",
+    authority_name: "Haridwar–Roorkee Development Authority",
     description:
       "Holds legal authority across the whole Haridwar–Roorkee authority. Alone can record a hearing as held, issue an order, record a court stay, or end a case (dismissal, legacy referral, or closure).",
     visible_parcels: 30,
     capabilities: LEGAL_OFFICER_CAPABILITIES,
+  },
+  {
+    id: "collector-alappuzha",
+    name: "District Collector, Alappuzha",
+    role: "viewer",
+    jurisdiction_id: "dist-alappuzha",
+    jurisdiction_name: "Alappuzha District",
+    authority_id: "state-kl",
+    authority_name: "Government of Kerala",
+    description:
+      "Sees Alappuzha district's estate with read-only visibility across its parcels, alerts, and cases.",
+    visible_parcels: 5,
+    capabilities: VIEWER_CAPABILITIES,
+  },
+  {
+    id: "co-ambalapuzha",
+    name: "Taluk Officer, Ambalapuzha",
+    role: "case_officer",
+    jurisdiction_id: "taluk-ambalapuzha",
+    jurisdiction_name: "Ambalapuzha Taluk",
+    authority_id: "state-kl",
+    authority_name: "Government of Kerala",
+    description:
+      "Runs encroachment cases for Ambalapuzha taluk without visibility into other authorities.",
+    visible_parcels: 5,
+    capabilities: CASE_OFFICER_CAPABILITIES,
+  },
+  {
+    id: "collector-pune",
+    name: "District Collector, Pune",
+    role: "viewer",
+    jurisdiction_id: "dist-pune",
+    jurisdiction_name: "Pune District",
+    authority_id: "state-mh",
+    authority_name: "Government of Maharashtra",
+    description:
+      "Sees the Pune demo estate with read-only visibility across both seeded taluks.",
+    visible_parcels: 7,
+    capabilities: VIEWER_CAPABILITIES,
+  },
+  {
+    id: "co-haveli",
+    name: "Taluk Officer, Haveli",
+    role: "case_officer",
+    jurisdiction_id: "taluk-haveli",
+    jurisdiction_name: "Haveli Taluk",
+    authority_id: "state-mh",
+    authority_name: "Government of Maharashtra",
+    description:
+      "Runs encroachment cases for Haveli taluk without visibility into other authorities.",
+    visible_parcels: 4,
+    capabilities: CASE_OFFICER_CAPABILITIES,
   },
 ];
 
@@ -1135,8 +1201,15 @@ export const FIXTURE_PERSONAS: Persona[] = [
 // backend/src/mapencroach/api/store.py's JURISDICTION_NAMES and
 // Store.seed_demo's jurisdiction_rows) so the transfer-target picker can be
 // exercised without a backend.
+// Mirrors the backend seed tree in store.py (JURISDICTION_NAMES + seed_demo
+// rows), in the same stored order that GET /jurisdictions returns, so the
+// transfer dropdown shows the same options in fixture/no-backend mode as it
+// does against a live backend. The synthetic "deployment" root exists only
+// because the backend JurisdictionTree is single-rooted by construction while
+// the three authorities below it are genuine peers.
 export const FIXTURE_JURISDICTIONS: Jurisdiction[] = [
-  { id: "state", name: "Haridwar–Roorkee Development Authority", parent_id: null },
+  { id: "deployment", name: "mapencroach demo deployment", parent_id: null },
+  { id: "state", name: "Haridwar–Roorkee Development Authority", parent_id: "deployment" },
   { id: "dist-a", name: "Haridwar Division", parent_id: "state" },
   { id: "dist-b", name: "Roorkee Division", parent_id: "state" },
   { id: "taluk-a1", name: "Haridwar City", parent_id: "dist-a" },
@@ -1145,4 +1218,11 @@ export const FIXTURE_JURISDICTIONS: Jurisdiction[] = [
   { id: "taluk-b1", name: "Roorkee City", parent_id: "dist-b" },
   { id: "taluk-b2", name: "Bahadarabad", parent_id: "dist-b" },
   { id: "taluk-b3", name: "Narsan", parent_id: "dist-b" },
+  { id: "state-kl", name: "Government of Kerala", parent_id: "deployment" },
+  { id: "dist-alappuzha", name: "Alappuzha District", parent_id: "state-kl" },
+  { id: "taluk-ambalapuzha", name: "Ambalapuzha Taluk", parent_id: "dist-alappuzha" },
+  { id: "state-mh", name: "Government of Maharashtra", parent_id: "deployment" },
+  { id: "dist-pune", name: "Pune District", parent_id: "state-mh" },
+  { id: "taluk-haveli", name: "Haveli Taluk", parent_id: "dist-pune" },
+  { id: "taluk-mulshi", name: "Mulshi Taluk", parent_id: "dist-pune" },
 ];

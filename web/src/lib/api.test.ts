@@ -1750,6 +1750,39 @@ describe("getJurisdictions", () => {
     });
     expect(jurisdictions).toEqual(remote);
   });
+
+  it("fixture tree mirrors the backend seed: includes the Pune and Alleppey districts under their state authorities", () => {
+    const byId = new Map(FIXTURE_JURISDICTIONS.map((j) => [j.id, j]));
+
+    // Regression: the backend seed (store.py) added Kerala/Maharashtra
+    // authorities under a synthetic single "deployment" root, but the web
+    // fixtures lagged behind at the HRDA-only tree, so fixture/no-backend
+    // mode (how the demo runs without a live API) never showed Pune or
+    // Alleppey in the transfer dropdown.
+    expect(byId.get("deployment")).toEqual({
+      id: "deployment",
+      name: "mapencroach demo deployment",
+      parent_id: null,
+    });
+    expect(byId.get("state")?.parent_id).toBe("deployment");
+    expect(byId.get("dist-alappuzha")).toEqual({
+      id: "dist-alappuzha",
+      name: "Alappuzha District",
+      parent_id: "state-kl",
+    });
+    expect(byId.get("dist-pune")).toEqual({
+      id: "dist-pune",
+      name: "Pune District",
+      parent_id: "state-mh",
+    });
+    // Exactly one root, mirroring the single-rooted backend JurisdictionTree.
+    expect(FIXTURE_JURISDICTIONS.filter((j) => j.parent_id === null)).toHaveLength(1);
+    // Every non-root parent must resolve to a known node (the dangling-parent
+    // guard the backend enforces at construction).
+    for (const j of FIXTURE_JURISDICTIONS) {
+      if (j.parent_id !== null) expect(byId.has(j.parent_id)).toBe(true);
+    }
+  });
 });
 
 describe("transferCase", () => {

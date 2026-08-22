@@ -60,14 +60,27 @@ describe("PersonasPage", () => {
     expect(button).toBeDisabled();
   });
 
-  it("fixture roster mirrors the six backend demo personas, including the legal officer", () => {
-    // GET /demo/personas serves six personas; fixture mode must not silently
-    // present a smaller cast (the legal officer demonstrates the
-    // legal-authority transition gate).
-    expect(FIXTURE_PERSONAS).toHaveLength(6);
+  it("fixture roster mirrors all ten backend demo personas across three authorities", () => {
+    expect(FIXTURE_PERSONAS).toHaveLength(10);
     const legal = FIXTURE_PERSONAS.find((persona) => persona.role === "legal_officer");
     expect(legal).toBeDefined();
     expect(legal?.id).toBe("legal-hrda");
+    expect(FIXTURE_PERSONAS.map((persona) => persona.id)).toEqual(
+      expect.arrayContaining([
+        "collector-alappuzha",
+        "co-ambalapuzha",
+        "collector-pune",
+        "co-haveli",
+      ])
+    );
+    expect(
+      FIXTURE_PERSONAS.reduce<Record<string, number>>((counts, persona) => {
+        expect(persona.authority_id).toBeTruthy();
+        expect(persona.authority_name).toBeTruthy();
+        counts[persona.authority_id!] = (counts[persona.authority_id!] ?? 0) + 1;
+        return counts;
+      }, {})
+    ).toEqual({ state: 6, "state-kl": 2, "state-mh": 2 });
   });
 
   it("renders cards from getPersonas when the backend returns personas", async () => {
