@@ -195,6 +195,22 @@ export class ApiError extends Error {
 }
 
 async function fetchJson<T>(url: string, token?: string): Promise<T> {
+  return (await fetchJsonWithTotal<T>(url, token)).data;
+}
+
+/**
+ * Like `fetchJson`, but also reads the `X-Total-Count` header the list
+ * endpoints set to the unpaginated, scope-filtered total.
+ *
+ * That header is the only way a caller can tell a complete response from a
+ * truncated one: the body is a plain array (or FeatureCollection) either
+ * way. Discarding it is how a page ends up rendering the first N rows as
+ * though they were all of them.
+ */
+async function fetchJsonWithTotal<T>(
+  url: string,
+  token?: string
+): Promise<{ data: T; total?: number }> {
   const res = await fetch(url, { headers: authHeaders(token) });
   if (!res.ok) {
     throw new ApiError(
@@ -202,32 +218,72 @@ async function fetchJson<T>(url: string, token?: string): Promise<T> {
       res.status
     );
   }
-  return (await res.json()) as T;
+  const raw = res.headers?.get?.("X-Total-Count");
+  const parsed = raw === null || raw === undefined ? NaN : Number(raw);
+  return {
+    data: (await res.json()) as T,
+    total: Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined,
+  };
 }
 
-export async function getParcels(bbox?: BBox, token?: string): Promise<Parcel[]> {
+/**
+ * A page of parcels plus how much of the caller's scope it actually covers.
+ *
+ * `/parcels` is paginated, so a response is not necessarily the whole
+ * estate. At demo scale (tens of parcels) a page always holds everything
+ * and the distinction is invisible; against real cadastral data a taluk
+ * runs to tens of thousands, and a map drawn from one page would look
+ * complete while omitting most of the land. `total`/`truncated` exist so
+ * the UI can say what it is not showing rather than imply full coverage.
+ */
+export interface ParcelPage {
+  parcels: Parcel[];
+  /** Unpaginated, scope-filtered total; undefined if the server omitted it. */
+  total?: number;
+  /** True only when the server positively reported more than it returned. */
+  truncated: boolean;
+}
+
+export async function getParcelPage(
+  bbox?: BBox,
+  token?: string
+): Promise<ParcelPage> {
   const base = getApiBase();
   if (!base) {
-    if (!bbox) return FIXTURE_PARCELS;
-    return FIXTURE_PARCELS.filter((p) => {
-      const [lng, lat] = p.centroid;
-      return (
-        lng >= bbox.west &&
-        lng <= bbox.east &&
-        lat >= bbox.south &&
-        lat <= bbox.north
-      );
-    });
+    const parcels = !bbox
+      ? FIXTURE_PARCELS
+      : FIXTURE_PARCELS.filter((p) => {
+          const [lng, lat] = p.centroid;
+          return (
+            lng >= bbox.west &&
+            lng <= bbox.east &&
+            lat >= bbox.south &&
+            lat <= bbox.north
+          );
+        });
+    // Fixture mode is the whole dataset by construction — never truncated.
+    return { parcels, total: parcels.length, truncated: false };
   }
 
   const params = bbox
     ? `?bbox=${bbox.west},${bbox.south},${bbox.east},${bbox.north}`
     : "";
-  const collection = await fetchJson<ParcelFeatureCollection>(
+  const { data, total } = await fetchJsonWithTotal<ParcelFeatureCollection>(
     `${base}/parcels${params}`,
     token
   );
-  return collection.features.map(featureToParcel);
+  const parcels = data.features.map(featureToParcel);
+  return {
+    parcels,
+    total,
+    // Absent or unparseable header => unknown, not "truncated". Claiming
+    // an incomplete map on a missing header would be its own false alarm.
+    truncated: total !== undefined && total > parcels.length,
+  };
+}
+
+export async function getParcels(bbox?: BBox, token?: string): Promise<Parcel[]> {
+  return (await getParcelPage(bbox, token)).parcels;
 }
 
 export async function getParcel(

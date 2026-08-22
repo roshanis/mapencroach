@@ -145,6 +145,28 @@ village (res 9) or taluk (res 7) views for free. The console's existing H3
 grid control (`web/src/lib/h3-grid.ts`) renders the same cell scheme
 client-side.
 
+## Map coverage is bounded, and says so
+
+`GET /parcels` is paginated (default 200, max 1000), so a response is not
+necessarily the whole estate. The console reads the unpaginated total from
+`X-Total-Count` and, when the page covers less than the caller's scope, states
+plainly that the map is incomplete and how much is missing.
+
+This is invisible at demo scale — the widest scope here is 30 parcels — but a
+real taluk runs to tens of thousands. A map silently drawn from the first page
+would look like full coverage, and an officer cannot distinguish "no
+encroachment on this land" from "this land was never drawn". Rendering a subset
+as though it were everything is the same class of failure as an imagery
+timeline with unexplained holes.
+
+The scaling answer for real cadastral data is vector tiles (Tippecanoe →
+PMTiles → MapLibre) served from object storage rather than GeoJSON over HTTP.
+Two constraints apply when that lands: a tile archive is static and
+public-by-default, so it must be partitioned per authority and fetched through
+the authorizing proxy or it bypasses jurisdiction scoping entirely; and tile
+geometry is generalized at low zoom, so like the H3 grid it is a display layer
+and never the legal boundary.
+
 ## Tests
 
 ```bash

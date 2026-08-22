@@ -14,7 +14,7 @@ import { MapLegend } from "@/components/MapLegend";
 import { SelectedAlertCard } from "@/components/SelectedAlertCard";
 import { TopBar } from "@/components/TopBar";
 import { WorkbenchSummary } from "@/components/WorkbenchSummary";
-import { getAlerts, getCases, getParcels } from "@/lib/api";
+import { getAlerts, getCases, getParcelPage } from "@/lib/api";
 import { PERSONA_META_COOKIE, readCookie } from "@/lib/cookies";
 import { buildH3Grid } from "@/lib/h3-grid";
 import type { Alert, Case, Parcel } from "@/lib/types";
@@ -38,6 +38,11 @@ function CommandMapPageContent() {
   const searchParams = useSearchParams();
 
   const [parcels, setParcels] = useState<Parcel[]>([]);
+  const [parcelCoverage, setParcelCoverage] = useState<{
+    shown: number;
+    total?: number;
+    truncated: boolean;
+  }>({ shown: 0, truncated: false });
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [cases, setCases] = useState<Case[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("loading");
@@ -55,12 +60,21 @@ function CommandMapPageContent() {
   const loadData = useCallback(async () => {
     setLoadState("loading");
     try {
-      const [nextParcels, nextAlerts, nextCases] = await Promise.all([
-        getParcels(),
+      const [parcelPage, nextAlerts, nextCases] = await Promise.all([
+        getParcelPage(),
         getAlerts(),
         getCases(),
       ]);
-      setParcels(nextParcels);
+      setParcels(parcelPage.parcels);
+      // Kept so the map can state what it is NOT drawing. /parcels is
+      // paginated; rendering one page as though it were the whole estate
+      // would show an officer a clean map over land the page never
+      // covered, which is worse than showing nothing.
+      setParcelCoverage({
+        shown: parcelPage.parcels.length,
+        total: parcelPage.total,
+        truncated: parcelPage.truncated,
+      });
       setAlerts(nextAlerts);
       setCases(nextCases);
       setLoadState("ready");
@@ -193,6 +207,22 @@ function CommandMapPageContent() {
   return (
     <div className="flex h-screen-safe flex-col">
       <TopBar jurisdiction="Haridwar–Roorkee Development Authority" />
+      {parcelCoverage.truncated && (
+        // Never silently show a subset of the estate as though it were all
+        // of it: an officer reading a clean map cannot tell the difference
+        // between "no encroachment here" and "this land was never drawn".
+        <p
+          role="alert"
+          data-testid="parcel-coverage-warning"
+          className="border-b border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+        >
+          <strong className="font-semibold">Map is incomplete.</strong>{" "}
+          Showing {parcelCoverage.shown.toLocaleString()} of{" "}
+          {parcelCoverage.total?.toLocaleString()} parcels in your
+          jurisdiction. The rest are not drawn, and any alert on them is not
+          shown here — do not read this map as full coverage.
+        </p>
+      )}
       <div className="flex flex-1 overflow-hidden">
         <AlertSidebar
           alerts={alerts}
