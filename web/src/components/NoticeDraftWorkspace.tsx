@@ -77,7 +77,7 @@ export function NoticeDraftWorkspace({
         `Current stage: ${caseStateLabel(caseRecord.state)}`,
         `Parcel: ${parcel.id}`,
         `Survey number: ${parcel.survey_no}`,
-        `ULPIN: ${parcel.ulpin}`,
+        `${parcel.parcel_id_scheme ?? "ULPIN"}: ${parcel.ulpin}`,
         `Owning department: ${parcel.owning_department}`,
         `Boundary grade: ${parcel.boundary_grade}`,
         "",

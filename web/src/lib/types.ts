@@ -65,6 +65,8 @@ export interface Parcel {
   id: string;
   survey_no: string;
   ulpin: string;
+  /** Scheme `ulpin` holds: "ULPIN" (India) or "Kitta" (Nepal). */
+  parcel_id_scheme?: string;
   owning_department: string;
   land_category: LandCategory;
   boundary_grade: BoundaryGrade;

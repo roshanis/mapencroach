@@ -70,6 +70,12 @@ interface ParcelFeatureProperties {
   id: string;
   survey_no: string;
   ulpin: string;
+  /**
+   * Which identifier scheme `ulpin` actually holds — "ULPIN" for Indian
+   * parcels, "Kitta" for Nepali ones. Absent on older backends, which
+   * predate any non-Indian jurisdiction and were therefore always ULPIN.
+   */
+  parcel_id_scheme?: string;
   owning_department: string;
   land_category: LandCategory;
   boundary_grade: BoundaryGrade;
@@ -107,6 +113,7 @@ function featureToParcel(feature: ParcelFeature): Parcel {
     id: properties.id,
     survey_no: properties.survey_no,
     ulpin: properties.ulpin,
+    parcel_id_scheme: properties.parcel_id_scheme,
     owning_department: properties.owning_department,
     land_category: properties.land_category,
     boundary_grade: properties.boundary_grade,
@@ -333,7 +340,10 @@ export async function getParcelContext(
           confidence: 1,
         },
         {
-          scheme: "ULPIN",
+          // The identifier's own scheme, not a fixed "ULPIN": an alias
+          // record that mislabels a Nepali Kitta number as an Indian
+          // ULPIN is a false statement about the source of record.
+          scheme: parcel.parcel_id_scheme ?? "ULPIN",
           value: parcel.ulpin,
           source: "Illustrative demo parcel register",
           valid_from: null,

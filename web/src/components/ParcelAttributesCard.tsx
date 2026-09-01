@@ -29,7 +29,10 @@ export function ParcelAttributesCard({ parcel }: ParcelAttributesCardProps) {
       <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
         <Field label="Parcel ID" value={parcel.id} />
         <Field label="Survey No." value={parcel.survey_no} />
-        <Field label="ULPIN" value={parcel.ulpin} />
+        <Field
+          label={parcel.parcel_id_scheme ?? "ULPIN"}
+          value={parcel.ulpin}
+        />
         <Field label="Owning Department" value={parcel.owning_department} />
         <Field
           label="Land Category"

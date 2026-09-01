@@ -219,6 +219,30 @@ _DEMO_PERSONAS: list[dict[str, str]] = [
         "including filling in the Mula-Mutha riverbed. Cannot see Mulshi, "
         "the neighbouring taluk in the same district.",
     },
+    # Nepal. The first authority outside India, and the only one holding a
+    # land inventory with no alerts or cases behind it -- see the alert
+    # note in Store.seed_demo. Both logins are read-only: there is no
+    # enforcement workflow here to run, and that is the point.
+    {
+        "id": "cdo-rasuwa",
+        "name": "District Officer, Rasuwa",
+        "role": "viewer",
+        "jurisdiction_id": "dist-rasuwa",
+        "description": "Sees Rasuwa's public land across both rural "
+        "municipalities - the Trishuli corridor up to the Rasuwagadhi "
+        "border, Langtang National Park, and the Dhunche headquarters. "
+        "Read-only, and no Indian authority exists for this login.",
+    },
+    {
+        "id": "rm-gosaikunda",
+        "name": "Ward Officer, Gosaikunda",
+        "role": "viewer",
+        "jurisdiction_id": "gaun-gosaikunda",
+        "description": "Rural-municipality scope: the upper valley only, "
+        "with parcels identified by Kitta number rather than ULPIN. "
+        "Uttargaya, the other municipality in the same district, does not "
+        "exist for this login.",
+    },
 ]
 
 
@@ -364,6 +388,10 @@ def _parcel_to_feature(parcel: dict[str, Any]) -> dict[str, Any]:
             "id": parcel["id"],
             "survey_no": parcel["survey_no"],
             "ulpin": parcel["ulpin"],
+            # Which scheme the line above actually holds (ULPIN in India,
+            # Kitta in Nepal), so the console can label it truthfully
+            # rather than printing a Kitta number as an Indian ULPIN.
+            "parcel_id_scheme": parcel.get("parcel_id_scheme", "ULPIN"),
             "owning_department": parcel["owning_department"],
             "land_category": parcel["land_category"],
             "boundary_grade": parcel["boundary_grade"],

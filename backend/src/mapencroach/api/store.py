@@ -143,6 +143,29 @@ JURISDICTION_NAMES: dict[str, str] = {
     "dist-pune": "Pune District",
     "taluk-haveli": "Haveli Taluk",
     "taluk-mulshi": "Mulshi Taluk",
+    # Nepal. Deliberately NOT modelled with the Indian level names above:
+    # Nepal's hierarchy is Province -> District -> Rural Municipality
+    # (gaunpalika) -> Ward, with no taluk anywhere in it. Reusing "taluk"
+    # here would assert something false about Nepali administration, the
+    # same way nesting Ambalapuzha under HRDA would have.
+    "state-np": "Government of Nepal",
+    "prov-bagmati": "Bagmati Province",
+    "dist-rasuwa": "Rasuwa District",
+    "gaun-gosaikunda": "Gosaikunda Rural Municipality",
+    "gaun-uttargaya": "Uttargaya Rural Municipality",
+}
+
+# Which identifier scheme a parcel's `ulpin` field actually holds.
+#
+# ULPIN is an Indian instrument; Nepali cadastral parcels are identified by
+# Kitta number under the local Malpot (Land Revenue) Office. The field name
+# stays for API compatibility, but the scheme travels with the parcel so the
+# console can label it truthfully instead of printing a Kitta number under
+# the heading "ULPIN".
+DEFAULT_PARCEL_ID_SCHEME = "ULPIN"
+PARCEL_ID_SCHEME_BY_JURISDICTION: dict[str, str] = {
+    "gaun-gosaikunda": "Kitta",
+    "gaun-uttargaya": "Kitta",
 }
 
 
@@ -434,9 +457,18 @@ class Store:
             ("dist-pune", "state-mh"),
             ("taluk-haveli", "dist-pune"),
             ("taluk-mulshi", "dist-pune"),
+            # Nepal: Province -> District -> Rural Municipality. A fourth
+            # authority and the first outside India -- see the alert note
+            # below for why it carries land but no enforcement.
+            ("state-np", "deployment"),
+            ("prov-bagmati", "state-np"),
+            ("dist-rasuwa", "prov-bagmati"),
+            ("gaun-gosaikunda", "dist-rasuwa"),
+            ("gaun-uttargaya", "dist-rasuwa"),
         ]
         store = cls(
-            jurisdiction_rows=rows, authority_ids={"state", "state-kl", "state-mh"}
+            jurisdiction_rows=rows,
+            authority_ids={"state", "state-kl", "state-mh", "state-np"},
         )
 
         # Captured once so every seeded timestamp below is relative to "now"
@@ -519,6 +551,20 @@ class Store:
             ("parcel-40", "PN-305", "taluk-mulshi", "waterbody", "A", 73.505, 18.497),
             ("parcel-41", "PN-306", "taluk-mulshi", "industrial", "C", 73.738, 18.591),
             ("parcel-42", "PN-307", "taluk-mulshi", "housing", "B", 73.755, 18.520),
+            # --- gaun-gosaikunda (Gosaikunda RM, Rasuwa district, Nepal) ---
+            # The upper Trishuli/Bhote Koshi valley running north to the
+            # Rasuwagadhi-Gyirong border crossing, plus Langtang National
+            # Park and the district headquarters at Dhunche. Public land
+            # inventory only; see the alert-seeding note for why none of it
+            # carries an encroachment alert.
+            ("parcel-43", "KIT-401", "gaun-gosaikunda", "waterbody", "A", 85.370, 28.245),
+            ("parcel-44", "KIT-402", "gaun-gosaikunda", "municipal", "B", 85.378, 28.277),
+            ("parcel-45", "KIT-403", "gaun-gosaikunda", "industrial", "B", 85.375, 28.257),
+            ("parcel-46", "KIT-404", "gaun-gosaikunda", "forest", "A", 85.516, 28.213),
+            ("parcel-47", "KIT-405", "gaun-gosaikunda", "revenue", "C", 85.297, 28.112),
+            # --- gaun-uttargaya (Uttargaya RM) --- lower Trishuli valley
+            ("parcel-48", "KIT-406", "gaun-uttargaya", "waterbody", "B", 85.185, 27.985),
+            ("parcel-49", "KIT-407", "gaun-uttargaya", "housing", "C", 85.178, 27.972),
         ]
         # Kerala parcels are listed explicitly because the
         # category->department fallback below is Uttarakhand-specific;
@@ -539,9 +585,19 @@ class Store:
             "parcel-41": "Maharashtra Industrial Development Corporation",
             "parcel-42": "Pune Metropolitan Region Development Authority",
         }
+        _NEPAL_DEPARTMENTS = {
+            "parcel-43": "Department of Water Resources and Irrigation, Nepal",
+            "parcel-44": "Department of Customs, Nepal",
+            "parcel-45": "Nepal Intermodal Transport Development Board",
+            "parcel-46": "Department of National Parks and Wildlife Conservation, Nepal",
+            "parcel-47": "Malpot (Land Revenue) Office, Rasuwa",
+            "parcel-48": "Department of Water Resources and Irrigation, Nepal",
+            "parcel-49": "Uttargaya Rural Municipality",
+        }
         _OWNING_DEPARTMENTS = {
             **_KERALA_DEPARTMENTS,
             **_MAHARASHTRA_DEPARTMENTS,
+            **_NEPAL_DEPARTMENTS,
             "parcel-1": "Irrigation Department, Uttarakhand",
             "parcel-2": "Revenue Department",
             "parcel-3": "Forest Department, Uttarakhand",
@@ -567,6 +623,19 @@ class Store:
             "taluk-haveli": ("MH", "PN"),
             "taluk-mulshi": ("MH", "PN"),
         }
+        # Nepali parcels are identified by Kitta number -- a plain local
+        # serial under the Malpot office, with none of ULPIN's embedded
+        # state/district structure. Generating a ULPIN-shaped string for
+        # them would invent an Indian identifier for Nepali land.
+        _NEPAL_KITTA = {
+            "parcel-43": "1204",
+            "parcel-44": "0087",
+            "parcel-45": "0311",
+            "parcel-46": "2260",
+            "parcel-47": "0455",
+            "parcel-48": "1877",
+            "parcel-49": "1902",
+        }
         for i, (
             parcel_id,
             survey_no,
@@ -577,11 +646,19 @@ class Store:
             center_lat,
         ) in enumerate(parcel_specs):
             geometry = _square_polygon(center_lon, center_lat, _PARCEL_SIZE_DEG / 2)
-            state_code, district_code = _ULPIN_CODES.get(jurisdiction_id, ("UK", "HR"))
+            scheme = PARCEL_ID_SCHEME_BY_JURISDICTION.get(
+                jurisdiction_id, DEFAULT_PARCEL_ID_SCHEME
+            )
+            if scheme == "Kitta":
+                identifier = _NEPAL_KITTA[parcel_id]
+            else:
+                state_code, district_code = _ULPIN_CODES.get(jurisdiction_id, ("UK", "HR"))
+                identifier = f"{state_code}{i:010d}{district_code}"
             store.parcels[parcel_id] = {
                 "id": parcel_id,
                 "survey_no": survey_no,
-                "ulpin": f"{state_code}{i:010d}{district_code}",
+                "ulpin": identifier,
+                "parcel_id_scheme": scheme,
                 "owning_department": _OWNING_DEPARTMENTS.get(
                     parcel_id, _DEPARTMENT_BY_CATEGORY[land_category]
                 ),
@@ -696,6 +773,16 @@ class Store:
             ("parcel-36", AlertTier.RED, 7200.0, "OPEN", 6, 9, 15),
             ("parcel-39", AlertTier.AMBER, 3400.0, "UNDER_REVIEW", 13, 17, 5),
             ("parcel-40", AlertTier.GREEN, 900.0, "OPEN", 20, 8, 50),
+            # Rasuwa (Nepal) deliberately seeds NO alerts, and no case.
+            #
+            # The valley below Rasuwagadhi was destroyed by a glacial
+            # outburst flood in August 2026. Change detection over that
+            # ground fires on flood damage, and every tier in this model
+            # means "probable unauthorized change on government land" --
+            # so an alert there would assert an encroachment that did not
+            # happen, on terrain where people died and are still missing.
+            # The seed holds Rasuwa's public land inventory and stops.
+            # Do not add alerts here to make the demo symmetric.
         ]
         alert_ids: list[str] = []
         for parcel_id, tier, area_m2, status, days_ago, hour, minute in alert_specs:
