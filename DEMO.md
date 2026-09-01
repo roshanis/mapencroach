@@ -1,9 +1,10 @@
 # mapencroach — 5-Minute Demo Script
 
-Working software on **seeded demo data**: 42 parcels across three unrelated
-authorities in three states — 30 in the Haridwar–Roorkee Development Authority
-(Uttarakhand), 5 in Ambalapuzha taluk, Alappuzha (Kerala), and 7 across Haveli
-and Mulshi taluks in Pune district (Maharashtra). 15 alerts, 7 cases.
+Working software on **seeded demo data**: 49 parcels across four unrelated
+authorities — 30 in the Haridwar–Roorkee Development Authority (Uttarakhand),
+5 in Ambalapuzha taluk, Alappuzha (Kerala), 7 across Haveli and Mulshi taluks
+in Pune district (Maharashtra), and 7 in Rasuwa district, Nepal. 15 alerts,
+7 cases — none of them in Rasuwa, deliberately (see README).
 Say that up front — it builds trust, and the workflow you're showing is fully real.
 
 ---
