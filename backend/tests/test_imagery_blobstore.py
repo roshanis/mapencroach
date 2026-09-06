@@ -293,3 +293,51 @@ class TestBuildBlobStore:
 
         sha256 = store.put(DATA)
         assert (custom_root / sha256[:2] / sha256[2:4] / sha256).is_file()
+
+
+class TestPutRepairsACorruptBlob:
+    """`put` used to return success on the bare existence of the path.
+
+    That reported bytes stored which were never stored, and discarded the
+    genuine copy the caller was holding -- at the one moment the corruption
+    could still have been repaired. Read-side verification meant nothing
+    wrong was ever *served*, but the evidence itself was lost.
+    """
+
+    @staticmethod
+    def _corrupt(root: Path) -> Path:
+        blob = next(p for p in root.rglob("*") if p.is_file())
+        blob.write_bytes(b"CORRUPTED")
+        return blob
+
+    def test_put_repairs_rather_than_reporting_false_success(self, tmp_path: Path):
+        store = FileBlobStore(tmp_path)
+        good = b"genuine evidence bytes"
+        digest = store.put(good)
+        blob = self._corrupt(tmp_path)
+
+        assert store.put(good) == digest
+        assert blob.read_bytes() == good, "the genuine bytes must be written back"
+        assert store.get(digest) == good
+
+    def test_a_healthy_repeat_put_is_still_idempotent(self, tmp_path: Path):
+        store = FileBlobStore(tmp_path)
+        good = b"genuine evidence bytes"
+        digest = store.put(good)
+        blob = next(p for p in tmp_path.rglob("*") if p.is_file())
+        before = blob.read_bytes()
+
+        assert store.put(good) == digest
+        assert blob.read_bytes() == before == good
+
+    def test_corruption_is_still_refused_on_read_when_never_re_put(
+        self, tmp_path: Path
+    ):
+        """Repair only happens when someone hands us the bytes again. With
+        no re-put, a corrupt blob must still fail the read rather than be
+        served as evidence."""
+        store = FileBlobStore(tmp_path)
+        digest = store.put(b"genuine evidence bytes")
+        self._corrupt(tmp_path)
+        with pytest.raises(BlobIntegrityError):
+            store.get(digest)

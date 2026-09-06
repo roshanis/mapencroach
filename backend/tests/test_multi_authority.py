@@ -677,3 +677,120 @@ class TestPuneHasAWorkingCase:
             json={"to_state": "RESPONSE_WINDOW"},
         )
         assert resp.status_code == 201, resp.text
+
+
+RASUWA_GOSAIKUNDA = {"parcel-43", "parcel-44", "parcel-45", "parcel-46", "parcel-47"}
+RASUWA_UTTARGAYA = {"parcel-48", "parcel-49"}
+RASUWA_PARCELS = RASUWA_GOSAIKUNDA | RASUWA_UTTARGAYA
+
+
+@pytest.fixture
+def rasuwa_token() -> str:
+    return token_for("rasuwa-officer", Role.VIEWER, "dist-rasuwa")
+
+
+class TestRasuwaSeed:
+    """Rasuwa (Nepal) is a land inventory with no enforcement behind it.
+
+    The valley below Rasuwagadhi was destroyed by a glacial outburst flood
+    in August 2026. Every alert tier in this model means "probable
+    unauthorized change on government land", so seeding one there would
+    assert an encroachment that did not happen.
+    """
+
+    def test_nepal_is_its_own_authority(self, store: Store):
+        assert "state-np" in store.authority_ids
+        assert store.authority_of("gaun-gosaikunda") == "state-np"
+        for indian in ("state", "state-kl", "state-mh"):
+            assert not store.tree.is_within(indian, "dist-rasuwa")
+
+    def test_hierarchy_uses_nepali_levels_not_indian_ones(self, store: Store):
+        """Province -> District -> Rural Municipality. No taluk anywhere."""
+        assert store.tree.is_within("prov-bagmati", "dist-rasuwa")
+        assert store.tree.is_within("dist-rasuwa", "gaun-gosaikunda")
+        nepal_ids = store.tree.scope_ids("state-np")
+        assert not any("taluk" in jid for jid in nepal_ids), nepal_ids
+
+    def test_parcels_sit_in_the_real_rasuwa_bbox(self, store: Store):
+        for pid in RASUWA_PARCELS:
+            ring = store.parcels[pid]["geometry"]["coordinates"][0]
+            lon = sum(pt[0] for pt in ring[:-1]) / 4
+            lat = sum(pt[1] for pt in ring[:-1]) / 4
+            assert 85.10 <= lon <= 85.60, (pid, lon)
+            assert 27.90 <= lat <= 28.35, (pid, lat)
+
+    def test_land_is_held_by_nepali_bodies(self, store: Store):
+        for pid in RASUWA_PARCELS:
+            dept = store.parcels[pid]["owning_department"]
+            assert not any(
+                wrong in dept
+                for wrong in ("Uttarakhand", "Haridwar", "Kerala", "Maharashtra", "Pune")
+            ), (pid, dept)
+
+    def test_identifiers_are_kitta_not_ulpin(self, store: Store):
+        """A Kitta number labelled ULPIN would name an Indian instrument as
+        the source of record for Nepali land."""
+        for pid in RASUWA_PARCELS:
+            assert store.parcels[pid]["parcel_id_scheme"] == "Kitta"
+            assert not store.parcels[pid]["ulpin"].startswith(("UK", "KL", "MH"))
+        assert store.parcels["parcel-1"]["parcel_id_scheme"] == "ULPIN"
+
+    def test_the_api_reports_the_scheme(self, client: TestClient, rasuwa_token: str):
+        feats = client.get("/parcels", headers=auth_headers(rasuwa_token)).json()["features"]
+        assert feats
+        assert {f["properties"]["parcel_id_scheme"] for f in feats} == {"Kitta"}
+
+    def test_no_alert_is_seeded_on_nepali_land(self, store: Store):
+        """The deliberate absence. If someone adds one to make the demo
+        symmetric, this fails and points at why it must not be."""
+        nepal = store.tree.scope_ids("state-np")
+        offending = [
+            aid
+            for aid, a in store.alerts.items()
+            if store.parcels[a["parcel_id"]]["jurisdiction_id"] in nepal
+        ]
+        assert offending == [], (
+            "Rasuwa must not carry encroachment alerts: change detection over the "
+            "2026 flood zone fires on disaster damage, and every tier here asserts "
+            "probable unauthorized change on government land"
+        )
+
+    def test_no_case_is_seeded_on_nepali_land(self, store: Store):
+        nepal = store.tree.scope_ids("state-np")
+        assert [c for c in store.cases.values() if c.jurisdiction_id in nepal] == []
+
+    def test_the_officer_sees_land_and_an_empty_queue(
+        self, client: TestClient, rasuwa_token: str
+    ):
+        h = auth_headers(rasuwa_token)
+        parcels = client.get("/parcels", headers=h).json()["features"]
+        assert {f["properties"]["id"] for f in parcels} == RASUWA_PARCELS
+        assert client.get("/alerts", headers=h).json() == []
+        assert client.get("/cases", headers=h).json() == []
+
+    def test_isolation_holds_both_ways_against_india(
+        self, client: TestClient, rasuwa_token: str, hrda_token: str
+    ):
+        for pid in ("parcel-1", "parcel-31", "parcel-36"):
+            resp = client.get(f"/parcels/{pid}", headers=auth_headers(rasuwa_token))
+            assert resp.status_code == 404
+        for pid in sorted(RASUWA_PARCELS):
+            resp = client.get(f"/parcels/{pid}", headers=auth_headers(hrda_token))
+            assert resp.status_code == 404
+
+    def test_a_rural_municipality_officer_does_not_see_the_sibling_one(
+        self, client: TestClient
+    ):
+        tok = token_for("ward", Role.VIEWER, "gaun-gosaikunda")
+        seen = {
+            f["properties"]["id"]
+            for f in client.get("/parcels", headers=auth_headers(tok)).json()["features"]
+        }
+        assert seen == RASUWA_GOSAIKUNDA
+        assert seen.isdisjoint(RASUWA_UTTARGAYA)
+
+    def test_earlier_authorities_are_undisturbed(self, store: Store):
+        assert store.alerts["alert-1"]["parcel_id"] == "parcel-1"
+        assert store.alerts["alert-13"]["parcel_id"] == "parcel-36"
+        assert store.cases["case-1"].parcel_id == "parcel-1"
+        assert store.cases["case-7"].parcel_id == "parcel-36"

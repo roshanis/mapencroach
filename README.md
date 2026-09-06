@@ -6,9 +6,9 @@ notify, and enforce through a legally defensible workflow. Full plan: [PLAN.md](
 
 ## Quick start (demo, no database needed)
 
-**1. Backend API** (seeded with 42 demo parcels across three unrelated
-authorities in three states — see
-[Three authorities](#three-authorities-in-the-demo-seed)):
+**1. Backend API** (seeded with 49 demo parcels across four unrelated
+authorities in three Indian states and Nepal — see
+[Four authorities](#four-authorities-in-the-demo-seed)):
 
 ```bash
 cd backend
@@ -53,11 +53,11 @@ console falls back to MapLibre when either value is absent or Google cannot
 load; never commit the API key, and restrict it to approved web referrers and
 the Maps JavaScript API.
 
-## Three authorities in the demo seed
+## Four authorities in the demo seed
 
-The seed spans three unrelated governments in three states, so jurisdiction
-scoping can be demonstrated across real boundaries rather than only between
-divisions of one body:
+The seed spans four unrelated governments, so jurisdiction scoping can be
+demonstrated across real boundaries rather than only between divisions of one
+body:
 
 ```
 mapencroach demo deployment          <- deployment root, no officer is scoped here
@@ -66,8 +66,11 @@ mapencroach demo deployment          <- deployment root, no officer is scoped he
 │   └── Roorkee Division   → Roorkee City, Bahadarabad, Narsan
 ├── Government of Kerala
 │   └── Alappuzha District → Ambalapuzha Taluk               5 parcels
-└── Government of Maharashtra
-    └── Pune District      → Haveli Taluk, Mulshi Taluk      7 parcels
+├── Government of Maharashtra
+│   └── Pune District      → Haveli Taluk, Mulshi Taluk      7 parcels
+└── Government of Nepal
+    └── Bagmati Province   → Rasuwa District                 7 parcels
+                              → Gosaikunda RM, Uttargaya RM
 ```
 
 Each is a sibling of the others, not nested inside one: they sit in different
@@ -75,8 +78,8 @@ states under different governments, and modelling any as a taluk of HRDA would
 put a false claim about Indian administrative geography in front of every
 officer. The `deployment` root exists only because the tree is single-rooted by
 construction; **no persona is scoped to it**, since a login spanning Uttarakhand,
-Kerala and Maharashtra would frame the map on all of India and corresponds to no
-real officer.
+Kerala, Maharashtra and Nepal would frame the map on half of South Asia and
+corresponds to no real officer.
 
 Two consequences worth knowing:
 
@@ -96,7 +99,7 @@ due-process rail to work rather than only alerts — and they sit at different
 steps on purpose: Ambalapuzha at `INSPECTED`, where the **evidence** guard
 refuses a show-cause notice with no notice document or dispatch proof, and Pune
 at `SHOW_CAUSE_ISSUED`, where the **sequence** guard refuses a jump straight to
-an order. The console groups the persona switcher by authority, so the three
+an order. The console groups the persona switcher by authority, so the four
 governments read as separate rather than as one long list.
 
 Parcel geometry traces the real ground. Ambalapuzha: the Vembanad/Punnamada
@@ -106,9 +109,31 @@ and the coastal strip on the Arabian Sea. Pune: the Mula-Mutha riverbed and the
 Khadakwasla canal system in Haveli, the hill reserved forests, and in Mulshi the
 reservoir backwater and the Hinjawadi IT-belt fringe.
 
+### Rasuwa is land only, on purpose
+
+Rasuwa is the first authority outside India, and it is modelled on Nepal's own
+hierarchy — Province → District → Rural Municipality (gaunpalika), with no
+taluk anywhere in it, and parcels identified by **Kitta number** under the
+Malpot office rather than by ULPIN. Parcels carry `parcel_id_scheme` so the
+console labels the identifier by the scheme it actually belongs to; printing a
+Kitta number under the heading "ULPIN" would name an Indian instrument as the
+source of record for Nepali land.
+
+It carries **no alerts and no case**, and a test enforces that. The valley below
+Rasuwagadhi was destroyed by a glacial outburst flood in August 2026. Every
+alert tier here means *probable unauthorized change on government land*, so an
+alert over that ground would assert an encroachment that did not happen — and
+would be wrong on the facts besides, since change detection there fires on flood
+damage. Do not add alerts to make the demo symmetric.
+
+A related limitation, worth knowing before pointing this at any monitoring use
+case: the watchlist is reachable only through a RED encroachment alert
+(`POST /alerts/{id}/watch`). The platform currently cannot put land under weekly
+imagery watch without first accusing it of encroachment.
+
 The console's built-in fixture mode (no backend) is a separate illustrative
-dataset with `PCL-…` parcel ids and mirrors none of this seed, the Kerala and
-Maharashtra authorities included.
+dataset with `PCL-…` parcel ids and mirrors none of this seed, the Kerala,
+Maharashtra and Nepal authorities included.
 
 ## Real Sentinel-2 scenes over a parcel
 
@@ -144,6 +169,28 @@ spatial dedup key. Rollups use the H3 hierarchy, so fine cells aggregate to
 village (res 9) or taluk (res 7) views for free. The console's existing H3
 grid control (`web/src/lib/h3-grid.ts`) renders the same cell scheme
 client-side.
+
+## Map coverage is bounded, and says so
+
+`GET /parcels` is paginated (default 200, max 1000), so a response is not
+necessarily the whole estate. The console reads the unpaginated total from
+`X-Total-Count` and, when the page covers less than the caller's scope, states
+plainly that the map is incomplete and how much is missing.
+
+This is invisible at demo scale — the widest scope here is 30 parcels — but a
+real taluk runs to tens of thousands. A map silently drawn from the first page
+would look like full coverage, and an officer cannot distinguish "no
+encroachment on this land" from "this land was never drawn". Rendering a subset
+as though it were everything is the same class of failure as an imagery
+timeline with unexplained holes.
+
+The scaling answer for real cadastral data is vector tiles (Tippecanoe →
+PMTiles → MapLibre) served from object storage rather than GeoJSON over HTTP.
+Two constraints apply when that lands: a tile archive is static and
+public-by-default, so it must be partitioned per authority and fetched through
+the authorizing proxy or it bypasses jurisdiction scoping entirely; and tile
+geometry is generalized at low zoom, so like the H3 grid it is a display layer
+and never the legal boundary.
 
 ## Tests
 

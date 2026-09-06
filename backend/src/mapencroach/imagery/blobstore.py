@@ -124,9 +124,27 @@ class FileBlobStore:
         sha256 = hashlib.sha256(data).hexdigest()
         final_path = self._path_for(sha256)
         if final_path.exists():
-            # Idempotent: identical content is already on record under
-            # this key, so there's nothing to (re)write.
-            return sha256
+            # Idempotent -- but only once we have checked that what is on
+            # disk really is this content. Returning success on the bare
+            # existence of the path would report bytes stored that we
+            # never stored: if the on-disk copy has since been corrupted
+            # (bit rot, a truncated write from an earlier crash, or
+            # tampering), the caller is holding the ONLY good copy and we
+            # would throw it away while telling them it was safe. Read-side
+            # verification would still refuse to serve the corrupt blob, so
+            # nothing wrong is ever handed out as evidence -- but the
+            # evidence itself would be permanently lost at the one moment
+            # it could have been repaired.
+            #
+            # Costs a read of the existing blob on every repeat put. That is
+            # the same trade this class already makes on write and on read,
+            # and puts are rare (one per capture) while the bytes are
+            # court evidence.
+            existing = final_path.read_bytes()
+            if hashlib.sha256(existing).hexdigest() == sha256:
+                return sha256
+            # Falls through and rewrites, repairing the blob from the
+            # genuine bytes we were just handed.
 
         final_path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp_name = tempfile.mkstemp(

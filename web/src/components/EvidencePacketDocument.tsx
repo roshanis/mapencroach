@@ -75,7 +75,9 @@ export function EvidencePacketDocument({
             <dd className="mt-1 font-medium text-gray-900">{parcel?.survey_no ?? "Not available"}</dd>
           </div>
           <div>
-            <dt className="text-xs uppercase tracking-wide text-gray-500">ULPIN</dt>
+            <dt className="text-xs uppercase tracking-wide text-gray-500">
+              {parcel?.parcel_id_scheme ?? "ULPIN"}
+            </dt>
             <dd className="mt-1 font-medium text-gray-900">{parcel?.ulpin ?? "Not available"}</dd>
           </div>
           <div>

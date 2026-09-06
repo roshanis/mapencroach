@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import CommandMapPage from "./page";
-import { getAlerts, getCases, getParcels, getWatchEntry } from "@/lib/api";
+import { getAlerts, getCases, getParcelPage, getWatchEntry } from "@/lib/api";
 import {
   FIXTURE_ALERTS,
   FIXTURE_CASES,
@@ -12,7 +12,7 @@ import {
 vi.mock("@/lib/api", () => ({
   getAlerts: vi.fn(),
   getCases: vi.fn(),
-  getParcels: vi.fn(),
+  getParcelPage: vi.fn(),
   getWatchEntry: vi.fn(),
   watchAlert: vi.fn(),
   unwatchAlert: vi.fn(),
@@ -66,7 +66,11 @@ vi.mock("@/components/MapView", () => ({
 }));
 
 beforeEach(() => {
-  vi.mocked(getParcels).mockResolvedValue(FIXTURE_PARCELS);
+  vi.mocked(getParcelPage).mockResolvedValue({
+    parcels: FIXTURE_PARCELS,
+    total: FIXTURE_PARCELS.length,
+    truncated: false,
+  });
   vi.mocked(getAlerts).mockResolvedValue(FIXTURE_ALERTS);
   vi.mocked(getCases).mockResolvedValue(FIXTURE_CASES);
   vi.mocked(getWatchEntry).mockResolvedValue(undefined);
@@ -100,7 +104,7 @@ describe("CommandMapPage", () => {
     expect(screen.getByTestId("console-background")).not.toHaveAttribute("inert");
   });
   it("shows an honest loading state before map data is ready", () => {
-    vi.mocked(getParcels).mockReturnValue(new Promise(() => undefined));
+    vi.mocked(getParcelPage).mockReturnValue(new Promise(() => undefined));
     vi.mocked(getAlerts).mockReturnValue(new Promise(() => undefined));
     vi.mocked(getCases).mockReturnValue(new Promise(() => undefined));
 
@@ -110,7 +114,7 @@ describe("CommandMapPage", () => {
   });
 
   it("shows a retryable error instead of an empty map when data fails", async () => {
-    vi.mocked(getParcels).mockRejectedValue(new Error("offline"));
+    vi.mocked(getParcelPage).mockRejectedValue(new Error("offline"));
 
     render(<CommandMapPage />);
 
@@ -194,6 +198,45 @@ describe("CommandMapPage", () => {
     });
     expect(screen.getByTestId("console-background")).not.toHaveAttribute("inert");
     expect(document.activeElement).toBe(openButton);
+  });
+
+  describe("incomplete map coverage", () => {
+    it("says so when the server holds more parcels than it returned", async () => {
+      vi.mocked(getParcelPage).mockResolvedValue({
+        parcels: FIXTURE_PARCELS,
+        total: 50000,
+        truncated: true,
+      });
+      render(<CommandMapPage />);
+      const warning = await screen.findByTestId("parcel-coverage-warning");
+      expect(warning.textContent).toContain("incomplete");
+      expect(warning.textContent).toContain("50,000");
+      expect(warning).toHaveAttribute("role", "alert");
+    });
+
+    it("stays silent when the page covers the whole jurisdiction", async () => {
+      // A standing "incomplete" banner over a complete map would train
+      // officers to ignore it, which is worse than not having one.
+      vi.mocked(getParcelPage).mockResolvedValue({
+        parcels: FIXTURE_PARCELS,
+        total: FIXTURE_PARCELS.length,
+        truncated: false,
+      });
+      render(<CommandMapPage />);
+      await screen.findByTestId("operational-map");
+      expect(screen.queryByTestId("parcel-coverage-warning")).toBeNull();
+    });
+
+    it("stays silent when coverage is unknown", async () => {
+      vi.mocked(getParcelPage).mockResolvedValue({
+        parcels: FIXTURE_PARCELS,
+        total: undefined,
+        truncated: false,
+      });
+      render(<CommandMapPage />);
+      await screen.findByTestId("operational-map");
+      expect(screen.queryByTestId("parcel-coverage-warning")).toBeNull();
+    });
   });
 
   describe("URL-persisted selection", () => {
