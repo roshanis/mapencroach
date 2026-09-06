@@ -1,4 +1,6 @@
 import json
+import struct
+import zlib
 from datetime import UTC, date, datetime
 
 import httpx
@@ -21,6 +23,32 @@ WEEK = WeekRef(2026, 32)
 
 
 class TestDemoImageryProviderDeterminism:
+    def test_demo_capture_is_a_complete_png_with_decodable_pixels(self):
+        scene = DemoImageryProvider().fetch(geometry=GEOMETRY, week=WEEK)
+        assert scene is not None
+        assert scene.data[:8] == b"\x89PNG\r\n\x1a\n"
+        chunks = {}
+        offset = 8
+        while offset < len(scene.data):
+            length = struct.unpack(">I", scene.data[offset : offset + 4])[0]
+            kind = scene.data[offset + 4 : offset + 8]
+            payload = scene.data[offset + 8 : offset + 8 + length]
+            checksum = scene.data[offset + 8 + length : offset + 12 + length]
+            assert len(checksum) == 4, "truncated PNG chunk"
+            assert struct.unpack(">I", checksum)[0] == zlib.crc32(kind + payload)
+            chunks[kind] = chunks.get(kind, b"") + payload
+            offset += 12 + length
+        width, height, depth, color, compression, filtering, interlace = struct.unpack(
+            ">IIBBBBB", chunks[b"IHDR"]
+        )
+        assert (width, height) == (160, 90)
+        assert (depth, color, compression, filtering, interlace) == (8, 2, 0, 0, 0)
+        assert chunks[b"IEND"] == b""
+        pixels = zlib.decompress(chunks[b"IDAT"])
+        assert len(pixels) == height * (1 + width * 3)
+        assert all(pixels[y * (1 + width * 3)] == 0 for y in range(height))
+        assert b"Synthetic demo" in chunks[b"tEXt"]
+
     def test_same_inputs_produce_identical_bytes(self):
         s1 = DemoImageryProvider().fetch(geometry=GEOMETRY, week=WEEK)
         s2 = DemoImageryProvider().fetch(geometry=GEOMETRY, week=WEEK)

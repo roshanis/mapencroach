@@ -150,6 +150,22 @@ describe("StateRail", () => {
     });
   });
 
+  it("makes the horizontally scrollable rail keyboard focusable and labelled", () => {
+    render(<StateRail currentState="NEW" />);
+    const rail = screen.getByTestId("state-rail");
+    expect(rail).toHaveAttribute("tabindex", "0");
+    expect(rail).toHaveAttribute("aria-label", "Case state progress");
+    expect(rail.className).toContain("focus-visible:ring");
+  });
+
+  it("announces the current chain step to assistive technology", () => {
+    render(<StateRail currentState="SHOW_CAUSE_ISSUED" />);
+    const current = screen
+      .getAllByTestId("state-rail-step")
+      .find((step) => step.getAttribute("data-state") === "SHOW_CAUSE_ISSUED");
+    expect(current).toHaveAttribute("aria-current", "step");
+  });
+
   it("sets a title on each step from STATE_DESCRIPTIONS (spot check NEW and SHOW_CAUSE_ISSUED)", () => {
     render(<StateRail currentState="NEW" />);
     const steps = screen.getAllByTestId("state-rail-step");

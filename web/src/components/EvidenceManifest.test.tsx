@@ -88,4 +88,16 @@ describe("EvidenceManifest", () => {
     render(<EvidenceManifest events={events} />);
     expect(screen.getByText(/source-record review and legal certification/)).toBeInTheDocument();
   });
+
+  it("makes the manifest scroll container keyboard focusable and labelled", () => {
+    render(
+      <EvidenceManifest
+        events={[makeEvent({ artifacts: ["inspection_report: report-001.pdf"] })]}
+      />
+    );
+    const region = screen.getByRole("region", { name: "Evidence artifact manifest" });
+    expect(region).toHaveAttribute("tabindex", "0");
+    expect(region.className).toContain("overflow-x-auto");
+    expect(region.className).toContain("focus-visible:ring");
+  });
 });

@@ -191,6 +191,25 @@ def watch_and_capture(
 
 
 class TestWatchlistSceneImage:
+    def test_stopping_monitoring_keeps_existing_image_links_and_case_images(
+        self, client: TestClient, store: Store, state_officer_token: str
+    ):
+        case_id, alert_id = case_with_alert_tier(store, "RED")
+        headers = auth_headers(state_officer_token)
+        watch_and_capture(
+            client, store, state_officer_token, alert_id, datetime(2026, 8, 3, tzinfo=UTC)
+        )
+        assert client.delete(f"/alerts/{alert_id}/watch", headers=headers).status_code == 204
+        assert client.get(f"/watchlist/{alert_id}", headers=headers).status_code == 404
+        assert client.post(f"/watchlist/{alert_id}/captures", headers=headers).status_code == 404
+        for path in (
+            f"/watchlist/{alert_id}/weeks/2026-W32/image",
+            f"/cases/{case_id}/imagery/2026-W32/image",
+        ):
+            response = client.get(path, headers=headers)
+            assert response.status_code == 200
+            assert response.content == PNG_BYTES + b"2026-W32"
+
     def test_happy_path_returns_bytes_with_headers(
         self, client: TestClient, store: Store, state_officer_token: str
     ):

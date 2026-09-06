@@ -429,14 +429,16 @@ class CaseImageryBackfillRequest(BaseModel):
     max_weeks: int = Field(default=26, ge=1, le=52)
 
 
-def _resolve_watch_entry(store: Store, user: User, alert_id: str) -> WatchEntryRecord:
+def _resolve_watch_entry(
+    store: Store, user: User, alert_id: str, *, require_active: bool = True
+) -> WatchEntryRecord:
     """Look up a watch entry, 404ing (never 403) if it doesn't exist or the
     caller's jurisdiction scope doesn't cover its parcel -- watch entries
     are scoped exactly like alerts, so out-of-scope must not leak that the
     entry exists."""
     entry = store.watchlist.get(alert_id)
     scope = _user_scope(store, user)
-    if entry is None:
+    if entry is None or (require_active and not entry.active):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="watch entry not found")
     parcel = store.parcels.get(entry.parcel_id)
     if parcel is None or parcel["jurisdiction_id"] not in scope:
@@ -1243,29 +1245,40 @@ def create_app(
                     status_code=status.HTTP_404_NOT_FOUND, detail="alert not found"
                 )
 
-            if alert_id in store.watchlist:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT, detail="alert is already watched"
-                )
-
             if AlertTier(alert["tier"]) != AlertTier.RED:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail="only RED-tier alerts can be watched",
                 )
 
-            started_on = store.clock().date()
-            entry = WatchEntryRecord(
-                alert_id=alert_id,
-                parcel_id=alert["parcel_id"],
-                started_on=started_on,
-                watched_by=user.sub,
-            )
-            store.watchlist[alert_id] = entry
-            store.record_audit(
-                actor=user.sub, action="watch.create", object_type="watch", object_id=alert_id
-            )
-            result = entry.to_dict(started_on)
+            existing = store.watchlist.get(alert_id)
+            if existing is not None:
+                if existing.active:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT, detail="alert is already watched"
+                    )
+                existing.active = True
+                existing.watched_by = user.sub
+                store.record_audit(
+                    actor=user.sub, action="watch.resume", object_type="watch", object_id=alert_id
+                )
+                result = existing.to_dict(store.clock().date())
+                # Rewatch resumes the same timeline, including its original
+                # started_on date and every prior capture attempt.
+
+            if existing is None:
+                started_on = store.clock().date()
+                entry = WatchEntryRecord(
+                    alert_id=alert_id,
+                    parcel_id=alert["parcel_id"],
+                    started_on=started_on,
+                    watched_by=user.sub,
+                )
+                store.watchlist[alert_id] = entry
+                store.record_audit(
+                    actor=user.sub, action="watch.create", object_type="watch", object_id=alert_id
+                )
+                result = entry.to_dict(started_on)
         store.persist_now()
         return result
 
@@ -1276,8 +1289,8 @@ def create_app(
         user: Annotated[User, Depends(require_roles(*_WATCH_ROLES))],
     ) -> Response:
         with store.lock:
-            _resolve_watch_entry(store, user, alert_id)
-            del store.watchlist[alert_id]
+            entry = _resolve_watch_entry(store, user, alert_id)
+            entry.active = False
             store.record_audit(
                 actor=user.sub, action="watch.delete", object_type="watch", object_id=alert_id
             )
@@ -1296,6 +1309,8 @@ def create_app(
         today = store.clock().date()
         matched = []
         for entry in store.watchlist.values():
+            if not entry.active:
+                continue
             parcel = store.parcels.get(entry.parcel_id)
             if parcel is None or parcel["jurisdiction_id"] not in scope:
                 continue
@@ -1355,8 +1370,9 @@ def create_app(
                 entry.in_flight.difference_update(week.key for week in due)
 
         # Phase 3 (locked): persist results and audit the run. Guard
-        # against the entry having been unwatched while phase 2 was
-        # in-flight -- if so, there is nothing left to record against.
+        # against the record being replaced while phase 2 was in-flight.
+        # Stopping monitoring retains this record, so already-requested
+        # captures still finish and remain available in case history.
         with store.lock:
             if store.watchlist.get(alert_id) is not entry:
                 return []
@@ -1380,7 +1396,7 @@ def create_app(
         user: CurrentUser,
     ) -> Response:
         week_ref = _parse_week_or_422(week)
-        entry = _resolve_watch_entry(store, user, alert_id)
+        entry = _resolve_watch_entry(store, user, alert_id, require_active=False)
         record = _require_captured_scene(store, entry.captures, week_ref.key)
         return _scene_image_response(store, user, request, record)
 
@@ -1416,7 +1432,7 @@ def create_app(
             captures = sorted(entry.captures, key=lambda c: c.week)
             attempted = {c.week for c in captures}
             started_on: date | None = entry.started_on
-            due = due_weeks(entry.started_on, today, attempted)
+            due = due_weeks(entry.started_on, today, attempted) if entry.active else []
             remaining = _weeks_needing_backfill(floor, entry.started_on, attempted)
         else:
             captures = []
@@ -1430,6 +1446,7 @@ def create_app(
             "parcel_id": record.parcel_id,
             "alert_tier": alert_tier,
             "watchable": watchable,
+            "monitoring_active": entry.active if entry is not None else False,
             "started_on": started_on.isoformat() if started_on is not None else None,
             "cadence": "weekly",
             "captures": [c.to_dict() for c in captures],

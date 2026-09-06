@@ -95,6 +95,7 @@ import contextlib
 import json
 import os
 import tempfile
+import threading
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -170,6 +171,7 @@ def _watch_entry_to_json(entry: WatchEntryRecord) -> dict[str, Any]:
         "parcel_id": entry.parcel_id,
         "started_on": entry.started_on.isoformat(),
         "watched_by": entry.watched_by,
+        "active": entry.active,
         "captures": [_capture_to_json(c) for c in entry.captures],
     }
 
@@ -180,6 +182,9 @@ def _watch_entry_from_json(raw: dict[str, Any]) -> WatchEntryRecord:
         parcel_id=raw["parcel_id"],
         started_on=date.fromisoformat(raw["started_on"]),
         watched_by=raw["watched_by"],
+        # State files written before watch deactivation had no lifecycle
+        # field; those entries remain active when loaded.
+        active=raw.get("active", True),
         captures=[_capture_from_json(c) for c in raw["captures"]],
         # `in_flight` is per-process, in-run bookkeeping (see
         # `WatchEntryRecord`'s docstring) -- it is never persisted and
@@ -283,23 +288,28 @@ class StatePersister:
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
+        # Serializes snapshot-through-publication. The store lock alone is
+        # insufficient because it is released before the atomic rename,
+        # allowing an older snapshot to publish after a newer one.
+        self._save_lock = threading.Lock()
 
     def save(self, store: Store) -> None:
-        with store.lock:
-            watchlist_snapshot = [_watch_entry_to_json(e) for e in store.watchlist.values()]
-            scene_snapshot = [
-                _scene_record_to_json(r)
-                for r in store.scene_registry._by_id.values()  # noqa: SLF001 - see module docstring
-            ]
-            audit_snapshot = [_audit_entry_to_json(e) for e in store.audit_chain]
+        with self._save_lock:
+            with store.lock:
+                watchlist_snapshot = [_watch_entry_to_json(e) for e in store.watchlist.values()]
+                scene_snapshot = [
+                    _scene_record_to_json(r)
+                    for r in store.scene_registry._by_id.values()  # noqa: SLF001 - see module docstring
+                ]
+                audit_snapshot = [_audit_entry_to_json(e) for e in store.audit_chain]
 
-        payload = {
-            "version": _STATE_VERSION,
-            "watchlist": watchlist_snapshot,
-            "scene_records": scene_snapshot,
-            "audit_chain": audit_snapshot,
-        }
-        self._atomic_write(json.dumps(payload, indent=2))
+            payload = {
+                "version": _STATE_VERSION,
+                "watchlist": watchlist_snapshot,
+                "scene_records": scene_snapshot,
+                "audit_chain": audit_snapshot,
+            }
+            self._atomic_write(json.dumps(payload, indent=2))
 
     def _atomic_write(self, text: str) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

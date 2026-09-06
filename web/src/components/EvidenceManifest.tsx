@@ -89,8 +89,14 @@ export function EvidenceManifest({ events }: EvidenceManifestProps) {
 
   return (
     <div data-testid="evidence-manifest" className="flex flex-col gap-3">
-      <div className="overflow-x-auto rounded-lg border border-gray-200">
+      <div
+        role="region"
+        aria-label="Evidence artifact manifest"
+        tabIndex={0}
+        className="overflow-x-auto rounded-lg border border-gray-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gov/40 focus-visible:ring-offset-2"
+      >
         <table className="w-full min-w-[36rem] border-collapse text-sm">
+          <caption className="sr-only">Evidence artifact manifest</caption>
           <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
             <tr>
               <th className="w-8 px-3 py-2" aria-hidden />

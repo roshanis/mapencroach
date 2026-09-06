@@ -21,6 +21,16 @@ import { PERSONA_META_COOKIE, clearCookie, setCookie } from "@/lib/cookies";
 export { getPersonas };
 export type { Persona };
 
+function reopenPersonaView() {
+  // A detail record may be outside the next persona's jurisdiction. Start
+  // that view from its console instead of reloading a now-inaccessible ID.
+  if (/^\/(cases|parcels)\//.test(window.location.pathname)) {
+    window.location.assign("/console");
+  } else {
+    window.location.reload();
+  }
+}
+
 /**
  * Logs in as a demo persona: calls the backend /demo/login flow, stores the
  * resulting token/persona/meta cookies, and reloads the page so server
@@ -41,7 +51,7 @@ export async function switchPersona(personaId: string): Promise<boolean> {
       jurisdiction_name: result.persona.jurisdiction_name,
     })
   );
-  window.location.reload();
+  reopenPersonaView();
   return true;
 }
 
@@ -54,5 +64,5 @@ export function exitPersona() {
   clearCookie(TOKEN_COOKIE);
   clearCookie(PERSONA_COOKIE);
   clearCookie(PERSONA_META_COOKIE);
-  window.location.reload();
+  reopenPersonaView();
 }

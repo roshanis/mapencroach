@@ -33,4 +33,11 @@ describe("ParcelAttributesCard", () => {
       "Unverified — a notice cannot rely on this boundary; survey first"
     );
   });
+
+  it("keeps every description term inside a description list", () => {
+    render(<ParcelAttributesCard parcel={FIXTURE_PARCELS[0]} />);
+    const terms = screen.getByTestId("parcel-attributes-card").querySelectorAll("dt");
+    expect(terms.length).toBeGreaterThan(0);
+    terms.forEach((term) => expect(term.closest("dl")).not.toBeNull());
+  });
 });

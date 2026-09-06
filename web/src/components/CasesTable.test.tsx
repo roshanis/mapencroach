@@ -398,13 +398,27 @@ describe("CasesTable — mobile card presentation", () => {
       "href",
       "/cases/CASE-1"
     );
-    expect(within(card).getByText("PCL-77")).toBeInTheDocument();
+    expect(within(card).getByRole("link", { name: "PCL-77" })).toHaveAttribute(
+      "href",
+      "/parcels/PCL-77"
+    );
     expect(within(card).getByTestId("case-state-chip")).toHaveTextContent(
       "Show Cause Issued"
     );
     expect(card).toHaveTextContent("4 days");
     expect(within(card).getByText("Open response window")).toBeInTheDocument();
     expect(within(card).getByText("Dismiss false positive")).toBeInTheDocument();
+  });
+
+  it("links the parcel id in desktop rows and avoids hijacking that navigation", () => {
+    const cases: Case[] = [makeCase({ id: "CASE-1", parcel_id: "PCL-77" })];
+    render(<CasesTable cases={cases} />);
+
+    const row = screen.getByTestId("case-row");
+    const parcelLink = within(row).getByRole("link", { name: "PCL-77" });
+    expect(parcelLink).toHaveAttribute("href", "/parcels/PCL-77");
+    fireEvent.click(parcelLink);
+    expect(pushMock).not.toHaveBeenCalled();
   });
 
   it("filters and buckets the card list the same way it filters the table", () => {

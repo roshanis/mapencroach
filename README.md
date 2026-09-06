@@ -160,10 +160,19 @@ change appeared rather than only that it exists now:
 
 ```
 POST   /alerts/{id}/watch             start watching a RED alert
+DELETE /alerts/{id}/watch             stop monitoring; retain capture history
 POST   /watchlist/{id}/captures       run the weeks that are due
 GET    /cases/{id}/imagery            a case's weekly timeline
 POST   /cases/{id}/imagery/backfill   fill earlier weeks, chunked
 ```
+
+Stopping monitoring removes an alert from the active watchlist without deleting
+its captures or breaking retained image links. Starting it again resumes the
+same timeline. Already-requested captures finish after monitoring is stopped;
+uncaptured weeks show as paused. Scheduling still requires the runner below.
+The demo imagery provider produces valid PNG illustrations visibly marked DEMO,
+not satellite observations. Previously stored invalid demo images are not rewritten;
+the UI shows a recoverable load error for them.
 
 Each week is an explicit row: captured (sha256-anchored on ingest, via the same
 registry that backs court exhibits) or empty *with the reason it is empty* —
@@ -217,7 +226,9 @@ surfaces instead of passing silently.
 
 Prefer the `--api-url` form. Watch entries, capture history, the scene index and
 the audit chain persist to `MAPENCROACH_STATE_PATH` (default `data/state.json`)
-as a whole document, and the in-process lock does not reach across processes —
+as a whole document. Saves through one persister serialize snapshot and publication
+to prevent an older snapshot overwriting a newer one. This lock does not reach
+across processes —
 so running the CLI in direct mode beside a live API makes two writers, and the
 last one to save wins. A week captured by one can disappear from the record kept
 by the other, even though the bytes are safely in the blob store. Driving the

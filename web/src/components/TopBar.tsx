@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { DemoMenu } from "./DemoMenu";
+import { DemoModeBanner } from "./DemoModeBanner";
 import { NavLinks } from "./NavLinks";
 import { ViewingAsBanner } from "./ViewingAsBanner";
 import { PERSONA_META_COOKIE, readCookie } from "@/lib/cookies";
@@ -86,6 +87,7 @@ export function TopBar({ jurisdiction = "All Jurisdictions" }: TopBarProps) {
         </div>
       </header>
       <ViewingAsBanner />
+      <DemoModeBanner />
     </>
   );
 }

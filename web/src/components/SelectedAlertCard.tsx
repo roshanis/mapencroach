@@ -2,6 +2,7 @@ import Link from "next/link";
 import { BoundaryGradeBadge } from "./BoundaryGradeBadge";
 import { TierChip } from "./TierChip";
 import { WatchToggle } from "./WatchToggle";
+import { DemoActionBoundary } from "./DemoModeBanner";
 import { LAND_CATEGORY_LABELS, type Alert, type Case, type Parcel } from "@/lib/types";
 
 export interface SelectedAlertCardProps {
@@ -63,7 +64,7 @@ export function SelectedAlertCard({
         </span>
       </div>
       <div className="mt-3">
-        <WatchToggle alert={alert} />
+        <DemoActionBoundary><WatchToggle key={alert.id} alert={alert} /></DemoActionBoundary>
       </div>
       <div className="mt-4 flex flex-col gap-2">
         <Link

@@ -15,6 +15,7 @@ import type { CaptureAttempt, CaptureStatus } from "@/lib/types";
  * shape structurally, so existing callers are unaffected.
  */
 export interface WeekTimelineSource {
+  active?: boolean;
   parcel_id: string;
   started_on: string;
   captures: CaptureAttempt[];
@@ -35,7 +36,7 @@ export interface WeeklySnapshotTimelineProps {
  * always accounts for every week through today), but if it ever does, the
  * gap must still render as an explicit, explained row rather than as
  * nothing. */
-export type WeekRowStatus = CaptureStatus | "due" | "gap";
+export type WeekRowStatus = CaptureStatus | "due" | "gap" | "paused";
 
 export interface WeekRow {
   key: string;
@@ -108,6 +109,8 @@ export function computeWatchWeeks(
     const attempt = attemptsByWeek.get(key);
     const status: WeekRowStatus = attempt
       ? attempt.status
+      : entry.active === false
+        ? "paused"
       : dueWeeks.has(key)
         ? "due"
         : "gap";
@@ -213,6 +216,7 @@ type CapturedImageState =
 function useCapturedImage(imageUrl: string | null): {
   state: CapturedImageState;
   retry: () => void;
+  decodingFailed: (objectUrl: string) => void;
 } {
   const [state, setState] = useState<CapturedImageState>(
     imageUrl ? { status: "loading" } : { status: "no-url" }
@@ -261,7 +265,15 @@ function useCapturedImage(imageUrl: string | null): {
     };
   }, [imageUrl, retryNonce]);
 
-  return { state, retry: () => setRetryNonce((n) => n + 1) };
+  return {
+    state,
+    retry: () => setRetryNonce((n) => n + 1),
+    decodingFailed: (objectUrl) => setState((current) =>
+      current.status === "loaded" && current.objectUrl === objectUrl
+        ? { status: "error" }
+        : current
+    ),
+  };
 }
 
 /**
@@ -288,7 +300,7 @@ function CapturedWeekEvidence({
   parcelId: string;
 }) {
   const dateLabel = formatWeekStart(weekStart);
-  const { state: imageState, retry } = useCapturedImage(attempt.image_url);
+  const { state: imageState, retry, decodingFailed } = useCapturedImage(attempt.image_url);
 
   return (
     <div className="mt-1.5 flex min-w-0 flex-wrap items-start gap-3">
@@ -325,6 +337,7 @@ function CapturedWeekEvidence({
           <img
             data-testid="snapshot-week-thumbnail"
             src={imageState.objectUrl}
+            onError={() => decodingFailed(imageState.objectUrl)}
             alt={`Satellite image captured for week ${weekKey} (week of ${dateLabel}), parcel ${parcelId}`}
             width={THUMBNAIL_WIDTH}
             height={THUMBNAIL_HEIGHT}
@@ -430,6 +443,7 @@ const STATUS_LABELS: Record<WeekRowStatus, string> = {
   provider_error: "Provider error",
   due: "Due — not yet attempted",
   gap: "Gap — no capture record",
+  paused: "Not captured — monitoring stopped",
 };
 
 const STATUS_CLASSES: Record<WeekRowStatus, string> = {
@@ -438,6 +452,7 @@ const STATUS_CLASSES: Record<WeekRowStatus, string> = {
   provider_error: "bg-red-50 text-red-700 ring-red-600/30",
   due: "bg-gray-100 text-gray-600 ring-gray-400/30",
   gap: "bg-red-50 text-red-700 ring-red-600/30",
+  paused: "bg-slate-100 text-slate-700 ring-slate-400/30",
 };
 
 function WeekStatusBadge({ status }: { status: WeekRowStatus }) {

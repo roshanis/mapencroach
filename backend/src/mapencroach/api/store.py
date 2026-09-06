@@ -175,6 +175,10 @@ class WatchEntryRecord:
     started_on: date
     watched_by: str
     captures: list[CaptureAttempt] = field(default_factory=list)
+    # Monitoring lifecycle is separate from the retained imagery timeline.
+    # Deactivating a watch must hide it from active scheduling while keeping
+    # its historical captures available to the linked case.
+    active: bool = True
     in_flight: set[str] = field(default_factory=set, repr=False, compare=False)
 
     def to_dict(self, today: date) -> dict[str, Any]:
@@ -185,8 +189,9 @@ class WatchEntryRecord:
         consistent with whatever the store's clock currently says.
         """
         attempted = {c.week for c in self.captures}
-        due = due_weeks(self.started_on, today, attempted)
+        due = due_weeks(self.started_on, today, attempted) if self.active else []
         return {
+            "active": self.active,
             "alert_id": self.alert_id,
             "parcel_id": self.parcel_id,
             "started_on": self.started_on.isoformat(),
