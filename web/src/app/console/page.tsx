@@ -222,22 +222,22 @@ function CommandMapPageContent() {
         inert={mobileQueueOpen || undefined}
       >
         <TopBar jurisdiction="Haridwar–Roorkee Development Authority" />
-      {parcelCoverage.truncated && (
-        // Never silently show a subset of the estate as though it were all
-        // of it: an officer reading a clean map cannot tell the difference
-        // between "no encroachment here" and "this land was never drawn".
-        <p
-          role="alert"
-          data-testid="parcel-coverage-warning"
-          className="border-b border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
-        >
-          <strong className="font-semibold">Map is incomplete.</strong>{" "}
-          Showing {parcelCoverage.shown.toLocaleString()} of{" "}
-          {parcelCoverage.total?.toLocaleString()} parcels in your
-          jurisdiction. The rest are not drawn, and any alert on them is not
-          shown here — do not read this map as full coverage.
-        </p>
-      )}
+        {parcelCoverage.truncated && (
+          // Never silently show a subset of the estate as though it were all
+          // of it: an officer reading a clean map cannot tell the difference
+          // between "no encroachment here" and "this land was never drawn".
+          <p
+            role="alert"
+            data-testid="parcel-coverage-warning"
+            className="border-b border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+          >
+            <strong className="font-semibold">Map is incomplete.</strong>{" "}
+            Showing {parcelCoverage.shown.toLocaleString()} of{" "}
+            {parcelCoverage.total?.toLocaleString()} parcels in your
+            jurisdiction. The rest are not drawn, and any alert on them is not
+            shown here — do not read this map as full coverage.
+          </p>
+        )}
       </div>
       <div className="relative flex flex-1 overflow-hidden">
         <AlertSidebar
