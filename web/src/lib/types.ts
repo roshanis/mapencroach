@@ -329,6 +329,7 @@ export interface CaptureAttempt {
 }
 
 export interface WatchEntry {
+  active?: boolean;
   alert_id: string;
   parcel_id: string;
   started_on: string;
@@ -345,6 +346,8 @@ export interface WatchEntry {
 // Case.alert_id, so CaseImagery mirrors WatchEntry's shape rather than being
 // a second parallel record type.
 export interface CaseImagery {
+  /** False after monitoring stops; retained captures still remain available. */
+  monitoring_active?: boolean;
   case_id: string;
   alert_id: string;
   parcel_id: string;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, type ReactNode, type RefObject } from "react";
 import Link from "next/link";
 import { TierChip } from "./TierChip";
 import { ageFromNow, sortBySeverityDesc } from "@/lib/format";
@@ -14,6 +14,7 @@ export interface AlertSidebarProps {
   summary?: ReactNode;
   mobileOpen?: boolean;
   onMobileClose?: () => void;
+  returnFocusRef?: RefObject<HTMLButtonElement | null>;
   /** Lookup from alert id to its case, used to render a "Case" quick-action chip. */
   casesByAlertId?: Map<string, Case>;
 }
@@ -31,6 +32,7 @@ export function AlertSidebar({
   summary,
   mobileOpen = false,
   onMobileClose,
+  returnFocusRef,
   casesByAlertId,
 }: AlertSidebarProps) {
   const parcelsById = useMemo(
@@ -40,6 +42,74 @@ export function AlertSidebar({
   const sorted = sortBySeverityDesc(
     alerts.filter((alert) => alert.status !== "closed")
   );
+  const dialogRef = useRef<HTMLElement>(null);
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
+  const wasMobileOpenRef = useRef(false);
+
+  useEffect(() => {
+    if (mobileOpen) {
+      if (!wasMobileOpenRef.current) {
+        const active = document.activeElement;
+        restoreFocusRef.current = returnFocusRef?.current ?? (active instanceof HTMLElement ? active : null);
+      }
+      wasMobileOpenRef.current = true;
+      const focusable = dialogRef.current?.querySelector<HTMLElement>(
+        "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])"
+      );
+      (focusable ?? dialogRef.current)?.focus();
+      return;
+    }
+
+    if (wasMobileOpenRef.current) {
+      wasMobileOpenRef.current = false;
+      restoreFocusRef.current?.focus();
+      restoreFocusRef.current = null;
+    }
+  }, [mobileOpen, returnFocusRef]);
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+
+    function handleDialogKeyDown(event: KeyboardEvent) {
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onMobileClose?.();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const focusable = Array.from(
+        dialog.querySelectorAll<HTMLElement>(
+          "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])"
+        )
+      );
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || active === dialog)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener("keydown", handleDialogKeyDown);
+    return () => document.removeEventListener("keydown", handleDialogKeyDown);
+  }, [mobileOpen, onMobileClose]);
+
+  function handleSelect(alert: Alert) {
+    onSelect?.(alert);
+    onMobileClose?.();
+  }
 
   return (
     <>
@@ -58,15 +128,20 @@ export function AlertSidebar({
         />
       )}
       <aside
+        ref={dialogRef}
         data-testid="alert-sidebar"
+        role={mobileOpen ? "dialog" : undefined}
+        aria-modal={mobileOpen ? true : undefined}
+        aria-labelledby="alert-sidebar-heading"
+        tabIndex={mobileOpen ? -1 : undefined}
         className={`${
           mobileOpen ? "flex" : "hidden"
-        } fixed inset-x-3 bottom-3 top-20 z-30 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl md:static md:z-auto md:flex md:h-full md:w-80 md:shrink-0 md:rounded-none md:border-y-0 md:border-l-0 md:shadow-none`}
+        } absolute inset-x-3 bottom-3 top-3 z-30 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl md:static md:z-auto md:flex md:h-full md:w-80 md:shrink-0 md:rounded-none md:border-y-0 md:border-l-0 md:shadow-none`}
       >
         {summary}
         <div className="flex items-start justify-between border-b border-gray-200 px-4 py-3">
           <div>
-            <h2 className="text-sm font-semibold text-gray-900">
+            <h2 id="alert-sidebar-heading" className="text-sm font-semibold text-gray-900">
               Unresolved alerts
             </h2>
             <p className="text-xs text-gray-500">
@@ -90,20 +165,13 @@ export function AlertSidebar({
             const caseForAlert = casesByAlertId?.get(alert.id);
             return (
               <li key={alert.id}>
-                <div
-                  role="button"
-                  tabIndex={0}
+                <button
+                  type="button"
                   data-testid="alert-list-item"
                   data-alert-id={alert.id}
                   aria-label={`${alert.parcel_id}, ${alert.tier} alert, ${alert.status.replaceAll("_", " ")}`}
-                  onClick={() => onSelect?.(alert)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      onSelect?.(alert);
-                    }
-                  }}
-                  className={`flex w-full cursor-pointer flex-col gap-1 border-b border-gray-100 px-4 py-3 text-left transition-colors hover:bg-gray-50 ${
+                  onClick={() => handleSelect(alert)}
+                  className={`flex w-full cursor-pointer flex-col gap-1 border-b border-gray-100 px-4 py-3 text-left transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-gov/40 ${
                     selectedAlertId === alert.id ? "bg-gov/5" : ""
                   }`}
                 >
@@ -126,24 +194,22 @@ export function AlertSidebar({
                       {parcelSecondaryLine(parcel)}
                     </span>
                   )}
-                  <div className="mt-1 flex items-center gap-3 text-xs">
+                </button>
+                <div className="flex items-center gap-3 px-4 py-2 text-xs">
+                  <Link
+                    href={`/parcels/${alert.parcel_id}`}
+                    className="text-gov hover:underline focus:outline-none focus:ring-2 focus:ring-gov/30"
+                  >
+                    Parcel &rarr;
+                  </Link>
+                  {caseForAlert && (
                     <Link
-                      href={`/parcels/${alert.parcel_id}`}
-                      onClick={(event) => event.stopPropagation()}
-                      className="text-gov hover:underline focus:outline-none focus:ring-2 focus:ring-gov/30"
+                      href={`/cases/${caseForAlert.id}`}
+                      className="rounded-full bg-gov/10 px-2 py-0.5 font-medium text-gov hover:bg-gov/20 focus:outline-none focus:ring-2 focus:ring-gov/30"
                     >
-                      Parcel &rarr;
+                      Case
                     </Link>
-                    {caseForAlert && (
-                      <Link
-                        href={`/cases/${caseForAlert.id}`}
-                        onClick={(event) => event.stopPropagation()}
-                        className="rounded-full bg-gov/10 px-2 py-0.5 font-medium text-gov hover:bg-gov/20 focus:outline-none focus:ring-2 focus:ring-gov/30"
-                      >
-                        Case
-                      </Link>
-                    )}
-                  </div>
+                  )}
                 </div>
               </li>
             );

@@ -304,11 +304,20 @@ export function AlertsTable({
   }
 
   const filtered = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
     const byFilter = alerts.filter((a) => {
-      const normalizedQuery = query.trim().toLowerCase();
+      const parcel = parcelsById.get(a.parcel_id);
       if (
         normalizedQuery &&
-        ![a.id, a.parcel_id, a.tier, a.status]
+        ![
+          a.id,
+          a.parcel_id,
+          a.tier,
+          a.status,
+          parcel?.survey_no,
+          parcel?.ulpin,
+          parcel?.owning_department,
+        ]
           .join(" ")
           .toLowerCase()
           .includes(normalizedQuery)
@@ -320,7 +329,7 @@ export function AlertsTable({
       return true;
     });
     return sortBySeverityDesc(byFilter);
-  }, [alerts, query, tierFilter, statusFilter]);
+  }, [alerts, parcelsById, query, tierFilter, statusFilter]);
 
   const tierCounts = Object.fromEntries(
     TIER_OPTIONS.map((tier) => [
@@ -337,16 +346,23 @@ export function AlertsTable({
     ])
   ) as Record<(typeof STATUS_OPTIONS)[number], number>;
 
+  function clearFilters() {
+    setQuery("");
+    setTierFilter("all");
+    setStatusFilter("all");
+    persistFilters({ query: "", tier: "all", status: "all" });
+  }
+
   return (
     <div data-testid="alerts-table" className="flex flex-col gap-4">
-      <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 sm:grid-cols-[minmax(14rem,1fr)_auto_auto] sm:items-end">
+      <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 sm:grid-cols-[minmax(14rem,1fr)_auto_auto_auto] sm:items-end">
         <label className="flex flex-col gap-1 text-sm text-gray-700">
-          Search
+          Search alerts
           <input
             type="search"
             aria-label="Search alerts"
             value={query}
-            placeholder="Alert or parcel ID"
+            placeholder="Alert ID, survey no., ULPIN, or department"
             onChange={(event) => {
               const nextQuery = event.target.value;
               setQuery(nextQuery);
@@ -397,6 +413,13 @@ export function AlertsTable({
             ))}
           </select>
         </label>
+        <button
+          type="button"
+          onClick={clearFilters}
+          className="min-h-11 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-secondary hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gov/20"
+        >
+          Clear filters
+        </button>
       </div>
 
       <p className="text-sm text-slate-500">

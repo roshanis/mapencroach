@@ -21,6 +21,7 @@ import { TierChip } from "@/components/TierChip";
 import { TopBar } from "@/components/TopBar";
 import { TransferPanel } from "@/components/TransferPanel";
 import { TransitionPanel } from "@/components/TransitionPanel";
+import { DemoActionBoundary } from "@/components/DemoModeBanner";
 
 export const dynamic = "force-dynamic";
 
@@ -193,11 +194,11 @@ export default async function CaseDetailPage({
           <p className="text-sm text-slate-600">
             Only actions permitted from the current stage are available. Required evidence is shown before submission.
           </p>
-          <TransitionPanel
+          <DemoActionBoundary><TransitionPanel
             caseId={caseRecord.id}
             allowedTransitions={caseRecord.allowed_transitions ?? []}
             requiredArtifacts={caseRecord.required_artifacts ?? {}}
-          />
+          /></DemoActionBoundary>
         </section>
 
         {parcel && canDraft && (
@@ -209,11 +210,11 @@ export default async function CaseDetailPage({
         )}
 
         {canTransfer && (
-          <TransferPanel
+          <DemoActionBoundary><TransferPanel
             caseId={caseRecord.id}
             currentJurisdictionId={caseRecord.jurisdiction_id}
             jurisdictions={jurisdictions}
-          />
+          /></DemoActionBoundary>
         )}
 
         <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
@@ -228,7 +229,7 @@ export default async function CaseDetailPage({
             Imagery History
           </h2>
           {imagery ? (
-            <CaseImageryHistory caseId={caseRecord.id} initialImagery={imagery} />
+            <DemoActionBoundary><CaseImageryHistory caseId={caseRecord.id} initialImagery={imagery} /></DemoActionBoundary>
           ) : (
             <p
               data-testid="case-imagery-unavailable"

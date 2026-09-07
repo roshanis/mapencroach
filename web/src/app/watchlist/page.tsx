@@ -1,6 +1,7 @@
 import { getWatchlistForRequest } from "@/lib/server-api";
 import { TopBar } from "@/components/TopBar";
 import { WatchlistEntryCard } from "@/components/WatchlistEntryCard";
+import { DemoActionBoundary } from "@/components/DemoModeBanner";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +33,7 @@ export default async function WatchlistPage() {
         ) : (
           <div className="flex flex-col gap-4">
             {entries.map((entry) => (
-              <WatchlistEntryCard key={entry.alert_id} initialEntry={entry} />
+              <DemoActionBoundary key={entry.alert_id}><WatchlistEntryCard initialEntry={entry} /></DemoActionBoundary>
             ))}
           </div>
         )}

@@ -282,7 +282,31 @@ class TestDeleteWatch:
         client.post(f"/alerts/{alert_id}/watch", headers=auth_headers(state_officer_token))
         resp = client.delete(f"/alerts/{alert_id}/watch", headers=auth_headers(state_officer_token))
         assert resp.status_code == 204
-        assert alert_id not in store.watchlist
+        assert alert_id in store.watchlist
+        assert store.watchlist[alert_id].active is False
+
+    def test_deactivation_hides_active_routes_but_retains_capture_history(
+        self, client: TestClient, store: Store, state_officer_token: str
+    ):
+        alert_id, _ = first_red_alert(store)
+        freeze(store, datetime(2026, 8, 3, tzinfo=UTC))
+        client.post(f"/alerts/{alert_id}/watch", headers=auth_headers(state_officer_token))
+        store.imagery_provider = FakeProvider()
+        capture = client.post(
+            f"/watchlist/{alert_id}/captures", headers=auth_headers(state_officer_token)
+        )
+        assert capture.status_code == 201
+
+        resp = client.delete(f"/alerts/{alert_id}/watch", headers=auth_headers(state_officer_token))
+        assert resp.status_code == 204
+        assert len(store.watchlist[alert_id].captures) == 1
+        assert client.get("/watchlist", headers=auth_headers(state_officer_token)).json() == []
+        assert client.get(
+            f"/watchlist/{alert_id}", headers=auth_headers(state_officer_token)
+        ).status_code == 404
+        assert client.post(
+            f"/watchlist/{alert_id}/captures", headers=auth_headers(state_officer_token)
+        ).status_code == 404
 
     def test_unwatch_then_rewatch_succeeds(
         self, client: TestClient, store: Store, state_officer_token: str
@@ -292,6 +316,30 @@ class TestDeleteWatch:
         client.delete(f"/alerts/{alert_id}/watch", headers=auth_headers(state_officer_token))
         resp = client.post(f"/alerts/{alert_id}/watch", headers=auth_headers(state_officer_token))
         assert resp.status_code == 201
+
+    def test_rewatch_resumes_existing_history(
+        self, client: TestClient, store: Store, state_officer_token: str
+    ):
+        alert_id, _ = first_red_alert(store)
+        freeze(store, datetime(2026, 8, 3, tzinfo=UTC))
+        client.post(f"/alerts/{alert_id}/watch", headers=auth_headers(state_officer_token))
+        store.imagery_provider = FakeProvider()
+        first_capture = client.post(
+            f"/watchlist/{alert_id}/captures", headers=auth_headers(state_officer_token)
+        )
+        assert len(first_capture.json()) == 1
+        original_entry = store.watchlist[alert_id]
+
+        client.delete(f"/alerts/{alert_id}/watch", headers=auth_headers(state_officer_token))
+        freeze(store, datetime(2026, 8, 10, tzinfo=UTC))
+        resumed = client.post(
+            f"/alerts/{alert_id}/watch", headers=auth_headers(state_officer_token)
+        )
+        assert resumed.status_code == 201
+        assert store.watchlist[alert_id] is original_entry
+        assert store.watchlist[alert_id].active is True
+        assert [capture["week"] for capture in resumed.json()["captures"]] == ["2026-W32"]
+        assert resumed.json()["due_weeks"] == ["2026-W33"]
 
     def test_not_watched_is_404(self, client: TestClient, store: Store, state_officer_token: str):
         alert_id, _ = first_red_alert(store)

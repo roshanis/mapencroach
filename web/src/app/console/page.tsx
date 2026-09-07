@@ -48,6 +48,17 @@ function CommandMapPageContent() {
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [role, setRole] = useState("case_officer");
   const [mobileQueueOpen, setMobileQueueOpen] = useState(false);
+  const queueTriggerRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const desktop = window.matchMedia("(min-width: 768px)");
+    const releaseMobileDialog = (event: { matches: boolean }) => {
+      if (event.matches) setMobileQueueOpen(false);
+    };
+    releaseMobileDialog(desktop);
+    desktop.addEventListener("change", releaseMobileDialog);
+    return () => desktop.removeEventListener("change", releaseMobileDialog);
+  }, []);
   const [h3Visible, setH3Visible] = useState(false);
   const [h3Resolution, setH3Resolution] = useState<H3Resolution>(11);
   const [selectedAlertId, setSelectedAlertId] = useState<string | undefined>();
@@ -206,25 +217,31 @@ function CommandMapPageContent() {
 
   return (
     <div className="flex h-screen-safe flex-col">
-      <TopBar jurisdiction="Haridwar–Roorkee Development Authority" />
-      {parcelCoverage.truncated && (
-        // Never silently show a subset of the estate as though it were all
-        // of it: an officer reading a clean map cannot tell the difference
-        // between "no encroachment here" and "this land was never drawn".
-        <p
-          role="alert"
-          data-testid="parcel-coverage-warning"
-          className="border-b border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
-        >
-          <strong className="font-semibold">Map is incomplete.</strong>{" "}
-          Showing {parcelCoverage.shown.toLocaleString()} of{" "}
-          {parcelCoverage.total?.toLocaleString()} parcels in your
-          jurisdiction. The rest are not drawn, and any alert on them is not
-          shown here — do not read this map as full coverage.
-        </p>
-      )}
-      <div className="flex flex-1 overflow-hidden">
+      <div
+        data-testid="console-topbar-background"
+        inert={mobileQueueOpen || undefined}
+      >
+        <TopBar jurisdiction="Haridwar–Roorkee Development Authority" />
+        {parcelCoverage.truncated && (
+          // Never silently show a subset of the estate as though it were all
+          // of it: an officer reading a clean map cannot tell the difference
+          // between "no encroachment here" and "this land was never drawn".
+          <p
+            role="alert"
+            data-testid="parcel-coverage-warning"
+            className="border-b border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+          >
+            <strong className="font-semibold">Map is incomplete.</strong>{" "}
+            Showing {parcelCoverage.shown.toLocaleString()} of{" "}
+            {parcelCoverage.total?.toLocaleString()} parcels in your
+            jurisdiction. The rest are not drawn, and any alert on them is not
+            shown here — do not read this map as full coverage.
+          </p>
+        )}
+      </div>
+      <div className="relative flex flex-1 overflow-hidden">
         <AlertSidebar
+          returnFocusRef={queueTriggerRef}
           alerts={alerts}
           parcels={parcels}
           selectedAlertId={selectedAlertId}
@@ -241,7 +258,11 @@ function CommandMapPageContent() {
             />
           }
         />
-        <div className="flex flex-1 flex-col overflow-hidden">
+        <div
+          data-testid="console-background"
+          inert={mobileQueueOpen || undefined}
+          className="flex flex-1 flex-col overflow-hidden"
+        >
           <div
             data-testid="kpi-strip-compact-wrapper"
             className="border-b border-slate-200 bg-slate-50 px-3 py-2 lg:hidden"
@@ -280,15 +301,18 @@ function CommandMapPageContent() {
                 sidebar's overlay (lower z-index) at that point, so leaving it
                 mounted would keep a focusable-but-invisible button in the tab
                 order for no benefit — the same panel is already open. */}
-            {!mobileQueueOpen && (
-              <button
-                type="button"
-                onClick={() => setMobileQueueOpen(true)}
-                className="absolute bottom-[calc(1rem_+_env(safe-area-inset-bottom,0px))] left-1/2 z-20 flex min-h-11 -translate-x-1/2 items-center rounded-full bg-gov px-4 py-2 text-sm font-semibold text-white shadow-lg md:hidden"
-              >
-                Open work queue
-              </button>
-            )}
+            <button
+              type="button"
+              aria-hidden={mobileQueueOpen || undefined}
+              ref={queueTriggerRef}
+              tabIndex={mobileQueueOpen ? -1 : undefined}
+              onClick={() => setMobileQueueOpen(true)}
+              className={`absolute bottom-[calc(1rem_+_env(safe-area-inset-bottom,0px))] left-1/2 z-20 min-h-11 -translate-x-1/2 items-center rounded-full bg-gov px-4 py-2 text-sm font-semibold text-white shadow-lg md:hidden ${
+                mobileQueueOpen ? "invisible pointer-events-none" : "flex"
+              }`}
+            >
+              Open work queue
+            </button>
             <MapIntroPanel />
             <div
               data-testid="kpi-strip-floating-wrapper"

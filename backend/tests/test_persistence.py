@@ -13,6 +13,7 @@ persistence in (`build_store`). Never touches the network.
 
 import json
 import os
+import threading
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -133,6 +134,33 @@ def populate_store(store: Store) -> None:
 
 
 class TestRoundTrip:
+    def test_inactive_flag_round_trips(self, tmp_path):
+        store = Store()
+        entry = make_watch_entry()
+        entry.active = False
+        store.watchlist[entry.alert_id] = entry
+        persister = StatePersister(tmp_path / "state.json")
+
+        persister.save(store)
+        loaded = persister.load()
+
+        assert loaded is not None
+        assert loaded.watchlist["alert-1"].active is False
+
+    def test_missing_active_flag_loads_as_active_for_legacy_state(self, tmp_path):
+        store = Store()
+        store.watchlist["alert-1"] = make_watch_entry()
+        persister = StatePersister(tmp_path / "state.json")
+        persister.save(store)
+        payload = json.loads(persister.path.read_text(encoding="utf-8"))
+        del payload["watchlist"][0]["active"]
+        persister.path.write_text(json.dumps(payload), encoding="utf-8")
+
+        loaded = persister.load()
+
+        assert loaded is not None
+        assert loaded.watchlist["alert-1"].active is True
+
     def test_watchlist_round_trips_exactly(self, tmp_path):
         store = Store()
         populate_store(store)
@@ -478,6 +506,43 @@ class TestCorruptFileFailsLoudly:
 
 
 class TestWriteCrashSafety:
+    def test_concurrent_saves_serialize_snapshot_through_publication(self, tmp_path, monkeypatch):
+        store = Store()
+        store.watchlist["alert-1"] = make_watch_entry("alert-1")
+        persister = StatePersister(tmp_path / "state.json")
+        first_atomic_write_entered = threading.Event()
+        release_first_atomic_write = threading.Event()
+        calls = {"count": 0}
+        real_atomic_write = persister._atomic_write
+
+        def gated_atomic_write(text: str) -> None:
+            calls["count"] += 1
+            if calls["count"] == 1:
+                first_atomic_write_entered.set()
+                assert release_first_atomic_write.wait(timeout=5)
+            real_atomic_write(text)
+
+        monkeypatch.setattr(persister, "_atomic_write", gated_atomic_write)
+
+        first = threading.Thread(target=persister.save, args=(store,))
+        first.start()
+        assert first_atomic_write_entered.wait(timeout=5)
+
+        store.watchlist["alert-2"] = make_watch_entry("alert-2")
+        second = threading.Thread(target=persister.save, args=(store,))
+        second.start()
+        second.join(timeout=0.1)
+        assert second.is_alive()  # blocked until the older snapshot publishes
+
+        release_first_atomic_write.set()
+        first.join(timeout=5)
+        second.join(timeout=5)
+        assert not first.is_alive()
+        assert not second.is_alive()
+        loaded = persister.load()
+        assert loaded is not None
+        assert set(loaded.watchlist) == {"alert-1", "alert-2"}
+
     def test_failure_during_write_leaves_no_target_file(self, tmp_path, monkeypatch):
         store = Store()
         populate_store(store)

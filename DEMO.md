@@ -284,3 +284,24 @@ seeded today is demo data — the next step is your data."*
   routed to a separate track (LEGACY_REFERRED), never auto-escalated.
 - **"Who can see what?"** — Seven roles, jurisdiction-scoped. A taluk officer sees
   their taluk. Every action is in the audit chain with the actor's identity.
+
+
+## Demo readiness checks
+
+Without `NEXT_PUBLIC_API_URL`, the UI is a read-only sample workspace. Its banner
+explains that records are illustrative and changes are not saved; mutation
+controls are disabled. With a demo backend, the banner identifies shared sample
+case records and possible resets. These modes do not establish operational readiness.
+Stopping monitoring retains imagery history; resuming reuses the same timeline.
+Synthetic provider images carry a visible DEMO mark.
+
+For the offline browser acceptance check, first build `web/` without
+`NEXT_PUBLIC_API_URL`, then run `npm run test:browser`. Supply a locally installed
+Playwright module using `PLAYWRIGHT_MODULE_PATH` if it is outside this project's
+module search path, and `CHROME_PATH` if using an installed Chrome executable.
+`PYTHON` may point to the backend Python environment (default: `backend/.venv/bin/python`).
+The harness uses a fresh browser profile and blocks external requests. It checks
+keyboard navigation, mobile dialog focus and resizing, survey search, sample
+controls, nine routes at three viewport widths, serious/critical axe findings,
+and decoding the actual backend demo PNG. It requires a prepared production build;
+it does not verify live imagery, external map tiles, production login, or print output.

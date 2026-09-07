@@ -143,6 +143,29 @@ def state_viewer_token(store: Store) -> str:
 
 
 class TestGetCaseImagery:
+    def test_unwatched_case_keeps_historical_imagery_timeline(
+        self, client: TestClient, store: Store, state_officer_token: str
+    ):
+        case_id, alert_id = case_with_alert_tier(store, "RED")
+        freeze(store, datetime(2026, 8, 3, tzinfo=UTC))
+        client.post(f"/alerts/{alert_id}/watch", headers=auth_headers(state_officer_token))
+        store.imagery_provider = FakeProvider()
+        capture = client.post(
+            f"/watchlist/{alert_id}/captures", headers=auth_headers(state_officer_token)
+        )
+        assert capture.status_code == 201
+        client.delete(f"/alerts/{alert_id}/watch", headers=auth_headers(state_officer_token))
+
+        resp = client.get(f"/cases/{case_id}/imagery", headers=auth_headers(state_officer_token))
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["started_on"] == "2026-08-03"
+        assert [attempt["week"] for attempt in body["captures"]] == ["2026-W32"]
+        assert body["monitoring_active"] is False
+        freeze(store, datetime(2026, 8, 17, tzinfo=UTC))
+        later = client.get(f"/cases/{case_id}/imagery", headers=auth_headers(state_officer_token))
+        assert later.json()["due_weeks"] == []
+
     def test_red_case_without_existing_timeline(
         self, client: TestClient, store: Store, state_officer_token: str
     ):

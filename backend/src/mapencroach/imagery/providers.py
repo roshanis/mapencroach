@@ -28,7 +28,9 @@ way the rest of the app selects demo vs. real mode.
 import hashlib
 import json
 import os
+import struct
 import time
+import zlib
 from collections.abc import Collection, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -82,6 +84,60 @@ def _demo_digest(geometry: Mapping[str, Any], week: WeekRef) -> bytes:
     return hashlib.sha256(payload).digest()
 
 
+def _demo_png(digest: bytes) -> bytes:
+    """Small deterministic illustration, with a visible DEMO watermark.
+
+    Encode RGB PNG with stdlib only so demo capture needs no image service
+    or optional imaging dependency. The pattern is deliberately illustrative.
+    """
+    width, height = 160, 90
+    pixels = bytearray(width * height * 3)
+    for y in range(height):
+        for x in range(width):
+            tile = digest[((x // 20) + (y // 15) * 8) % len(digest)]
+            color = (55 + tile // 5, 90 + tile // 4, 80 + tile // 6)
+            if (x in (30, 31, 128, 129) and 15 <= y <= 62) or (
+                y in (15, 16, 61, 62) and 30 <= x <= 129
+            ):
+                color = (255, 225, 135)
+            if y >= 70:
+                color = (15, 23, 42)
+            offset = (y * width + x) * 3
+            pixels[offset : offset + 3] = bytes(color)
+
+    # Five-by-seven glyphs avoid platform fonts and keep retained bytes stable.
+    glyphs = (
+        ("11110", "10001", "10001", "10001", "10001", "10001", "11110"),
+        ("11111", "10000", "10000", "11110", "10000", "10000", "11111"),
+        ("10001", "11011", "10101", "10101", "10001", "10001", "10001"),
+        ("01110", "10001", "10001", "10001", "10001", "10001", "01110"),
+    )
+    for letter, rows in enumerate(glyphs):
+        for row, bits in enumerate(rows):
+            for column, bit in enumerate(bits):
+                if bit == "1":
+                    for dy in range(2):
+                        for dx in range(2):
+                            offset = ((73 + row * 2 + dy) * width + 57 + letter * 12
+                                      + column * 2 + dx) * 3
+                            pixels[offset : offset + 3] = b"\xff\xff\xff"
+
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        return (struct.pack(">I", len(payload)) + kind + payload
+                + struct.pack(">I", zlib.crc32(kind + payload)))
+
+    rows = b"".join(
+        b"\x00" + pixels[y * width * 3 : (y + 1) * width * 3] for y in range(height)
+    )
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"tEXt", b"Description\x00Synthetic demo illustration - not satellite imagery")
+        + chunk(b"IDAT", zlib.compress(rows))
+        + chunk(b"IEND", b"")
+    )
+
+
 class DemoImageryProvider:
     """Deterministic synthetic imagery source. No network access.
 
@@ -104,7 +160,8 @@ class DemoImageryProvider:
         if bucket < _DEMO_ABSENT_BUCKETS:
             return None
 
-        scene_id = f"demo-{digest.hex()[:24]}"
+        # Version the identity: older retained demo bytes were not a PNG.
+        scene_id = f"demo-v2-{digest.hex()[:24]}"
         # Mid-week timestamp (Thursday), derived only from the week --
         # never from wall-clock time -- to keep captured_at deterministic.
         captured_at = datetime.combine(
@@ -118,7 +175,7 @@ class DemoImageryProvider:
             cloud_pct = round((digest[1] % int(_DEMO_CLEAR_MAX_PCT * 10)) / 10, 1)
 
         return ProviderScene(
-            data=b"\x89PNG\r\n\x1a\n" + digest + week.key.encode(),
+            data=_demo_png(digest),
             scene_id=scene_id,
             captured_at=captured_at,
             sensor=_DEMO_SENSOR,

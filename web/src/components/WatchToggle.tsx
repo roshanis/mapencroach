@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getWatchEntry, unwatchAlert, watchAlert } from "@/lib/api";
 import type { Alert, WatchEntry } from "@/lib/types";
 
@@ -33,6 +33,8 @@ export function WatchToggle({ alert }: WatchToggleProps) {
   const [entry, setEntry] = useState<WatchEntry | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const currentAlertIdRef = useRef(alert.id);
+  currentAlertIdRef.current = alert.id;
 
   const watchable = alert.tier === "red";
 
@@ -44,6 +46,8 @@ export function WatchToggle({ alert }: WatchToggleProps) {
     }
     let cancelled = false;
     setLoadState("loading");
+    setSubmitting(false);
+    setEntry(undefined);
     setError(null);
     getWatchEntry(alert.id)
       .then((result) => {
@@ -61,40 +65,46 @@ export function WatchToggle({ alert }: WatchToggleProps) {
   }, [alert.id, watchable]);
 
   async function handleStart() {
+    const requestedAlertId = alert.id;
     setSubmitting(true);
     setError(null);
     try {
       const result = await watchAlert(alert.id);
+      if (currentAlertIdRef.current !== requestedAlertId) return;
       if (result.ok && result.entry) {
         setEntry(result.entry);
       } else {
         setError(`Refused (HTTP ${result.status}): ${result.detail}`);
       }
     } catch {
+      if (currentAlertIdRef.current !== requestedAlertId) return;
       setError(
         "Watch service could not be reached. The alert was not added to the watchlist — try again."
       );
     } finally {
-      setSubmitting(false);
+      if (currentAlertIdRef.current === requestedAlertId) setSubmitting(false);
     }
   }
 
   async function handleStop() {
+    const requestedAlertId = alert.id;
     setSubmitting(true);
     setError(null);
     try {
       const result = await unwatchAlert(alert.id);
+      if (currentAlertIdRef.current !== requestedAlertId) return;
       if (result.ok) {
         setEntry(undefined);
       } else {
         setError(`Refused (HTTP ${result.status}): ${result.detail}`);
       }
     } catch {
+      if (currentAlertIdRef.current !== requestedAlertId) return;
       setError(
         "Watch service could not be reached. The alert is still on the watchlist — try again."
       );
     } finally {
-      setSubmitting(false);
+      if (currentAlertIdRef.current === requestedAlertId) setSubmitting(false);
     }
   }
 

@@ -70,7 +70,9 @@ export function StateRail({ currentState, events }: StateRailProps) {
       )}
       <ol
         data-testid="state-rail"
-        className="flex items-start gap-0 overflow-x-auto pb-2"
+        tabIndex={0}
+        aria-label="Case state progress"
+        className="flex items-start gap-0 overflow-x-auto pb-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gov/40 focus-visible:ring-offset-2"
       >
         {CASE_STATE_CHAIN.map((state, index) => {
           const isCurrent = !special && state === currentState;
@@ -87,6 +89,7 @@ export function StateRail({ currentState, events }: StateRailProps) {
               data-testid="state-rail-step"
               data-state={state}
               data-current={isCurrent}
+              aria-current={isCurrent ? "step" : undefined}
               className="flex shrink-0 items-start"
             >
               <div

@@ -153,6 +153,46 @@ describe("WatchToggle", () => {
         screen.getByRole("button", { name: `Watch alert ${RED_ALERT.id}` })
       ).not.toBeDisabled();
     });
+
+    it("ignores a delayed watch response after switching alerts", async () => {
+      const secondAlert = FIXTURE_ALERTS.find(
+        (alert) => alert.tier === "red" && alert.id !== RED_ALERT.id
+      )!;
+      let resolveWatch!: (value: {
+        ok: true;
+        status: number;
+        entry: WatchEntry;
+      }) => void;
+      vi.mocked(getWatchEntry).mockResolvedValue(undefined);
+      vi.mocked(watchAlert).mockReturnValue(
+        new Promise((resolve) => {
+          resolveWatch = resolve;
+        })
+      );
+
+      const { rerender } = render(<WatchToggle alert={RED_ALERT} />);
+      fireEvent.click(
+        await screen.findByRole("button", {
+          name: `Watch alert ${RED_ALERT.id}`,
+        })
+      );
+
+      vi.mocked(getWatchEntry).mockResolvedValue(undefined);
+      rerender(<WatchToggle alert={secondAlert} />);
+      expect(
+        await screen.findByRole("button", {
+          name: `Watch alert ${secondAlert.id}`,
+        })
+      ).toBeInTheDocument();
+
+      resolveWatch({ ok: true, status: 201, entry: WATCH_ENTRY });
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: `Watch alert ${secondAlert.id}` })
+        ).toBeInTheDocument();
+      });
+      expect(screen.queryByText("Watching weekly since 2026-06-01.")).not.toBeInTheDocument();
+    });
   });
 
   describe("stopping a watch", () => {
@@ -173,6 +213,47 @@ describe("WatchToggle", () => {
         ).toBeInTheDocument();
       });
       expect(unwatchAlert).toHaveBeenCalledWith(RED_ALERT.id);
+    });
+
+    it("ignores a delayed mutation response after switching alerts", async () => {
+      const secondAlert = FIXTURE_ALERTS.find(
+        (alert) => alert.tier === "red" && alert.id !== RED_ALERT.id
+      )!;
+      let resolveUnwatch!: (value: {
+        ok: false;
+        status: number;
+        detail: string;
+      }) => void;
+      vi.mocked(getWatchEntry).mockResolvedValue(WATCH_ENTRY);
+      vi.mocked(unwatchAlert).mockReturnValue(
+        new Promise((resolve) => {
+          resolveUnwatch = resolve;
+        })
+      );
+
+      const { rerender } = render(<WatchToggle alert={RED_ALERT} />);
+      fireEvent.click(
+        await screen.findByRole("button", {
+          name: `Stop watching alert ${RED_ALERT.id}`,
+        })
+      );
+
+      vi.mocked(getWatchEntry).mockResolvedValue(undefined);
+      rerender(<WatchToggle alert={secondAlert} />);
+      expect(
+        await screen.findByRole("button", {
+          name: `Watch alert ${secondAlert.id}`,
+        })
+      ).toBeInTheDocument();
+
+      resolveUnwatch({ ok: false, status: 409, detail: "old alert refusal" });
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: `Watch alert ${secondAlert.id}` })
+        ).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId("watch-toggle-error")).not.toBeInTheDocument();
+      expect(screen.queryByText("Watching weekly since 2026-06-01.")).not.toBeInTheDocument();
     });
 
     it("shows an error and keeps the watching state on a failed unwatch", async () => {

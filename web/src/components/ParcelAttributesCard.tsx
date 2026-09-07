@@ -43,12 +43,16 @@ export function ParcelAttributesCard({ parcel }: ParcelAttributesCardProps) {
           value={jurisdictionLabel(parcel.jurisdiction_id, parcel.jurisdiction_name)}
         />
       </dl>
-      <div className="mt-4 border-t border-gray-100 pt-4">
-        <dt className="mb-1 text-xs uppercase tracking-wide text-gray-500">
-          Boundary Grade
-        </dt>
-        <BoundaryGradeBadge grade={parcel.boundary_grade} />
-      </div>
+      <dl className="mt-4 border-t border-gray-100 pt-4">
+        <div>
+          <dt className="mb-1 text-xs uppercase tracking-wide text-gray-500">
+            Boundary Grade
+          </dt>
+          <dd>
+            <BoundaryGradeBadge grade={parcel.boundary_grade} />
+          </dd>
+        </div>
+      </dl>
     </section>
   );
 }

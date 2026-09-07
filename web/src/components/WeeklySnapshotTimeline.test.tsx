@@ -53,6 +53,11 @@ const BASE_ENTRY: WatchEntry = {
 };
 
 describe("computeWatchWeeks", () => {
+  it("keeps captured weeks but explains unrequested weeks after monitoring stops", () => {
+    const rows = computeWatchWeeks({ ...BASE_ENTRY, active: false, due_weeks: [] }, TODAY);
+    expect(rows[0].status).toBe("captured");
+    expect(rows[rows.length - 1].status).toBe("paused");
+  });
   it("builds one row per ISO week from started_on through today, inclusive", () => {
     const rows = computeWatchWeeks(BASE_ENTRY, TODAY);
 
@@ -243,6 +248,24 @@ describe("WeeklySnapshotTimeline captured-image loading", () => {
     vi.restoreAllMocks();
     URL.createObjectURL = originalCreateObjectURL;
     URL.revokeObjectURL = originalRevokeObjectURL;
+  });
+
+  it("offers retry when a successful response contains an undecodable image", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      blob: async () => new Blob(["invalid PNG bytes"], { type: "image/png" }),
+    });
+    render(<WeeklySnapshotTimeline entry={BASE_ENTRY} today={TODAY} />);
+    const thumbnail = await screen.findByTestId("snapshot-week-thumbnail");
+    fireEvent.error(thumbnail);
+    expect(await screen.findByTestId("snapshot-week-load-error")).toBeInTheDocument();
+    expect(screen.queryByTestId("snapshot-week-thumbnail")).not.toBeInTheDocument();
+    expect(screen.getByTestId("snapshot-week-sha256")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("snapshot-week-retry"));
+    await screen.findByTestId("snapshot-week-thumbnail");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(revokeObjectURLMock).toHaveBeenCalledWith("blob:mock-object-url");
   });
 
   it("fetches the image with the app's real auth headers (cookie token), and renders the thumbnail on a 200", async () => {

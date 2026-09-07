@@ -91,6 +91,48 @@ describe("AlertsTable — explainability (WP6)", () => {
     expect(screen.getByText("Showing 1 of 2 alerts")).toBeInTheDocument();
   });
 
+  it("searches resolved parcel survey number, ULPIN, and owning department", () => {
+    const parcel: Parcel = {
+      id: "PCL-1",
+      survey_no: "SURVEY-42",
+      ulpin: "ULPIN-42",
+      owning_department: "Water Resources Department",
+      land_category: "waterbody",
+      boundary_grade: "A",
+      jurisdiction_id: "UK-URBAN-01",
+      geometry: {
+        type: "Polygon",
+        coordinates: [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]],
+      },
+      centroid: [0, 0],
+      tags: [],
+    };
+
+    for (const value of ["SURVEY-42", "ULPIN-42", "Water Resources"]) {
+      const { unmount } = render(<AlertsTable alerts={ALERTS} parcels={[parcel]} />);
+      fireEvent.change(screen.getByRole("searchbox", { name: "Search alerts" }), {
+        target: { value },
+      });
+      expect(screen.getAllByTestId("alert-row")).toHaveLength(1);
+      unmount();
+    }
+  });
+
+  it("clears all filters, restores every result, and removes filter params from the URL", () => {
+    currentSearchParams = new URLSearchParams("q=PCL-2&tier=amber&status=escalated");
+    const replaceStateSpy = vi.spyOn(window.history, "replaceState");
+    render(<AlertsTable alerts={ALERTS} />);
+
+    expect(screen.getAllByTestId("alert-row")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+
+    expect(screen.getAllByTestId("alert-row")).toHaveLength(ALERTS.length);
+    expect(screen.getByRole("searchbox", { name: "Search alerts" })).toHaveValue("");
+    expect(screen.getByTestId("tier-filter")).toHaveValue("all");
+    expect(screen.getByTestId("status-filter")).toHaveValue("all");
+    expect(replaceStateSpy).toHaveBeenLastCalledWith(null, "", "/alerts");
+  });
+
   it("shows filter counts and persists filters in the URL", () => {
     const replaceStateSpy = vi.spyOn(window.history, "replaceState");
     render(<AlertsTable alerts={ALERTS} />);

@@ -30,6 +30,22 @@ function mockReload() {
 }
 
 describe("switchPersona", () => {
+  it("leaves a scoped detail record when switching to another persona", async () => {
+    const assign = vi.fn();
+    Object.defineProperty(window, "location", {
+      value: { ...window.location, pathname: "/cases/case-1", assign, reload: vi.fn() },
+      writable: true,
+    });
+    vi.mocked(loginPersona).mockResolvedValue({
+      token: "demo-test-token",
+      persona: { id: "new-persona", name: "New officer", role: "case_officer", jurisdiction_id: "dist-b", description: "Demo" },
+    });
+    await switchPersona("new-persona");
+    expect(assign).toHaveBeenCalledWith("/console");
+    Object.defineProperty(window, "location", {
+      value: { ...window.location, pathname: "/" }, writable: true,
+    });
+  });
   afterEach(() => {
     clearAllCookies();
     vi.restoreAllMocks();

@@ -13,6 +13,7 @@ import { ParcelWorkSummary } from "@/components/ParcelWorkSummary";
 import { TagEditor } from "@/components/TagEditor";
 import { TierChip } from "@/components/TierChip";
 import { TopBar } from "@/components/TopBar";
+import { DemoActionBoundary } from "@/components/DemoModeBanner";
 import ParcelMiniMap from "@/components/ParcelMiniMap";
 import { HistoricalImageryTimeline } from "@/components/HistoricalImageryTimeline";
 import { BoundaryGradeEditor } from "@/components/BoundaryGradeEditor";
@@ -87,10 +88,10 @@ export default async function ParcelProfilePage({
                 <ParcelAttributesCard parcel={parcel} />
               </div>
 
-              <BoundaryGradeEditor
+              <DemoActionBoundary><BoundaryGradeEditor
                 parcelId={parcel.id}
                 initialGrade={parcel.boundary_grade}
-              />
+              /></DemoActionBoundary>
 
               <HistoricalImageryTimeline parcel={parcel} />
 
@@ -98,7 +99,7 @@ export default async function ParcelProfilePage({
                 <h2 className="mb-4 text-base font-semibold text-gray-900">
                   Operational Tags
                 </h2>
-                <TagEditor parcelId={parcel.id} initialTags={parcel.tags} />
+                <DemoActionBoundary><TagEditor parcelId={parcel.id} initialTags={parcel.tags} /></DemoActionBoundary>
               </section>
 
               <section
@@ -126,9 +127,12 @@ export default async function ParcelProfilePage({
                         >
                           <div className="flex items-center gap-3">
                             <TierChip tier={alert.tier} />
-                            <span className="text-sm text-gray-900">
+                            <Link
+                              href={`/console?alert=${alert.id}`}
+                              className="text-sm font-medium text-gov hover:underline focus:outline-none focus:ring-2 focus:ring-gov/30"
+                            >
                               {alert.id}
-                            </span>
+                            </Link>
                           </div>
                           <span className="text-xs text-gray-500">
                             Severity {alert.severity_score}

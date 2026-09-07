@@ -422,7 +422,7 @@ export default function LandingPage() {
                     Screening layer
                   </p>
                   <p className="mt-3 text-lg font-semibold">Probable change</p>
-                  <ul className="mt-4 space-y-2 text-xs text-white/60">
+                  <ul className="mt-4 space-y-2 text-xs text-white/80">
                     <li>Satellite observations</li>
                     <li>Contextual trends</li>
                     <li>Priority scoring</li>
@@ -436,14 +436,14 @@ export default function LandingPage() {
                     Enforcement layer
                   </p>
                   <p className="mt-3 text-lg font-semibold">Verified finding</p>
-                  <ul className="mt-4 space-y-2 text-xs text-white/60">
+                  <ul className="mt-4 space-y-2 text-xs text-white/80">
                     <li>Authoritative cadastre</li>
                     <li>Field inspection</li>
                     <li>Evidence-backed action</li>
                   </ul>
                 </div>
               </div>
-              <p className="mt-5 text-center text-[11px] font-semibold text-white/50">
+              <p className="mt-5 text-center text-[11px] font-semibold text-white/80">
                 The system keeps these layers visibly and structurally separate.
               </p>
             </div>

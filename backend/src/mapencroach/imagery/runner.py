@@ -203,9 +203,12 @@ class RunSummary:
 
 def _iter_watchlist(store: Store) -> Iterator[WatchEntryRecord]:
     """Watch entries in a stable (alert_id) order, so a run's summary
-    output is deterministic and diffable across invocations."""
+    output is deterministic and diffable across invocations. Inactive
+    entries retain history for case imagery but are not scheduled."""
     for alert_id in sorted(store.watchlist):
-        yield store.watchlist[alert_id]
+        entry = store.watchlist[alert_id]
+        if entry.active:
+            yield entry
 
 
 def run(store: Store, *, now: datetime, max_weeks: int | None, dry_run: bool) -> RunSummary:

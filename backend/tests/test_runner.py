@@ -290,6 +290,22 @@ class TestRunAttemptsOnlyDueWeeks:
 
 
 class TestMaxWeeksCaps:
+    def test_inactive_entries_are_not_scheduled(self):
+        store = make_store(started_on=date(2026, 1, 5))
+        store.watchlist["alert-1"].active = False
+        provider = FakeProvider()
+        store.imagery_provider = provider
+
+        summary = run(
+            store,
+            now=datetime(2026, 1, 12, tzinfo=UTC),
+            max_weeks=None,
+            dry_run=False,
+        )
+
+        assert summary.entries == []
+        assert provider.calls == []
+
     def test_caps_attempts_per_entry_to_earliest_due_weeks(self):
         started_on = date(2026, 1, 5)  # 2026-W02
         now = datetime(2026, 1, 26, tzinfo=UTC)  # 2026-W05 -> 4 weeks due

@@ -7,6 +7,31 @@ body {
   height: 100%;
 }
 
+/* Supporting copy needs to remain readable on both white cards and the gray
+   workspace background. These aliases affect text utilities only; background
+   and border palette utilities keep their existing visual roles. The
+   disabled variant is a separate Tailwind selector and remains unchanged. */
+@layer utilities {
+  .text-tier-amber {
+    color: #855900;
+  }
+
+  .text-tier-green {
+    color: #146c39;
+  }
+
+  .text-secondary {
+    color: #475569;
+  }
+
+  .text-gray-400,
+  .text-gray-500,
+  .text-slate-400,
+  .text-slate-500 {
+    color: #475569;
+  }
+}
+
 html {
   scroll-behavior: smooth;
 }

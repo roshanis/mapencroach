@@ -8,6 +8,7 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        secondary: "#475569",
         gov: {
           DEFAULT: "#1c4f8c",
           dark: "#123963",

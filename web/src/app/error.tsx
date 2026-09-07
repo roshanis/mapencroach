@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 export default function ErrorState({
   error,
   reset,
@@ -18,7 +20,8 @@ export default function ErrorState({
           This page could not be loaded
         </h1>
         <p className="mt-2 text-sm text-slate-600">
-          No incomplete record is being shown. Retry when the service is available.
+          Your demo session may have expired, or the service may be unavailable.
+          Retry, or choose a persona to start a fresh session.
         </p>
         <button
           type="button"
@@ -27,6 +30,10 @@ export default function ErrorState({
         >
           Try again
         </button>
+        <div className="mt-4 flex flex-col gap-3 text-sm">
+          <Link href="/personas" className="text-gov underline">Choose a demo persona</Link>
+          <Link href="/console" className="text-gov underline">Return to command map</Link>
+        </div>
       </div>
     </main>
   );

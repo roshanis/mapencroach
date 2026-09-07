@@ -22,6 +22,32 @@ describe("AlertSidebar", () => {
     expect(onSelect).toHaveBeenCalledWith(FIXTURE_ALERTS[0]);
   });
 
+  it("uses a native row-selection button beside quick-action links", () => {
+    render(<AlertSidebar alerts={FIXTURE_ALERTS} />);
+
+    const row = screen.getAllByTestId("alert-list-item")[0];
+    expect(row.tagName).toBe("BUTTON");
+    expect(row.querySelector("a")).toBeNull();
+    expect(screen.getAllByRole("link", { name: "Parcel →" })[0].closest("li")).toBe(
+      row.parentElement
+    );
+  });
+
+  it("keeps row selection keyboard-activatable through the native button", () => {
+    const onSelect = vi.fn();
+    render(<AlertSidebar alerts={FIXTURE_ALERTS} onSelect={onSelect} />);
+
+    const row = screen.getAllByTestId("alert-list-item")[0];
+    fireEvent.keyDown(row, {
+      key: "Enter",
+    });
+    // Browsers synthesize this click for Enter/Space on a native button;
+    // jsdom requires the synthesis to be explicit.
+    fireEvent.click(row);
+
+    expect(onSelect).toHaveBeenCalledWith(FIXTURE_ALERTS[0]);
+  });
+
   it("renders a useful empty state when no unresolved alerts remain", () => {
     render(
       <AlertSidebar
@@ -36,6 +62,16 @@ describe("AlertSidebar", () => {
   });
 
   describe("mobile overlay backdrop", () => {
+    it("keeps the closed desktop queue as a regular sidebar", () => {
+      render(<AlertSidebar alerts={FIXTURE_ALERTS} />);
+
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(screen.getAllByTestId("alert-list-item")[0]).toHaveAttribute(
+        "type",
+        "button"
+      );
+    });
+
     it("renders no backdrop when the mobile queue is closed (the default)", () => {
       render(<AlertSidebar alerts={FIXTURE_ALERTS} />);
 
@@ -69,6 +105,57 @@ describe("AlertSidebar", () => {
       fireEvent.click(screen.getByTestId("alert-sidebar-backdrop"));
 
       expect(onMobileClose).toHaveBeenCalledOnce();
+    });
+
+    it("exposes an actual mobile dialog and traps focus while open", () => {
+      render(
+        <AlertSidebar
+          alerts={FIXTURE_ALERTS}
+          mobileOpen
+          onMobileClose={vi.fn()}
+        />
+      );
+
+      const dialog = screen.getByRole("dialog", { name: "Unresolved alerts" });
+      expect(dialog).toHaveAttribute("aria-modal", "true");
+      expect(document.activeElement).toBe(
+        screen.getByRole("button", { name: "Close work queue" })
+      );
+
+      const links = screen.getAllByRole("link");
+      links.at(-1)?.focus();
+      fireEvent.keyDown(dialog, { key: "Tab" });
+      expect(document.activeElement).toBe(
+        screen.getByRole("button", { name: "Close work queue" })
+      );
+    });
+
+    it("closes on Escape and closes when a row is selected", () => {
+      const onMobileClose = vi.fn();
+      const onSelect = vi.fn();
+      const { rerender } = render(
+        <AlertSidebar
+          alerts={FIXTURE_ALERTS}
+          mobileOpen
+          onMobileClose={onMobileClose}
+          onSelect={onSelect}
+        />
+      );
+
+      fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+      expect(onMobileClose).toHaveBeenCalledOnce();
+
+      rerender(
+        <AlertSidebar
+          alerts={FIXTURE_ALERTS}
+          mobileOpen
+          onMobileClose={onMobileClose}
+          onSelect={onSelect}
+        />
+      );
+      fireEvent.click(screen.getAllByTestId("alert-list-item")[0]);
+      expect(onSelect).toHaveBeenCalledWith(FIXTURE_ALERTS[0]);
+      expect(onMobileClose).toHaveBeenCalledTimes(2);
     });
   });
 

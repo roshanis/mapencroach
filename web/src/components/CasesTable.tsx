@@ -179,7 +179,11 @@ function CaseTableRow({ c }: { c: Case }) {
           {c.id}
         </Link>
       </td>
-      <td className="px-4 py-2 text-gray-700">{c.parcel_id}</td>
+      <td className="px-4 py-2">
+        <Link href={`/parcels/${c.parcel_id}`} className={CASE_LINK_CLASSES}>
+          {c.parcel_id}
+        </Link>
+      </td>
       <td className="px-4 py-2">
         <CaseStateChip state={c.state} />
         <StageProgress state={c.state} />
@@ -220,7 +224,11 @@ function CaseCard({ c }: { c: Case }) {
       <dl className="mt-3 flex flex-col gap-3 text-sm">
         <div>
           <dt className="text-xs uppercase tracking-wide text-gray-500">Parcel</dt>
-          <dd className="font-medium text-gray-900">{c.parcel_id}</dd>
+          <dd className="font-medium text-gray-900">
+            <Link href={`/parcels/${c.parcel_id}`} className={CASE_LINK_CLASSES}>
+              {c.parcel_id}
+            </Link>
+          </dd>
         </div>
         <div>
           <dt className="text-xs uppercase tracking-wide text-gray-500">Stage</dt>

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import CommandMapPage from "./page";
 import { getAlerts, getCases, getParcelPage, getWatchEntry } from "@/lib/api";
@@ -84,9 +84,25 @@ beforeEach(() => {
 
 afterEach(() => {
   replaceMock.mockReset();
+  vi.unstubAllGlobals();
 });
 
 describe("CommandMapPage", () => {
+  it("releases the modal and background when a mobile viewport becomes desktop", async () => {
+    let change!: (event: { matches: boolean }) => void;
+    vi.stubGlobal("matchMedia", vi.fn(() => ({
+      matches: false,
+      addEventListener: (_: string, callback: typeof change) => { change = callback; },
+      removeEventListener: vi.fn(),
+    })));
+    render(<CommandMapPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open work queue" }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(change).toBeTypeOf("function");
+    act(() => change({ matches: true }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByTestId("console-background")).not.toHaveAttribute("inert");
+  });
   it("shows an honest loading state before map data is ready", () => {
     vi.mocked(getParcelPage).mockReturnValue(new Promise(() => undefined));
     vi.mocked(getAlerts).mockReturnValue(new Promise(() => undefined));
@@ -133,10 +149,9 @@ describe("CommandMapPage", () => {
 
     fireEvent.click(openButton);
 
-    // The trigger is unmounted while the queue is open — otherwise it
-    // would sit, hidden behind the now-open panel, as a dead but still
-    // focusable button. The panel's own backdrop + close control take
-    // over from here.
+    // The trigger is hidden from the accessibility tree while the queue is
+    // open — it remains mounted so closing the dialog can restore focus to
+    // the opener. The panel's own backdrop + close control take over here.
     expect(
       screen.queryByRole("button", { name: "Open work queue" })
     ).not.toBeInTheDocument();
@@ -158,6 +173,31 @@ describe("CommandMapPage", () => {
     expect(
       await screen.findByRole("button", { name: "Open work queue" })
     ).toBeInTheDocument();
+  });
+
+  it("makes the mobile queue modal, inerts the map, and closes it after row selection", async () => {
+    render(<CommandMapPage />);
+
+    const openButton = await screen.findByRole("button", {
+      name: "Open work queue",
+    });
+    openButton.focus();
+    fireEvent.click(openButton);
+
+    expect(screen.getByRole("dialog", { name: "Unresolved alerts" })).toHaveAttribute(
+      "aria-modal",
+      "true"
+    );
+    expect(screen.getByTestId("console-background")).toHaveAttribute("inert");
+
+    fireEvent.click(screen.getAllByTestId("alert-list-item")[0]);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Unresolved alerts" })).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Open parcel record" })).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("console-background")).not.toHaveAttribute("inert");
+    expect(document.activeElement).toBe(openButton);
   });
 
   describe("incomplete map coverage", () => {
