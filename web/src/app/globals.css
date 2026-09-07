@@ -161,3 +161,6 @@ body {
     animation: none;
   }
 }
+
+/* Basemap attribution links must be distinguishable without color alone. */
+.maplibregl-map .maplibregl-ctrl-attrib a { text-decoration: underline; }

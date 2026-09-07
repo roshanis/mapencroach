@@ -11,7 +11,7 @@ wall-clock dependency and stays deterministic under test.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from types import MappingProxyType
 
@@ -187,9 +187,20 @@ def _required_artifacts_for(to_state: CaseState) -> tuple[str, ...]:
 def _check_artifacts(
     to_state: CaseState, artifacts: dict[str, str], required: tuple[str, ...]
 ) -> None:
-    missing = [name for name in required if name not in artifacts]
+    missing = [
+        name for name in required
+        if not isinstance(artifacts.get(name), str) or not artifacts[name].strip()
+    ]
     if missing:
         raise MissingArtifact(to_state, missing)
+    if "hearing_date" in required:
+        value = artifacts["hearing_date"]
+        try:
+            parsed = date.fromisoformat(value)
+            if parsed.isoformat() != value:
+                raise ValueError("not canonical")
+        except ValueError as exc:
+            raise ValueError("hearing_date must be a valid YYYY-MM-DD date") from exc
 
 
 def transition(

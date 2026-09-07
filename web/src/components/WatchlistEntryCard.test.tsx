@@ -30,6 +30,16 @@ const ENTRY: WatchEntry = {
 };
 
 describe("WatchlistEntryCard", () => {
+  it("keeps a failed retry available and exposes new failures from a due run", async () => {
+    const failure = {...ENTRY.captures[0], week:"2026-W24", status:"provider_error" as const, reason:"service unavailable"};
+    vi.mocked(runCaptures).mockResolvedValue({ok:true,status:201,attempts:[failure]});
+    render(<WatchlistEntryCard initialEntry={ENTRY} />);
+    fireEvent.click(screen.getByTestId("run-captures-button"));
+    const retry = await screen.findByTestId("retry-captures-button");
+    fireEvent.click(retry);
+    await waitFor(() => expect(screen.getByTestId("retry-captures-button")).toBeEnabled());
+  });
+
   it("shows the alert identity, the honest 'manual action' label, and the due count", () => {
     render(<WatchlistEntryCard initialEntry={ENTRY} />);
 

@@ -96,7 +96,7 @@ function deriveAlertRow(
 }
 
 const PARCEL_LINK_CLASSES =
-  "text-gov underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-gov/30";
+  "text-gov underline underline-offset-2 focus:outline-none focus:ring-2 focus:ring-gov/30";
 const ACTION_LINK_CLASSES =
   "text-gov hover:underline focus:outline-none focus:ring-2 focus:ring-gov/30";
 

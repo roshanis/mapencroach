@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import CommandMapPage from "./page";
-import { getAlerts, getCases, getParcelPage, getWatchEntry } from "@/lib/api";
+import { getAlerts, getCases, getParcel, getParcelPage, getWatchEntry } from "@/lib/api";
 import {
   FIXTURE_ALERTS,
   FIXTURE_CASES,
@@ -13,6 +13,7 @@ vi.mock("@/lib/api", () => ({
   getAlerts: vi.fn(),
   getCases: vi.fn(),
   getParcelPage: vi.fn(),
+  getParcel: vi.fn(),
   getWatchEntry: vi.fn(),
   watchAlert: vi.fn(),
   unwatchAlert: vi.fn(),
@@ -88,6 +89,18 @@ afterEach(() => {
 });
 
 describe("CommandMapPage", () => {
+  it("loads selected parcel context outside the bounded map page", async () => {
+    const alert = FIXTURE_ALERTS[0];
+    const parcel = FIXTURE_PARCELS.find(p => p.id === alert.parcel_id)!;
+    vi.mocked(getParcelPage).mockResolvedValue({parcels:[],total:1000,truncated:true});
+    vi.mocked(getParcel).mockResolvedValue(parcel);
+    render(<CommandMapPage />);
+    fireEvent.click(await screen.findByRole("button", {name:"Select first map alert"}));
+    expect(await screen.findByRole("link", {name:"Open parcel record"})).toHaveAttribute("href", `/parcels/${parcel.id}`);
+    expect(getParcel).toHaveBeenCalledWith(parcel.id);
+    expect(screen.getByText(/outside the loaded map page/i)).toBeInTheDocument();
+  });
+
   it("releases the modal and background when a mobile viewport becomes desktop", async () => {
     let change!: (event: { matches: boolean }) => void;
     vi.stubGlobal("matchMedia", vi.fn(() => ({
@@ -301,7 +314,7 @@ describe("CommandMapPage", () => {
     });
   });
 
-  it("shows the KPI strip on all viewports: a floating strip on lg+ and a compact in-flow grid below lg", async () => {
+  it("shows the KPI strip on all viewports: reserved summary rows on desktop and a collapsible mobile summary", async () => {
     render(<CommandMapPage />);
 
     await waitFor(() => {
@@ -316,7 +329,7 @@ describe("CommandMapPage", () => {
     // lg+ keeps the floating strip (hidden below lg, shown at lg+).
     expect(floatingWrapper.className).toContain("hidden");
     expect(floatingWrapper.className).toContain("lg:block");
-    expect(floatingWrapper.className).toContain("absolute");
+    expect(floatingWrapper.className).not.toContain("absolute");
 
     // Below lg, the compact grid sits in normal flow (not absolute, and not
     // unconditionally hidden — only hidden at lg+ via the "lg:hidden" class).
@@ -339,9 +352,8 @@ describe("CommandMapPage", () => {
     const positioner = screen.getByTestId("h3-grid-control").parentElement;
 
     expect(toggle).not.toBeChecked();
-    expect(positioner?.className).toContain(
-      "top-[calc(4rem_+_env(safe-area-inset-top,0px))]"
-    );
+    expect(positioner).toHaveAttribute("data-testid", "map-toolbar");
+    expect(positioner?.className).not.toContain("absolute");
     expect(map).toHaveAttribute("data-h3-visible", "false");
     expect(map).toHaveAttribute("data-h3-resolution", "11");
     expect(resolution).toBeDisabled();

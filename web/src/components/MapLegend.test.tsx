@@ -42,4 +42,9 @@ describe("MapLegend", () => {
     rerender(<MapLegend categories={["forest"]} h3Visible={false} />);
     expect(screen.queryByText("H3 analytical cells")).not.toBeInTheDocument();
   });
+
+  it("provides a compact mobile collapse control", () => {
+    render(<MapLegend categories={["forest"]} />);
+    expect(screen.getByRole("button", { name: /map legend/i })).toHaveAttribute("aria-expanded", "false");
+  });
 });

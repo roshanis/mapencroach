@@ -20,6 +20,7 @@ export function BasemapToggle({ mode, onChange }: BasemapToggleProps) {
       <button
         type="button"
         data-testid="basemap-satellite"
+        aria-pressed={mode === "satellite"}
         onClick={() => onChange("satellite")}
         className={`${BUTTON_CLASSES} ${
           mode === "satellite" ? ACTIVE_CLASSES : INACTIVE_CLASSES
@@ -30,6 +31,7 @@ export function BasemapToggle({ mode, onChange }: BasemapToggleProps) {
       <button
         type="button"
         data-testid="basemap-streets"
+        aria-pressed={mode === "streets"}
         onClick={() => onChange("streets")}
         className={`${BUTTON_CLASSES} ${
           mode === "streets" ? ACTIVE_CLASSES : INACTIVE_CLASSES

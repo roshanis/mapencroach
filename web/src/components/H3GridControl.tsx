@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 export type H3Resolution = 9 | 10 | 11;
 
 export interface H3GridControlProps {
@@ -21,11 +23,22 @@ export function H3GridControl({
   onVisibleChange,
   onResolutionChange,
 }: H3GridControlProps) {
+  const [expanded, setExpanded] = useState(false);
   return (
     <section
       data-testid="h3-grid-control"
-      className="w-52 rounded-lg border border-slate-200 bg-white/95 p-3 text-xs shadow-md backdrop-blur-sm"
+      className="w-auto min-w-32 rounded-lg border border-slate-200 bg-white/95 p-3 text-xs shadow-md backdrop-blur-sm"
     >
+      <button
+        type="button"
+        className="flex min-h-11 w-full items-center justify-between text-left font-semibold text-slate-900"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        H3 grid
+        <span aria-hidden>{expanded ? "−" : "+"}</span>
+      </button>
+      <div className={expanded ? "block" : "hidden"}>
       <label className="flex cursor-pointer items-center gap-2 font-semibold text-slate-900">
         <input
           type="checkbox"
@@ -64,6 +77,7 @@ export function H3GridControl({
           {warning}
         </p>
       ) : null}
+      </div>
     </section>
   );
 }

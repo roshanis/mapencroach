@@ -28,14 +28,26 @@ try {
     serviceWorkers: "block",
   });
   // Offline acceptance: do not contact map providers, analytics, or live APIs.
-  await context.route("**/*", (route) =>
-    route.request().url().startsWith(`${origin}/`) ? route.continue() : route.abort()
-  );
+  let blockedRequests = 0;
+  await context.route("**/*", (route) => {
+    if (route.request().url().startsWith(`${origin}/`)) return route.continue();
+    blockedRequests++;
+    return route.abort();
+  });
   const page = await context.newPage();
   const results = [];
   const go = (pathname) => page.goto(`${origin}${pathname}`, { waitUntil: "networkidle" });
 
   await go("/console");
+  await page.getByRole("button", {name:"Retry map tiles"}).waitFor();
+  const beforeRetry = blockedRequests;
+  await page.getByRole("button", {name:"Retry map tiles"}).click();
+  const retryDeadline = Date.now() + 5000;
+  while (blockedRequests === beforeRetry && Date.now() < retryDeadline) {
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  assert.ok(blockedRequests > beforeRetry, "Tile retry must issue new source requests");
+  results.push("Unavailable basemap has a working source retry");
   assert.match(await page.getByTestId("demo-mode-banner").innerText(), /read only/i);
   const parcelLink = page.getByTestId("alert-sidebar").getByRole("link", { name: "Parcel →" }).first();
   const parcelHref = await parcelLink.getAttribute("href");
@@ -65,11 +77,30 @@ try {
   await page.getByRole("dialog").waitFor({ state: "hidden" });
   await page.getByRole("link", { name: "Open parcel record" }).waitFor();
   assert.equal(await page.getByRole("button", { name: /Stop watching alert|Watch alert/ }).isDisabled(), true);
+  await page.waitForFunction(() => {
+    const container = document.querySelector("[data-testid='maplibre-container']")?.getBoundingClientRect();
+    const canvas = document.querySelector(".maplibregl-canvas")?.getBoundingClientRect();
+    return container && canvas && Math.abs(container.height - canvas.height) < 2;
+  }, undefined, {timeout: 3000});
+  const liveMapSizes = await page.evaluate(() => ({
+    container: document.querySelector("[data-testid='maplibre-container']")?.getBoundingClientRect().height,
+    canvas: document.querySelector(".maplibregl-canvas")?.getBoundingClientRect().height,
+  }));
+  assert.ok(Math.abs(liveMapSizes.container - liveMapSizes.canvas) < 2,
+    `Opening selected details must resize the rendered map: ${JSON.stringify(liveMapSizes)}`);
+  await page.getByRole("button", { name: "Close selected alert" }).click();
   await trigger.click();
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("dialog").waitFor({ state: "hidden" });
   assert.equal(await page.getByTestId("console-background").getAttribute("inert"), null);
   results.push("Mobile focus, dismissal, selection, and desktop resizing work");
+
+  await go("/cases/CASE-9001");
+  const dismiss = page.getByRole("button", {name:"Dismiss false positive",exact:true});
+  assert.equal(await dismiss.isEnabled(), true);
+  await dismiss.click();
+  assert.equal(await page.getByRole("button", {name:"Record dismissal",exact:true}).isDisabled(), true);
+  results.push("Read-only users can explore alternative case steps without submitting");
 
   const routes = ["/", "/console", "/alerts", "/cases", "/cases/CASE-9001", "/parcels/PCL-1001", "/watchlist", "/personas", "/cases/CASE-9001/evidence-packet"];
   const accessibility = [];
@@ -90,6 +121,33 @@ try {
   }
   assert.deepEqual(accessibility, [], JSON.stringify(accessibility, null, 2));
   results.push("Nine routes fit 390/768/1440px with no serious/critical axe violations");
+
+  for (const width of [320,390,768,1440]) {
+    await page.setViewportSize({width,height:844});
+    for (const selected of [false,true]) {
+      await go(`/console${selected ? "?alert=ALT-5001" : ""}`);
+      const layout = await page.evaluate(() => {
+        const selectors = ["[data-testid='map-toolbar']", "[data-testid='map-canvas-region']", "[data-testid='map-footer']", "aside[aria-label^='Selected alert']"];
+        const boxes = selectors.map(selector => {
+          const e = document.querySelector(selector);
+          const r = e?.getBoundingClientRect();
+          return r && r.width && r.height ? {selector,x:r.x,y:r.y,right:r.right,bottom:r.bottom} : null;
+        }).filter(Boolean);
+        const overlaps = [];
+        for (let i=0;i<boxes.length;i++) for (let j=i+1;j<boxes.length;j++) {
+          const a=boxes[i], b=boxes[j];
+          if (Math.min(a.right,b.right)-Math.max(a.x,b.x)>1 && Math.min(a.bottom,b.bottom)-Math.max(a.y,b.y)>1) overlaps.push([a.selector,b.selector]);
+        }
+        const canvas=document.querySelector("[data-testid='maplibre-container']")?.getBoundingClientRect();
+        const rendered = document.querySelector(".maplibregl-canvas")?.getBoundingClientRect();
+        return {overlaps,canvasHeight:canvas?.height ?? 0, renderedHeight: rendered?.height ?? 0};
+      });
+      assert.deepEqual(layout.overlaps,[],`Map chrome overlaps at ${width}px, selected=${selected}`);
+      assert.ok(Math.abs(layout.canvasHeight - layout.renderedHeight) < 2, `Rendered map must fit resized container at ${width}px, selected=${selected}: ${JSON.stringify(layout)}`);
+      assert.ok(layout.canvasHeight >= 120, `Map must remain usable at ${width}px, selected=${selected}`);
+    }
+  }
+  results.push("Map rows and selected details do not overlap at 320/390/768/1440px");
 
   const backend = path.resolve(webRoot, "../backend");
   const png = execFileSync(process.env.PYTHON || path.join(backend, ".venv/bin/python"), ["-c", `

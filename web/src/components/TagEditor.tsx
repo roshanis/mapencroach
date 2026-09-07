@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { addParcelTag, removeParcelTag } from "@/lib/api";
+import { useDemoReadOnly } from "./DemoModeBanner";
 
 export interface TagEditorProps {
   parcelId: string;
@@ -13,6 +14,7 @@ export function TagEditor({ parcelId, initialTags }: TagEditorProps) {
   const [input, setInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const demoReadOnly = useDemoReadOnly();
 
   async function handleAdd() {
     const tag = input.trim();
@@ -76,7 +78,7 @@ export function TagEditor({ parcelId, initialTags }: TagEditorProps) {
               type="button"
               data-testid={`tag-remove-${tag}`}
               onClick={() => handleRemove(tag)}
-              disabled={submitting}
+              disabled={demoReadOnly || submitting}
               className="flex min-h-11 min-w-11 items-center justify-center text-gray-400 hover:text-gray-700 disabled:opacity-50 sm:min-h-0 sm:min-w-0"
               aria-label={`Remove tag ${tag}`}
             >
@@ -101,7 +103,7 @@ export function TagEditor({ parcelId, initialTags }: TagEditorProps) {
           type="button"
           data-testid="tag-add"
           onClick={handleAdd}
-          disabled={submitting}
+          disabled={demoReadOnly || submitting}
           className="inline-flex min-h-11 items-center justify-center rounded bg-gov px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50 sm:min-h-0"
         >
           Add tag

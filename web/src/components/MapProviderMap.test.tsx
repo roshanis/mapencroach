@@ -78,11 +78,10 @@ describe("MapProviderMap", () => {
       "Google Maps is not configured. Showing the fallback map."
     );
     expect(notice).toBeInTheDocument();
-    // Regression guard: MapLegend is pinned bottom-left by the page, as an
-    // independent sibling this component can't see. The notice must anchor
-    // to a different corner so it can never cover a legend row.
-    expect(notice.className).toContain("right-3");
-    expect(notice.className).not.toContain("left-3");
+    // The notice is a reserved flow row above the map, so it cannot cover
+    // the page's absolute legend or queue controls.
+    expect(notice.className).toContain("shrink-0");
+    expect(notice.className).not.toContain("absolute");
   });
 
   it("falls back without losing selection when Google Maps cannot load", () => {

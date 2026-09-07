@@ -59,6 +59,10 @@ const mapMocks = vi.hoisted(() => {
   const fitBounds = vi.fn();
   const flyTo = vi.fn();
   const remove = vi.fn();
+  const triggerRepaint = vi.fn();
+  const setTiles = vi.fn();
+  let errorCallback: ((event: unknown) => void) | undefined;
+  let constructorThrows = false;
   const disableRotation = vi.fn();
   const markerConstructor = vi.fn();
   const markerSetLngLat = vi.fn();
@@ -69,10 +73,12 @@ const mapMocks = vi.hoisted(() => {
     touchZoomRotate = { disableRotation };
 
     constructor(options: unknown) {
+      if (constructorThrows) throw new Error("map constructor failed");
       mapConstructor(options);
     }
     on(event: string, cb: () => void) {
       if (event === "load") loadCallback = cb;
+      if (event === "error") errorCallback = cb as (event: unknown) => void;
     }
     isStyleLoaded() {
       return styleLoaded;
@@ -88,7 +94,9 @@ const mapMocks = vi.hoisted(() => {
     }
     getSource(...args: unknown[]) {
       getSource(...args);
-      return args[0] === "h3-grid" ? { setData: setH3Data } : undefined;
+      if (args[0] === "h3-grid") return { setData: setH3Data };
+      if (args[0] === "osm" || args[0] === "esri-imagery") return { setTiles, tiles: [`${String(args[0])}-tile-template`] };
+      return undefined;
     }
     fitBounds(...args: unknown[]) {
       fitBounds(...args);
@@ -98,6 +106,9 @@ const mapMocks = vi.hoisted(() => {
     }
     remove(...args: unknown[]) {
       remove(...args);
+    }
+    triggerRepaint() {
+      triggerRepaint();
     }
   }
 
@@ -137,6 +148,8 @@ const mapMocks = vi.hoisted(() => {
     fitBounds,
     flyTo,
     remove,
+    triggerRepaint,
+    setTiles,
     disableRotation,
     markerConstructor,
     markerSetLngLat,
@@ -157,6 +170,13 @@ const mapMocks = vi.hoisted(() => {
     reset() {
       styleLoaded = false;
       loadCallback = undefined;
+      errorCallback = undefined;
+    },
+    fireError(event: unknown) {
+      errorCallback?.(event);
+    },
+    setConstructorThrows(value: boolean) {
+      constructorThrows = value;
     },
   };
 });
@@ -182,11 +202,38 @@ describe("MapLibreMap", () => {
     mapMocks.fitBounds.mockClear();
     mapMocks.flyTo.mockClear();
     mapMocks.remove.mockClear();
+    mapMocks.triggerRepaint.mockClear();
+    mapMocks.setTiles.mockClear();
+    mapMocks.setConstructorThrows(false);
     mapMocks.disableRotation.mockClear();
     mapMocks.markerConstructor.mockClear();
     mapMocks.markerSetLngLat.mockClear();
     mapMocks.markerAddTo.mockClear();
     mapMocks.markerRemove.mockClear();
+  });
+
+  it("shows a retryable tile status without removing overlays", async () => {
+    render(<MapLibreMap parcels={FIXTURE_PARCELS.slice(0, 1)} alerts={[]} />);
+    await waitFor(() => expect(mapMocks.mapConstructor).toHaveBeenCalled());
+    act(() => mapMocks.fireError({ error: new Error("tile failed") }));
+
+    expect(await screen.findByTestId("maplibre-tile-error")).toHaveTextContent(/could not load map tiles/i);
+    fireEvent.click(screen.getByRole("button", { name: /retry map tiles/i }));
+    expect(mapMocks.triggerRepaint).toHaveBeenCalled();
+    expect(mapMocks.setTiles).toHaveBeenCalledTimes(2);
+    expect(mapMocks.remove).not.toHaveBeenCalled();
+  });
+
+  it("catches map construction failures and retries initialization", async () => {
+    mapMocks.setConstructorThrows(true);
+    render(<MapLibreMap parcels={[]} alerts={[]} />);
+    expect(await screen.findByTestId("maplibre-init-error")).toHaveTextContent(
+      /could not load the map/i
+    );
+
+    mapMocks.setConstructorThrows(false);
+    fireEvent.click(screen.getByRole("button", { name: /retry map initialization/i }));
+    await waitFor(() => expect(mapMocks.mapConstructor).toHaveBeenCalled());
   });
 
   it("builds the map without rotation, loads parcels/alerts, and wires marker + basemap interaction", async () => {

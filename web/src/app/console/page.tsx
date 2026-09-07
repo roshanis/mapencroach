@@ -14,7 +14,7 @@ import { MapLegend } from "@/components/MapLegend";
 import { SelectedAlertCard } from "@/components/SelectedAlertCard";
 import { TopBar } from "@/components/TopBar";
 import { WorkbenchSummary } from "@/components/WorkbenchSummary";
-import { getAlerts, getCases, getParcelPage } from "@/lib/api";
+import { getAlerts, getCases, getParcel, getParcelPage } from "@/lib/api";
 import { PERSONA_META_COOKIE, readCookie } from "@/lib/cookies";
 import { buildH3Grid } from "@/lib/h3-grid";
 import type { Alert, Case, Parcel } from "@/lib/types";
@@ -175,9 +175,27 @@ function CommandMapPageContent() {
   );
 
   const selectedAlert = alerts.find((alert) => alert.id === selectedAlertId);
-  const selectedParcel = selectedAlert
+  const loadedParcel = selectedAlert
     ? parcels.find((parcel) => parcel.id === selectedAlert.parcel_id)
     : undefined;
+  const [extraParcel, setExtraParcel] = useState<Parcel>();
+  const [contextError, setContextError] = useState(false);
+  const [contextRetry, setContextRetry] = useState(0);
+  const missingParcelId = selectedAlert && !loadedParcel ? selectedAlert.parcel_id : undefined;
+  useEffect(() => {
+    let cancelled = false;
+    setExtraParcel(undefined);
+    setContextError(false);
+    if (missingParcelId) {
+      void getParcel(missingParcelId).then(parcel => {
+        if (cancelled) return;
+        if (parcel) setExtraParcel(parcel);
+        else setContextError(true);
+      }).catch(() => { if (!cancelled) setContextError(true); });
+    }
+    return () => { cancelled = true; };
+  }, [missingParcelId, contextRetry]);
+  const selectedParcel = loadedParcel ?? (extraParcel?.id === missingParcelId ? extraParcel : undefined);
 
   if (loadState !== "ready") {
     return (
@@ -263,18 +281,34 @@ function CommandMapPageContent() {
           inert={mobileQueueOpen || undefined}
           className="flex flex-1 flex-col overflow-hidden"
         >
-          <div
+          <details
             data-testid="kpi-strip-compact-wrapper"
             className="border-b border-slate-200 bg-slate-50 px-3 py-2 lg:hidden"
           >
+            <summary className="cursor-pointer text-xs font-medium text-slate-700">Workspace summary</summary>
             <KpiStrip
               parcels={parcels}
               alerts={alerts}
               cases={cases}
               variant="compact"
             />
-          </div>
-          <main className="relative flex-1">
+          </details>
+          <main className="flex min-h-0 flex-1 flex-col">
+            <div data-testid="map-toolbar" className={`${selectedAlert ? "hidden" : "flex"} max-h-[30vh] shrink-0 flex-wrap items-start justify-between gap-2 overflow-y-auto border-b bg-white p-2`}>
+              <H3GridControl
+                visible={canShowH3}
+                resolution={h3Resolution}
+                cellCount={h3Grid.featureCollection.features.length}
+                warning={h3Grid.ok ? undefined : h3Grid.error.message}
+                onVisibleChange={setH3Visible}
+                onResolutionChange={setH3Resolution}
+              />
+              <MapIntroPanel />
+            </div>
+            <div data-testid="kpi-strip-floating-wrapper" className="hidden shrink-0 border-b bg-slate-50 p-2 lg:block">
+              <KpiStrip parcels={parcels} alerts={alerts} cases={cases} variant="compact" />
+            </div>
+            <div data-testid="map-canvas-region" className="relative min-h-0 flex-1">
             <MapView
               parcels={parcels}
               alerts={alerts}
@@ -287,47 +321,26 @@ function CommandMapPageContent() {
               onAlertClick={handleAlertMarkerClick}
               selectedAlertId={selectedAlertId}
             />
-            <div className="absolute left-[calc(0.75rem_+_env(safe-area-inset-left,0px))] top-[calc(4rem_+_env(safe-area-inset-top,0px))] z-20">
-              <H3GridControl
-                visible={h3Visible}
-                resolution={h3Resolution}
-                cellCount={h3Grid.featureCollection.features.length}
-                warning={h3Grid.ok ? undefined : h3Grid.error.message}
-                onVisibleChange={setH3Visible}
-                onResolutionChange={setH3Resolution}
-              />
             </div>
-            {/* Hidden once the queue is already open: it sits behind the
-                sidebar's overlay (lower z-index) at that point, so leaving it
-                mounted would keep a focusable-but-invisible button in the tab
-                order for no benefit — the same panel is already open. */}
-            <button
-              type="button"
-              aria-hidden={mobileQueueOpen || undefined}
-              ref={queueTriggerRef}
-              tabIndex={mobileQueueOpen ? -1 : undefined}
-              onClick={() => setMobileQueueOpen(true)}
-              className={`absolute bottom-[calc(1rem_+_env(safe-area-inset-bottom,0px))] left-1/2 z-20 min-h-11 -translate-x-1/2 items-center rounded-full bg-gov px-4 py-2 text-sm font-semibold text-white shadow-lg md:hidden ${
-                mobileQueueOpen ? "invisible pointer-events-none" : "flex"
-              }`}
-            >
-              Open work queue
-            </button>
-            <MapIntroPanel />
-            <div
-              data-testid="kpi-strip-floating-wrapper"
-              className="pointer-events-none absolute left-1/2 top-3 hidden -translate-x-1/2 lg:block"
-            >
-              <KpiStrip parcels={parcels} alerts={alerts} cases={cases} />
+            <div data-testid="map-footer" className="flex max-h-[25vh] shrink-0 items-start justify-between gap-2 overflow-y-auto border-t bg-white p-2">
+              <MapLegend categories={parcels.map(parcel => parcel.land_category)} h3Visible={canShowH3} />
+              <button type="button" ref={queueTriggerRef}
+                aria-hidden={mobileQueueOpen || undefined}
+                tabIndex={mobileQueueOpen ? -1 : undefined}
+                onClick={() => setMobileQueueOpen(true)}
+                className={`min-h-11 shrink-0 items-center rounded-full bg-gov px-3 py-2 text-sm font-semibold text-white md:hidden ${mobileQueueOpen ? "invisible pointer-events-none" : "flex"}`}
+              >Open work queue</button>
             </div>
-            <div className="absolute bottom-[calc(0.75rem_+_env(safe-area-inset-bottom,0px))] left-[calc(0.75rem_+_env(safe-area-inset-left,0px))]">
-              <MapLegend
-                categories={parcels.map((parcel) => parcel.land_category)}
-                h3Visible={canShowH3}
-              />
-            </div>
+            {selectedAlert && !selectedParcel && (
+              <aside role="status" className="shrink-0 rounded-lg border bg-white p-4 shadow">
+                <p>{contextError ? "Selected parcel details could not be loaded." : "Loading selected parcel details…"}</p>
+                {contextError && <button type="button" onClick={() => setContextRetry(n => n + 1)} className="mt-2 rounded border px-3 py-2">Retry parcel details</button>}
+                <button type="button" onClick={deselectAlert} className="ml-2 rounded border px-3 py-2">Close selection</button>
+              </aside>
+            )}
             {selectedAlert && selectedParcel && (
               <SelectedAlertCard
+                contextNotice={!loadedParcel ? "This parcel is outside the loaded map page. Its record is available below; its boundary is not drawn here." : undefined}
                 alert={selectedAlert}
                 parcel={selectedParcel}
                 caseForAlert={casesByAlertId.get(selectedAlert.id)}

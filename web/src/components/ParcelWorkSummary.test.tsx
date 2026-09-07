@@ -27,6 +27,14 @@ describe("ParcelWorkSummary", () => {
     );
   });
 
+  it("keeps risk and next action attached to the same alert when multiple cases exist", () => {
+    const urgent = FIXTURE_ALERTS[0];
+    const matching = {...FIXTURE_CASES[0], id:"matching", alert_id:urgent.id};
+    const unrelated = {...matching, id:"other", alert_id:"other-alert"};
+    render(<ParcelWorkSummary parcel={FIXTURE_PARCELS[0]} alerts={[urgent]} cases={[unrelated, matching]} />);
+    expect(screen.getByRole("link", {name:"Open active case"})).toHaveAttribute("href", "/cases/matching");
+  });
+
   it("warns that a Grade C boundary needs survey before legal action", () => {
     render(
       <ParcelWorkSummary

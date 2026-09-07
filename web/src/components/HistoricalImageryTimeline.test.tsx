@@ -71,16 +71,12 @@ describe("HistoricalImageryTimeline", () => {
     ).toBeInTheDocument();
   });
 
-  it("steps a month's search day by day and reports a coverage gap at the window start", () => {
+  it("stops on an imagery-service error instead of claiming a coverage gap", () => {
     render(<HistoricalImageryTimeline parcel={FIXTURE_PARCELS[0]} />);
     fireEvent.click(screen.getByRole("button", { name: FIRST_MONTH.label }));
 
-    const daysInWindow =
-      Number(FIRST_MONTH.endDate.slice(8, 10)) -
-      Number(FIRST_MONTH.startDate.slice(8, 10)) +
-      1;
     const requestedTimes = new Set<string>();
-    for (let attempt = 0; attempt <= daysInWindow; attempt += 1) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
       const image = screen.queryByRole("img", {
         name: /HLS Sentinel-2 true-color snapshot/i,
       });
@@ -92,15 +88,9 @@ describe("HistoricalImageryTimeline", () => {
       fireEvent.error(image);
     }
 
-    expect(requestedTimes.size).toBe(daysInWindow);
-    expect(screen.getByText(/No clear pass/)).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        new RegExp(
-          `between ${FIRST_MONTH.startDate} and ${FIRST_MONTH.endDate}`
-        )
-      )
-    ).toBeInTheDocument();
+    expect(requestedTimes.size).toBe(1);
+    expect(screen.getByText(/Imagery could not be loaded/)).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Retry imagery" })).toHaveLength(2);
   });
 
   it("accepts an image whose pixels cannot be verified and shows its capture date", async () => {

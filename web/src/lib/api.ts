@@ -233,6 +233,41 @@ async function fetchJsonWithTotal<T>(
   };
 }
 
+/** Follow reported pages without silently treating a partial response as complete.
+ * Large estates need a filtered/viewport query; fail visibly at the safety bound.
+ */
+async function fetchAllPages<T, W = T[]>(
+  url: string,
+  token: string | undefined,
+  items: (wire: W) => T[] = (wire) => wire as unknown as T[],
+  key: (item: T) => unknown = (item) => {
+    const row = item as { id?: string; alert_id?: string };
+    return row.id ?? row.alert_id;
+  }
+): Promise<T[]> {
+  const rows: T[] = [];
+  const seen = new Set<unknown>();
+  let next = url;
+  for (let page = 0; page < 100; page++) {
+    const {data, total} = await fetchJsonWithTotal<W>(next, token);
+    const batch = items(data);
+    for (const item of batch) {
+      const id = key(item);
+      if (id !== undefined && seen.has(id)) {
+        throw new ApiError("Incomplete pagination: repeated records. Reload to try again.", 502);
+      }
+      if (id !== undefined) seen.add(id);
+      rows.push(item);
+    }
+    if (total === undefined || rows.length >= total) return rows;
+    if (!batch.length || rows.length >= 10000 || total > 10000) {
+      throw new ApiError("Incomplete dataset: narrow the jurisdiction or request a filtered view.", 413);
+    }
+    next = `${url}${url.includes("?") ? "&" : "?"}offset=${rows.length}&limit=500`;
+  }
+  throw new ApiError("Incomplete pagination: request limit reached.", 502);
+}
+
 /**
  * A page of parcels plus how much of the caller's scope it actually covers.
  *
@@ -290,7 +325,13 @@ export async function getParcelPage(
 }
 
 export async function getParcels(bbox?: BBox, token?: string): Promise<Parcel[]> {
-  return (await getParcelPage(bbox, token)).parcels;
+  const base = getApiBase();
+  if (!base) return (await getParcelPage(bbox, token)).parcels;
+  const query = bbox ? `?bbox=${bbox.west},${bbox.south},${bbox.east},${bbox.north}` : "";
+  const features = await fetchAllPages<ParcelFeature, ParcelFeatureCollection>(
+    `${base}/parcels${query}`, token, (wire) => wire.features, (feature) => feature.properties.id
+  );
+  return features.map(featureToParcel);
 }
 
 export async function getParcel(
@@ -387,7 +428,7 @@ export async function getAlerts(token?: string): Promise<Alert[]> {
   const base = getApiBase();
   if (!base) return FIXTURE_ALERTS;
   // Backend enums are uppercase (RED/OPEN); UI keys off lowercase.
-  return (await fetchJson<Alert[]>(`${base}/alerts`, token)).map((a) => ({
+  return (await fetchAllPages<Alert>(`${base}/alerts`, token)).map((a) => ({
     ...a,
     tier: a.tier.toLowerCase() as Alert["tier"],
     status: a.status.toLowerCase() as Alert["status"],
@@ -397,7 +438,7 @@ export async function getAlerts(token?: string): Promise<Alert[]> {
 export async function getCases(token?: string): Promise<Case[]> {
   const base = getApiBase();
   if (!base) return FIXTURE_CASES;
-  const cases = await fetchJson<Case[]>(`${base}/cases`, token);
+  const cases = await fetchAllPages<Case>(`${base}/cases`, token);
   return cases.map(normalizeCase);
 }
 
@@ -794,7 +835,7 @@ function normalizeWatchEntry(base: string, raw: RawWatchEntry): WatchEntry {
 export async function getWatchlist(token?: string): Promise<WatchEntry[]> {
   const base = getApiBase();
   if (!base) return FIXTURE_WATCH_ENTRIES;
-  const entries = await fetchJson<RawWatchEntry[]>(`${base}/watchlist`, token);
+  const entries = await fetchAllPages<RawWatchEntry>(`${base}/watchlist`, token);
   return entries.map((entry) => normalizeWatchEntry(base, entry));
 }
 
@@ -904,7 +945,8 @@ export interface RunCapturesResult {
  */
 export async function runCaptures(
   alertId: string,
-  token?: string
+  token?: string,
+  options?: { retryErrors?: boolean }
 ): Promise<RunCapturesResult> {
   const base = getApiBase();
   if (!base) {
@@ -915,7 +957,7 @@ export async function runCaptures(
     };
   }
 
-  const res = await fetch(`${base}/watchlist/${alertId}/captures`, {
+  const res = await fetch(`${base}/watchlist/${alertId}/captures${options?.retryErrors ? "?retry_errors=true" : ""}`, {
     method: "POST",
     headers: { ...authHeaders(token) },
   });
@@ -1003,6 +1045,8 @@ export interface BackfillCaseImageryResult {
   attempted?: CaptureAttempt[];
   started_on?: string;
   remaining_backfill_weeks?: number;
+  monitoring_active?: boolean;
+  retryable_weeks?: string[];
 }
 
 /**
@@ -1044,6 +1088,8 @@ export async function backfillCaseImagery(
       attempted: RawCaptureAttempt[];
       started_on: string;
       remaining_backfill_weeks: number;
+      monitoring_active?: boolean;
+      retryable_weeks?: string[];
     };
     return {
       ok: true,
@@ -1051,6 +1097,8 @@ export async function backfillCaseImagery(
       attempted: withImageUrls(base, payload.attempted, caseImagePath(caseId)),
       started_on: payload.started_on,
       remaining_backfill_weeks: payload.remaining_backfill_weeks,
+      monitoring_active: payload.monitoring_active,
+      retryable_weeks: payload.retryable_weeks,
     };
   }
   return { ok: false, status: res.status, detail: await readErrorDetail(res) };

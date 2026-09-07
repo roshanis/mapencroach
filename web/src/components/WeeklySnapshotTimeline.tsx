@@ -138,6 +138,12 @@ function abbreviateHash(sha256: string): string {
   return sha256.length > 16 ? `${sha256.slice(0, 16)}…` : sha256;
 }
 
+function imageAltPrefix(): string {
+  return process.env.NEXT_PUBLIC_API_URL
+    ? "Satellite image"
+    : "Illustrative synthetic satellite image";
+}
+
 /** Fixed thumbnail box size — constrained per the contract ("constrained
  * size, lazy-loaded"), and shared by every one of CapturedWeekEvidence's
  * image states (loading / thumbnail / not-retained / unauthorized / error)
@@ -326,7 +332,7 @@ function CapturedWeekEvidence({
           href={imageState.objectUrl}
           target="_blank"
           rel="noreferrer"
-          aria-label={`Open full-size satellite image for week ${weekKey} (week of ${dateLabel}), parcel ${parcelId}`}
+          aria-label={`Open full-size ${imageAltPrefix().toLowerCase()} for week ${weekKey} (week of ${dateLabel}), parcel ${parcelId}`}
           className="block shrink-0 overflow-hidden rounded border border-gray-200 focus:outline-none focus:ring-2 focus:ring-gov focus:ring-offset-1"
         >
           {/* eslint-disable-next-line @next/next/no-img-element -- src is a
@@ -338,7 +344,7 @@ function CapturedWeekEvidence({
             data-testid="snapshot-week-thumbnail"
             src={imageState.objectUrl}
             onError={() => decodingFailed(imageState.objectUrl)}
-            alt={`Satellite image captured for week ${weekKey} (week of ${dateLabel}), parcel ${parcelId}`}
+            alt={`${imageAltPrefix()} captured for week ${weekKey} (week of ${dateLabel}), parcel ${parcelId}`}
             width={THUMBNAIL_WIDTH}
             height={THUMBNAIL_HEIGHT}
             style={thumbnailBoxStyle()}
@@ -443,7 +449,7 @@ const STATUS_LABELS: Record<WeekRowStatus, string> = {
   provider_error: "Provider error",
   due: "Due — not yet attempted",
   gap: "Gap — no capture record",
-  paused: "Not captured — monitoring stopped",
+  paused: "Not captured — monitoring inactive (timing unavailable)",
 };
 
 const STATUS_CLASSES: Record<WeekRowStatus, string> = {

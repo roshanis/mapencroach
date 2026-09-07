@@ -11,6 +11,7 @@ export interface SelectedAlertCardProps {
   onClose: () => void;
   /** Case linked to this alert, if one has been opened. Shows an "Open case" CTA when present. */
   caseForAlert?: Case;
+  contextNotice?: string;
 }
 
 function statusLabel(status: Alert["status"]): string {
@@ -25,11 +26,12 @@ export function SelectedAlertCard({
   parcel,
   onClose,
   caseForAlert,
+  contextNotice,
 }: SelectedAlertCardProps) {
   return (
     <aside
       aria-label={`Selected alert ${alert.id}`}
-      className="absolute bottom-20 left-[max(0.75rem,env(safe-area-inset-left,0px))] right-[max(0.75rem,env(safe-area-inset-right,0px))] z-20 rounded-lg border border-slate-200 bg-white p-4 shadow-xl sm:left-auto sm:right-[max(0.75rem,env(safe-area-inset-right,0px))] sm:w-80"
+      className="max-h-[34vh] shrink-0 overflow-y-auto border-t border-slate-200 bg-white p-4 shadow-lg"
     >
       <div className="flex items-start justify-between gap-3">
         <div>
@@ -56,6 +58,7 @@ export function SelectedAlertCard({
           ×
         </button>
       </div>
+      {contextNotice && <p role="note" className="mt-2 text-xs text-amber-900">{contextNotice}</p>}
       <p className="mt-3 text-sm text-slate-700">{parcel.owning_department}</p>
       <div className="mt-3 flex items-center justify-between gap-3">
         <BoundaryGradeBadge grade={parcel.boundary_grade} showExplanation={false} />

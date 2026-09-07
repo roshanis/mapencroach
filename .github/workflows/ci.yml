@@ -51,3 +51,15 @@ jobs:
         run: npm run build
       - name: Dependency audit
         run: npm audit --audit-level=high
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install browser acceptance runtime
+        run: |
+          python -m pip install -e ../backend
+          npx playwright install --with-deps chromium
+      - name: Browser acceptance (offline fixtures)
+        env:
+          PYTHON: python
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: npm run test:browser

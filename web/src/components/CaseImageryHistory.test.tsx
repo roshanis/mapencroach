@@ -232,7 +232,7 @@ describe("CaseImageryHistory", () => {
       );
 
       expect(screen.getByTestId("case-imagery-complete-note")).toHaveTextContent(
-        "fully backfilled"
+        "This does not mean every week has usable imagery"
       );
       expect(screen.queryByRole("button")).not.toBeInTheDocument();
     });

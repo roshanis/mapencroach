@@ -153,6 +153,7 @@ class TestRoundTrip:
         persister = StatePersister(tmp_path / "state.json")
         persister.save(store)
         payload = json.loads(persister.path.read_text(encoding="utf-8"))
+        payload["version"] = 2  # Legacy snapshots predate the full-state checksum.
         del payload["watchlist"][0]["active"]
         persister.path.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -573,7 +574,9 @@ class TestWriteCrashSafety:
         with pytest.raises(OSError):
             persister.save(store)
 
-        leftovers = [p for p in tmp_path.iterdir() if p.name != "state.json"]
+        leftovers = [
+            p for p in tmp_path.iterdir() if p.name not in {"state.json", "state.json.lock"}
+        ]
         assert leftovers == []
 
     def test_failure_during_rename_leaves_previous_file_intact(self, tmp_path, monkeypatch):
@@ -599,7 +602,7 @@ class TestWriteCrashSafety:
         loaded = persister.load()
         assert set(loaded.watchlist) == {"alert-1"}
 
-    def test_successful_save_after_a_failed_one_still_works(self, tmp_path, monkeypatch):
+    def test_failed_persister_requires_restart_before_saving(self, tmp_path, monkeypatch):
         store = Store()
         populate_store(store)
         path = tmp_path / "state.json"
@@ -620,7 +623,10 @@ class TestWriteCrashSafety:
             persister.save(store)
         assert not path.exists()
 
-        persister.save(store)  # retried, this time fsync succeeds
+        with pytest.raises(RuntimeError, match="restart"):
+            persister.save(store)
+        persister = StatePersister(path)  # explicit recovery, fresh store in the app
+        persister.save(store)
         assert path.exists()
         loaded = persister.load()
         assert set(loaded.watchlist) == {"alert-1"}
@@ -945,7 +951,7 @@ class TestStateVersionMigration:
         with pytest.raises(StateCorruptionError, match="unsupported version"):
             StatePersister(state_path).load()
 
-    def test_migrated_state_saves_as_version_2(self, tmp_path):
+    def test_migrated_state_saves_as_version_3(self, tmp_path):
         chain = self._v1_chain(self._payloads())
         state_path = tmp_path / "state.json"
         self._write_v1_file(state_path, chain)
@@ -958,7 +964,44 @@ class TestStateVersionMigration:
         persister.save(store)
 
         on_disk = json.loads(state_path.read_text(encoding="utf-8"))
-        assert on_disk["version"] == 2
+        assert on_disk["version"] == 3
         reloaded = persister.load()
         assert reloaded is not None
         assert verify_chain(reloaded.audit_chain).ok is True
+
+
+@pytest.mark.parametrize("section", ["watchlist", "scene_records"])
+def test_v3_checkpoint_covers_evidence_indexes(tmp_path, section):
+    store = Store()
+    store.watchlist["alert-1"] = make_watch_entry()
+    store.scene_registry._by_id["scene-1"] = make_scene_record()
+    path = tmp_path / "state.json"
+    StatePersister(path).save(store)
+    payload = json.loads(path.read_text())
+    if section == "watchlist":
+        payload[section][0]["active"] = False
+    else:
+        payload[section][0]["sensor"] = "rewritten"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(StateCorruptionError):
+        StatePersister(path).load()
+
+
+@pytest.mark.parametrize("section,field", [
+    ("watchlist", "attempted_at"), ("scene_records", "captured_at")
+])
+def test_legacy_naive_evidence_timestamp_is_rejected(tmp_path, section, field):
+    store = Store()
+    store.watchlist["alert-1"] = make_watch_entry()
+    store.scene_registry._by_id["scene-1"] = make_scene_record()
+    path = tmp_path / "state.json"
+    StatePersister(path).save(store)
+    payload = json.loads(path.read_text())
+    payload["version"] = 2
+    row = payload[section][0]
+    if section == "watchlist":
+        row = row["captures"][0]
+    row[field] = "2026-01-05T12:30:45"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(StateCorruptionError):
+        StatePersister(path).load()

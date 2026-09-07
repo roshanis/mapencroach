@@ -43,7 +43,11 @@ export function ParcelWorkSummary({
   const activeAlert = [...alerts]
     .filter((alert) => alert.status !== "closed")
     .sort((a, b) => b.severity_score - a.severity_score)[0];
-  const activeCase = cases.find((item) => !TERMINAL_STATES.has(item.state));
+  const activeCases = cases.filter(item => !TERMINAL_STATES.has(item.state))
+    .sort((a, b) => (b.state_since ?? "").localeCompare(a.state_since ?? "") || a.id.localeCompare(b.id));
+  const activeCase = activeAlert
+    ? activeCases.find(item => item.alert_id === activeAlert.id)
+    : activeCases[0];
 
   if (!activeAlert && !activeCase) {
     return (
