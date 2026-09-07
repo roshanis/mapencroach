@@ -39,4 +39,10 @@ describe("BasemapToggle", () => {
     fireEvent.click(screen.getByTestId("basemap-satellite"));
     expect(onChange).toHaveBeenCalledWith("satellite");
   });
+
+  it("exposes the active mode with aria-pressed", () => {
+    render(<BasemapToggle mode="satellite" onChange={vi.fn()} />);
+    expect(screen.getByTestId("basemap-satellite")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("basemap-streets")).toHaveAttribute("aria-pressed", "false");
+  });
 });

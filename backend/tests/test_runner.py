@@ -482,6 +482,7 @@ class TestRunPersists:
         started_on = date(2026, 1, 5)
         now = datetime(2026, 1, 5, tzinfo=UTC)
         store = make_store(started_on=started_on)
+        store.jurisdiction_rows = [("state", None)]
         store.imagery_provider = FakeProvider()
         store.state_persister = StatePersister(tmp_path / "state.json")
 

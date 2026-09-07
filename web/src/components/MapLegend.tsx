@@ -4,6 +4,7 @@ import {
   TIER_COLORS,
   type LandCategory,
 } from "@/lib/types";
+import { useState } from "react";
 
 export interface MapLegendProps {
   categories: LandCategory[];
@@ -18,6 +19,7 @@ const TIER_DOTS: { label: string; color: string }[] = [
 ];
 
 export function MapLegend({ categories, h3Visible = false }: MapLegendProps) {
+  const [expanded, setExpanded] = useState(false);
   const distinctCategories = categories.filter(
     (category, index) => categories.indexOf(category) === index
   );
@@ -25,8 +27,18 @@ export function MapLegend({ categories, h3Visible = false }: MapLegendProps) {
   return (
     <div
       data-testid="map-legend"
-      className="flex flex-col gap-2 rounded bg-white/90 p-3 text-xs shadow"
+      className="flex flex-col gap-2 rounded bg-white/90 p-2 text-xs shadow md:p-3"
     >
+      <button
+        type="button"
+        className="flex min-h-11 items-center justify-between gap-3 text-left font-semibold text-slate-800"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        Map legend
+        <span aria-hidden>{expanded ? "−" : "+"}</span>
+      </button>
+      <div className={expanded ? "block" : "hidden"}>
       <ul className="flex flex-col gap-1">
         {distinctCategories.map((category) => (
           <li
@@ -76,6 +88,7 @@ export function MapLegend({ categories, h3Visible = false }: MapLegendProps) {
           </div>
         </div>
       ) : null}
+      </div>
     </div>
   );
 }

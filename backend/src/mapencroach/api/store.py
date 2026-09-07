@@ -213,7 +213,10 @@ class WatchEntryRecord:
         """
         attempted = {c.week for c in self.captures}
         due = due_weeks(self.started_on, today, attempted) if self.active else []
+        latest = {capture.week: capture for capture in self.captures}
         return {
+            "retryable_weeks": [week for week, capture in latest.items()
+                                if self.active and capture.status.value == "provider_error"],
             "active": self.active,
             "alert_id": self.alert_id,
             "parcel_id": self.parcel_id,

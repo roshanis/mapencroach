@@ -76,7 +76,7 @@ export function MapIntroPanel() {
           persistDismissed(false);
           setDismissed(false);
         }}
-        className="absolute right-[max(0.75rem,env(safe-area-inset-right,0px))] top-[max(0.75rem,env(safe-area-inset-top,0px))] z-10 flex min-h-11 items-center rounded-full bg-white/90 px-3 text-xs text-gray-600 shadow hover:text-gov lg:top-24 2xl:top-[max(0.75rem,env(safe-area-inset-top,0px))]"
+        className="flex min-h-11 items-center rounded-full bg-white/90 px-3 text-xs text-gray-600 shadow hover:text-gov"
       >
         ? What am I looking at?
       </button>
@@ -86,7 +86,7 @@ export function MapIntroPanel() {
   return (
     <div
       data-testid="map-intro-panel"
-      className="absolute right-[max(0.75rem,env(safe-area-inset-right,0px))] top-[max(0.75rem,env(safe-area-inset-top,0px))] z-10 w-80 max-w-[calc(100vw-1.5rem)] rounded-lg border border-gray-200 bg-white/95 p-4 shadow-md lg:top-24 2xl:top-[max(0.75rem,env(safe-area-inset-top,0px))]"
+      className="w-80 max-w-full rounded-lg border border-gray-200 bg-white/95 p-4 shadow-md"
     >
       <p className="text-sm font-semibold text-gray-900">
         What am I looking at?

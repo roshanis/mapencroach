@@ -93,4 +93,17 @@ describe("SelectedAlertCard", () => {
       screen.getByRole("link", { name: "Open case →" })
     ).toHaveAttribute("href", `/cases/${caseForAlert.id}`);
   });
+
+  it("uses a bounded, scrollable mobile bottom sheet", () => {
+    render(
+      <SelectedAlertCard
+        alert={FIXTURE_ALERTS[0]}
+        parcel={FIXTURE_PARCELS[0]}
+        onClose={() => undefined}
+      />
+    );
+    const card = screen.getByRole("complementary");
+    expect(card.className).toContain("max-h");
+    expect(card.className).toContain("overflow-y-auto");
+  });
 });

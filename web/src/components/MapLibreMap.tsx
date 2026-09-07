@@ -52,6 +52,9 @@ export default function MapLibreMap({
   const h3VisibleRef = useRef(h3Visible);
   const h3LayersReadyRef = useRef(false);
   const [mode, setMode] = useState<BasemapMode>("satellite");
+  const [tileError, setTileError] = useState(false);
+  const [initError, setInitError] = useState(false);
+  const [initAttempt, setInitAttempt] = useState(0);
   const modeRef = useRef(mode);
 
   function handleBasemapChange(newMode: BasemapMode) {
@@ -143,12 +146,15 @@ export default function MapLibreMap({
   useEffect(() => {
     let cancelled = false;
     let mapInstance: import("maplibre-gl").Map | null = null;
+    let resizeObserver: ResizeObserver | null = null;
     const markers: import("maplibre-gl").Marker[] = [];
     const markerElements = markerElementsRef.current;
 
     async function init() {
-      const maplibregl = (await import("maplibre-gl")).default;
-      if (cancelled || !containerRef.current) return;
+      try {
+        setInitError(false);
+        const maplibregl = (await import("maplibre-gl")).default;
+        if (cancelled || !containerRef.current) return;
 
       const map = new maplibregl.Map({
         container: containerRef.current,
@@ -203,9 +209,19 @@ export default function MapLibreMap({
       });
       mapInstance = map;
       mapRef.current = map;
+      // Details and status rows resize the map without a window resize event.
+      if (typeof ResizeObserver !== "undefined") {
+        resizeObserver = new ResizeObserver(() => {
+          if (!cancelled) map.resize();
+        });
+        resizeObserver.observe(containerRef.current);
+      }
       map.touchZoomRotate.disableRotation();
+        map.on("error", () => {
+          if (!cancelled) setTileError(true);
+        });
 
-      map.on("load", () => {
+        map.on("load", () => {
         if (cancelled) return;
 
         // Re-apply the current mode now that the style is guaranteed to be
@@ -332,38 +348,88 @@ export default function MapLibreMap({
             map.flyTo({ center: lngLat, zoom: 15 });
           },
         });
-      });
+        });
+      } catch {
+        if (!cancelled) setInitError(true);
+      }
     }
 
     init();
 
     return () => {
       cancelled = true;
+      resizeObserver?.disconnect();
       markers.forEach((m) => m.remove());
       markerElements.clear();
       h3LayersReadyRef.current = false;
       mapInstance?.remove();
       mapRef.current = null;
     };
-    // Intentionally mount-only — see the CONSTRAINT comment above this
-    // effect. This effect runs once, deliberately omitting `parcels`,
-    // `alerts`, `center`, and `zoom` from its dependency array: they are
-    // intentionally captured only at mount time. Callers that need to change
+    // Intentionally initializes from a mount-time snapshot — see the
+    // CONSTRAINT comment above this effect. `initAttempt` is the only
+    // deliberate rerun trigger, used after a failed map construction.
+    // `parcels`, `alerts`, `center`, and `zoom` are intentionally captured
+    // only at mount time. Callers that need to change
     // any of them must remount this component (e.g. by changing its `key`)
     // rather than expect a live update. H3 cells, H3 visibility, selection,
     // and callbacks stay live via refs/effects above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [initAttempt]);
 
   return (
-    <div className="relative h-full w-full">
-      <div
-        ref={containerRef}
-        data-testid="maplibre-container"
-        className="h-full w-full"
-      />
-      <div className="absolute left-[max(0.75rem,env(safe-area-inset-left,0px))] top-[max(0.75rem,env(safe-area-inset-top,0px))] z-10">
-        <BasemapToggle mode={mode} onChange={handleBasemapChange} />
+    <div className="flex h-full w-full flex-col">
+      {initError ? (
+        <div
+          role="alert"
+          data-testid="maplibre-init-error"
+          className="flex shrink-0 items-center justify-center gap-3 border-b border-red-300 bg-red-50 px-3 py-2 text-xs text-red-950"
+        >
+          <span>Could not load the map. Try again.</span>
+          <button
+            type="button"
+            className="min-h-11 shrink-0 rounded bg-red-900 px-3 font-semibold text-white"
+            onClick={() => setInitAttempt((attempt) => attempt + 1)}
+          >
+            Retry map initialization
+          </button>
+        </div>
+      ) : null}
+      {tileError ? (
+        <div
+          role="status"
+          data-testid="maplibre-tile-error"
+          className="flex shrink-0 items-center justify-center gap-3 border-b border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-950"
+        >
+          <span>Could not load map tiles. Overlays remain available.</span>
+          <button
+            type="button"
+            className="min-h-11 shrink-0 rounded bg-amber-900 px-3 font-semibold text-white"
+            onClick={() => {
+              setTileError(false);
+              const map = mapRef.current;
+              if (!map) return;
+              for (const sourceId of ["osm", "esri-imagery"]) {
+                const source = map.getSource(sourceId) as
+                  | { setTiles?: (tiles: string[]) => void; tiles?: string[] }
+                  | undefined;
+                source?.setTiles?.(source.tiles ?? []);
+              }
+              map.triggerRepaint();
+            }}
+          >
+            Retry map tiles
+          </button>
+        </div>
+      ) : null}
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={containerRef}
+          data-testid="maplibre-container"
+          className="h-full w-full"
+        />
+        <div className="absolute left-[max(0.75rem,env(safe-area-inset-left,0px))] top-[max(0.75rem,env(safe-area-inset-top,0px))] z-10">
+          <BasemapToggle mode={mode} onChange={handleBasemapChange} />
+        </div>
       </div>
     </div>
   );

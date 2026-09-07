@@ -95,26 +95,17 @@ process; they prevent nothing across a process boundary. If the web
 app's `POST /watchlist/{id}/captures` and this CLI (in direct mode) both
 run for the same alert at close to the same moment, both may
 independently decide the same week is due, both will fetch it from the
-provider, and whichever process's `persist_now()`/`save()` lands last on
-the state file wins outright -- the other process's freshly-captured
-`CaptureAttempt` (and any audit entries recorded alongside it) can be
-silently dropped from disk, even though the provider fetch genuinely
-happened. Scene *bytes* are the one part that stays safe under this:
-`FileBlobStore` is content-addressed and each blob write is independently
-atomic, so a lost race here never corrupts a blob, only the index/audit-
-chain rows pointing at it (and a re-run will simply re-attempt and
-re-register the same week, since `SceneRegistry.register`'s dedup-by-
-content-hash makes a duplicate write harmless).
+provider. Version 3 persistence serializes compare-and-publish and rejects
+stale writers instead of silently overwriting a newer revision. The losing
+process must restart from saved state; provider work can still be duplicated.
+Content-addressed scene bytes remain independently safe, but an unsuccessful
+publication must not be treated as a completed capture run.
 
-True cross-process mutual exclusion for direct mode would need either a
-real database (row locking / transactions) or an external lock this
-module does not implement (e.g. `flock` around the cron invocation).
-HTTP mode is the alternative this module actually implements: instead of
-excluding a second writer, it stops being a second writer at all. Until
-this backend has a real database behind it, the operationally safe
-pattern for direct mode remains what it always was: pick one driver of
-capture runs per alert at a time. HTTP mode removes the need to make that
-choice whenever a web app instance is already up.
+HTTP mode keeps one application writer and avoids these stale-writer
+failures. Direct mode remains intended for offline, single-writer use.
+Multiple application processes need a transactional shared store before they
+can cooperate; the file lock does not merge their independent state.
+
 """
 
 import argparse

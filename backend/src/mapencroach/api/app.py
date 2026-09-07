@@ -15,8 +15,9 @@ Case transitions into a state the domain reserves for legal authority
 or Role.SYSTEM_ADMIN; ordinary triage/survey/notice transitions stay with
 Role.CASE_OFFICER. Weekly-snapshot watch entries (/alerts/{id}/watch,
 /watchlist*) follow the same jurisdiction-scoping and 404-not-403 rule as
-alerts, and can only be created for RED-tier alerts; capture runs are
-idempotent per ISO week (mapencroach.imagery.schedule.due_weeks) and never
+alerts, and can only be created for RED-tier alerts. Ordinary capture runs
+skip attempted weeks; explicit retries repeat only
+latest provider failures while retaining attempts. Capture runs never
 hold store.lock across imagery provider I/O. Retained scene bytes are
 served back through /watchlist/{alert_id}/weeks/{week}/image and
 /cases/{case_id}/imagery/{week}/image -- week-keyed rather than
@@ -35,9 +36,9 @@ flows above; ingestion dedupes on sha256 (409 on an exact repeat).
 
 Durability: when `create_app()` is called with no explicit `store` (the
 real-deployment path -- every test passes one), the store it builds via
-`mapencroach.persistence.build_store` hydrates prior watchlist/scene-
-registry/audit state from disk (if any) and persists it on every
-watch-list/imagery mutation and every scene read, via `store.persist_now()`
+`mapencroach.persistence.build_store` hydrates operational records, watch
+history, scene metadata and audit state
+from disk (if any) and persists mutations and scene reads via `store.persist_now()`
 called after the relevant `store.lock` block has already been released
 (never while the lock is held). See `mapencroach.persistence` for what is
 and is not persisted, and its cross-process concurrency caveats.
@@ -494,7 +495,7 @@ def _parse_week_or_422(week: str) -> WeekRef:
 
 
 def _find_capture(captures: list[CaptureAttempt], week_key: str) -> CaptureAttempt:
-    for attempt in captures:
+    for attempt in reversed(captures):
         if attempt.week == week_key:
             return attempt
     raise HTTPException(
@@ -697,13 +698,19 @@ def create_app(
     )
 
     def get_store() -> Store:
-        return app.state.store
+        store = app.state.store
+        if store.state_persister is not None and getattr(store.state_persister, "failed", False):
+            raise HTTPException(
+                status_code=503,
+                detail="Saved state is unavailable. Restart from its last saved state.",
+            )
+        return store
 
     StoreDep = Annotated[Store, Depends(get_store)]
     CurrentUser = Annotated[User, Depends(current_user)]
 
     @app.get("/health")
-    def health() -> dict[str, str]:
+    def health(store: StoreDep) -> dict[str, str]:
         """Liveness/readiness probe for container orchestration. Unauthenticated
         by design - it reports process health, not application data."""
         return {"status": "ok"}
@@ -818,6 +825,7 @@ def create_app(
                     "to_grade": body.grade,
                 },
             )
+        store.persist_now()
         return _parcel_to_feature(parcel)
 
     @app.post("/parcels/{parcel_id}/tags", status_code=status.HTTP_201_CREATED)
@@ -854,6 +862,7 @@ def create_app(
                 object_type="parcel",
                 object_id=f"{parcel_id}:{tag}",
             )
+        store.persist_now()
         return _parcel_to_feature(parcel)
 
     @app.delete("/parcels/{parcel_id}/tags/{tag}")
@@ -883,6 +892,7 @@ def create_app(
                 object_type="parcel",
                 object_id=f"{parcel_id}:{normalized}",
             )
+        store.persist_now()
         return _parcel_to_feature(parcel)
 
     # ------------------------------------------------------------------
@@ -1048,8 +1058,10 @@ def create_app(
         with store.lock:
             store.alerts[alert_id] = alert
             store.record_audit(
-                actor=user.sub, action="alert.create", object_type="alert", object_id=alert_id
+                actor=user.sub, action="alert.create", object_type="alert", object_id=alert_id,
+                extra={"alert": dict(alert)},
             )
+        store.persist_now()
         return alert
 
     # ------------------------------------------------------------------
@@ -1077,6 +1089,7 @@ def create_app(
                     "parcel_id": record.parcel_id,
                     "state": record.case.state.value,
                     "state_since": events[-1].occurred_at.isoformat() if events else None,
+                    "allowed_transitions": _transition_options(record.case)[0],
                 }
             )
         response.headers["X-Total-Count"] = str(len(matched))
@@ -1169,6 +1182,7 @@ def create_app(
                     "reason": body.reason,
                 },
             )
+        store.persist_now()
         return _case_to_detail(record)
 
     @app.post("/cases/{case_id}/transitions", status_code=status.HTTP_201_CREATED)
@@ -1233,13 +1247,25 @@ def create_app(
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT, detail=str(exc)
                 ) from exc
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+                ) from exc
 
             store.record_audit(
                 actor=user.sub,
                 action="case.transition",
                 object_type="case",
                 object_id=case_id,
+                extra={
+                    "from_state": event.from_state.value,
+                    "to_state": event.to_state.value,
+                    "artifacts": dict(event.artifacts),
+                    "note": event.note,
+                    "occurred_at": event.occurred_at.isoformat(),
+                },
             )
+        store.persist_now()
 
         allowed, required = _transition_options(record.case)
         return {
@@ -1357,6 +1383,7 @@ def create_app(
         alert_id: str,
         store: StoreDep,
         user: Annotated[User, Depends(require_roles(*_WATCH_ROLES))],
+        retry_errors: bool = False,
     ) -> list[dict[str, Any]]:
         # Phase 1 (locked): resolve scope, decide which weeks are due, and
         # reserve them in `entry.in_flight` so a concurrent capture run for
@@ -1365,8 +1392,14 @@ def create_app(
         with store.lock:
             entry = _resolve_watch_entry(store, user, alert_id)
             attempted_at = store.clock()
-            already = {c.week for c in entry.captures} | entry.in_flight
+            latest = {capture.week: capture for capture in entry.captures}
+            already = {
+                week for week, capture in latest.items()
+                if not retry_errors or capture.status.value != "provider_error"
+            } | entry.in_flight
             due = due_weeks(entry.started_on, attempted_at.date(), already)
+            if retry_errors:
+                due = [week for week in due if week.key in latest]
             if not due:
                 return []
             entry.in_flight.update(week.key for week in due)
@@ -1475,6 +1508,7 @@ def create_app(
             "alert_tier": alert_tier,
             "watchable": watchable,
             "monitoring_active": entry.active if entry is not None else False,
+            "retryable_weeks": entry.to_dict(today).get("retryable_weeks", []) if entry else [],
             "started_on": started_on.isoformat() if started_on is not None else None,
             "cadence": "weekly",
             "captures": [c.to_dict() for c in captures],
@@ -1580,6 +1614,10 @@ def create_app(
                     "attempted": [],
                     "started_on": entry.started_on.isoformat(),
                     "remaining_backfill_weeks": remaining_after,
+                    "monitoring_active": entry.active,
+                    "retryable_weeks": entry.to_dict(store.clock().date()).get(
+                        "retryable_weeks", []
+                    ),
                 }
             else:
                 if results:
@@ -1612,6 +1650,10 @@ def create_app(
                     "attempted": [result.to_dict() for result in results],
                     "started_on": entry.started_on.isoformat(),
                     "remaining_backfill_weeks": remaining_after,
+                    "monitoring_active": entry.active,
+                    "retryable_weeks": entry.to_dict(store.clock().date()).get(
+                        "retryable_weeks", []
+                    ),
                 }
 
         if mutated:

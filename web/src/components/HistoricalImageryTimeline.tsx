@@ -18,7 +18,7 @@ const SCENE_RESOLUTION = "30 m, most recent clear pass of the period";
 const WMS_ENDPOINT = "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi";
 
 type ImageryView = "single" | "compare";
-type SceneStatus = "loaded" | "failed";
+type SceneStatus = "loaded" | "failed" | "error";
 
 function imageBounds(parcel: Parcel): [number, number, number, number] {
   const [longitude, latitude] = parcel.centroid;
@@ -89,6 +89,7 @@ export function HistoricalImageryTimeline({ parcel }: { parcel: Parcel }) {
   // scene window's end) and the outcome once the search settles.
   const [attemptDates, setAttemptDates] = useState<Record<string, string>>({});
   const [statuses, setStatuses] = useState<Record<string, SceneStatus>>({});
+  const [retryCounts, setRetryCounts] = useState<Record<string, number>>({});
 
   const selectedScene =
     scenes.find((scene) => scene.id === selectedId) ?? scenes[scenes.length - 1];
@@ -119,12 +120,27 @@ export function HistoricalImageryTimeline({ parcel }: { parcel: Parcel }) {
 
   const handleImageError = (scene: SceneWindow) => {
     if (statuses[scene.id]) return;
-    advanceSearch(scene);
+    // A transport or provider error is not evidence that this month had no
+    // usable scene. Stop the date crawl and expose a retry instead of
+    // converting an outage into "no clear pass".
+    setStatuses((current) => ({ ...current, [scene.id]: "error" }));
+  };
+
+  const retryScene = (scene: SceneWindow) => {
+    setStatuses((current) => {
+      const next = { ...current };
+      delete next[scene.id];
+      return next;
+    });
+    setRetryCounts((current) => ({
+      ...current,
+      [scene.id]: (current[scene.id] ?? 0) + 1,
+    }));
   };
 
   const sceneImage = (scene: SceneWindow, alt: string) => (
     <Image
-      key={`${scene.id}-${attemptDateFor(scene)}`}
+      key={`${scene.id}-${attemptDateFor(scene)}-${retryCounts[scene.id] ?? 0}`}
       src={buildWmsImageUrl(parcel, attemptDateFor(scene))}
       alt={alt}
       fill
@@ -145,6 +161,7 @@ export function HistoricalImageryTimeline({ parcel }: { parcel: Parcel }) {
     const status = statuses[scene.id];
     if (status === "loaded") return `${attemptDateFor(scene)} observation`;
     if (status === "failed") return `no clear pass ${scene.label} ${year}`;
+    if (status === "error") return "Imagery service unavailable — retry";
     return `searching back from ${attemptDateFor(scene)}…`;
   };
 
@@ -285,6 +302,25 @@ export function HistoricalImageryTimeline({ parcel }: { parcel: Parcel }) {
                 </p>
               </div>
             </div>
+          ) : selectedStatus === "error" ? (
+            <div role="alert" className="flex aspect-video items-center justify-center px-6 text-center">
+              <div>
+                <p className="text-sm font-semibold text-red-800">
+                  Imagery could not be loaded
+                </p>
+                <p className="mt-2 max-w-lg text-sm leading-6 text-red-700">
+                  The imagery service did not return this scene. This does not
+                  establish that the month had no usable pass.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => retryScene(selectedScene)}
+                  className="mt-3 rounded-md border border-red-300 px-3 py-2 text-sm font-semibold text-red-800 hover:bg-red-50"
+                >
+                  Retry imagery
+                </button>
+              </div>
+            </div>
           ) : (
             <div className="relative aspect-video">
               {sceneImage(
@@ -320,6 +356,15 @@ export function HistoricalImageryTimeline({ parcel }: { parcel: Parcel }) {
             <p className="mt-1 font-medium text-gray-700">
               {captureText(selectedScene)}
             </p>
+            {selectedStatus === "error" && (
+              <button
+                type="button"
+                onClick={() => retryScene(selectedScene)}
+                className="mt-2 text-xs font-semibold text-gov underline"
+              >
+                Retry imagery
+              </button>
+            )}
           </div>
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-gray-400">

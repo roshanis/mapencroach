@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { backfillCaseImagery } from "@/lib/api";
+import { backfillCaseImagery, runCaptures } from "@/lib/api";
 import { WeeklySnapshotTimeline } from "./WeeklySnapshotTimeline";
 import type { CaptureAttempt, CaseImagery } from "@/lib/types";
+import { useDemoReadOnly } from "./DemoModeBanner";
 
 export interface CaseImageryHistoryProps {
   caseId: string;
@@ -65,9 +66,42 @@ export function CaseImageryHistory({
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(
     null
   );
+  const demoReadOnly = useDemoReadOnly();
 
   const hasTimeline = imagery.started_on !== null;
   const remaining = imagery.remaining_backfill_weeks;
+  const retryableCount = imagery.retryable_weeks?.length ?? 0;
+
+  async function handleRetryErrors() {
+    setSubmitting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await runCaptures(imagery.alert_id, undefined, {
+        retryErrors: true,
+      });
+      if (!result.ok) {
+        setError(`Refused (HTTP ${result.status}): ${result.detail}`);
+        return;
+      }
+      const attempts = result.attempts ?? [];
+      setImagery((current) => ({
+        ...current,
+        captures: mergeCaptures(current.captures, attempts),
+        retryable_weeks: mergeCaptures(current.captures, attempts)
+          .filter(attempt => attempt.status === "provider_error").map(attempt => attempt.week),
+      }));
+      setNotice(
+        attempts.length === 0
+          ? "No failed imagery weeks were ready to retry."
+          : `Retried ${attempts.length} failed imagery week${attempts.length === 1 ? "" : "s"}.`
+      );
+    } catch {
+      setError("Imagery retry service could not be reached. No retries were run — try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   async function handleBackfill() {
     setSubmitting(true);
@@ -96,6 +130,9 @@ export function CaseImageryHistory({
           started_on: result.started_on ?? current.started_on,
           captures: mergeCaptures(current.captures, attempted),
           remaining_backfill_weeks: stillRemaining,
+          monitoring_active: result.monitoring_active ?? current.monitoring_active,
+          retryable_weeks: result.retryable_weeks ?? mergeCaptures(current.captures, attempted)
+            .filter(attempt => attempt.status === "provider_error").map(attempt => attempt.week),
         }));
         setProgress({ done, total });
         // A chunk that captured nothing but still reports weeks remaining
@@ -153,7 +190,8 @@ export function CaseImageryHistory({
     <div data-testid="case-imagery-history" className="flex flex-col gap-3">
       {imagery.monitoring_active === false && hasTimeline && (
         <p role="note" className="rounded-md bg-slate-100 px-3 py-2 text-sm text-slate-700">
-          Monitoring stopped. Previous captures are preserved; no new weekly captures are scheduled.
+          Monitoring is inactive. Previous captures are preserved; uncaptured
+          weeks are shown as missing without claiming when monitoring stopped.
         </p>
       )}
       {!hasTimeline && (
@@ -182,8 +220,8 @@ export function CaseImageryHistory({
           data-testid="case-imagery-complete-note"
           className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs leading-5 text-emerald-900"
         >
-          History reaches the {imagery.backfill_floor} floor — fully
-          backfilled.
+          Capture attempts reach the {imagery.backfill_floor} floor.
+          This does not mean every week has usable imagery; check each week’s result.
         </p>
       )}
 
@@ -198,7 +236,7 @@ export function CaseImageryHistory({
                 : `Start imagery backfill to ${imagery.backfill_floor} for ${imagery.parcel_id} (${remaining} ${weekWord(remaining)})`
             }
             onClick={() => void handleBackfill()}
-            disabled={submitting}
+            disabled={demoReadOnly || submitting}
             className="inline-flex items-center justify-center rounded-md bg-gov px-3 py-2 text-sm font-semibold text-white hover:bg-gov-dark disabled:opacity-50"
           >
             {submitting
@@ -210,6 +248,24 @@ export function CaseImageryHistory({
           <p className="text-xs text-slate-400">
             Manual action — backfill runs only when you trigger it here;
             there is no automatic scheduler.
+          </p>
+        </div>
+      )}
+
+      {retryableCount > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            data-testid="case-imagery-retry-button"
+            aria-label={`Retry failed imagery captures for ${imagery.parcel_id} (${retryableCount})`}
+            onClick={() => void handleRetryErrors()}
+            disabled={demoReadOnly || submitting}
+            className="inline-flex min-h-11 items-center justify-center rounded-md border border-red-300 px-3 py-2 text-sm font-semibold text-red-800 hover:bg-red-50 disabled:opacity-50"
+          >
+            {submitting ? "Retrying…" : `Retry failed imagery (${retryableCount})`}
+          </button>
+          <p className="text-xs text-slate-500">
+            Retries provider errors only; existing outcomes stay recorded.
           </p>
         </div>
       )}

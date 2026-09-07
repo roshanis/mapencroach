@@ -448,3 +448,19 @@ Nits: Sentinel-1B is dead (constellation = 1A+1C); Phase 0 of 2–4 weeks unreal
 ### Diff summary: Committed the approved implementation and merged current origin/main 46769b8 into codex/demo-readiness. Resolved console conflicts by preserving both parcel-coverage reporting and the modal focus/inert behavior; kept both regression suites. All newer Nepal inventory and blob-repair changes remain intact.
 ### Verification: Integrated backend: 860 tests passed and Ruff clean. Web: 614 tests passed, ESLint and TypeScript clean, production build passed. npm and pip audits report no known vulnerabilities. Browser acceptance is repeated before publishing; no deployment or merge to main is requested.
 ### Recommendations / Next steps: Push the branch, open the PR, and inspect GitHub CI. Existing live-service and operational-readiness limitations from the preceding entry still apply.
+
+
+## [AGENT: Codex] [2026-09-07T16:00+00:00]
+### Action: Implemented the user-approved critical review fixes in isolated codex/review-fixes
+### Files changed: Backend API/store, case artifact validation, new operational snapshot module, persistence and associated tests; web console/map/workflow/imagery/list clients and tests; browser harness/dependencies, CI, README.md, DEMO.md, REVIEW-FIXES.md, agents-build-log.md.
+### Diff summary: Responsive map rows and ResizeObserver; read-only exploration with mutation-only disabling; genuine map/WMS error recovery; historical gap wording; explicit failed-week retries with attempt history; pagination and selected parcel fallback; case-summary next steps; v3 operational durability, complete snapshot checksum, stale-writer refusal and failed-save 503; full transition audit and stricter artifacts; repeatable offline browser gate. Rejected and backed up a stale Luna persistence patch before rebuilding additively. Existing inventory and legacy migration tests retained.
+### Verification: Red-first regressions reproduced, then backend 879 tests passed and Ruff clean; web 627 tests across 65 files, ESLint, TypeScript and production build passed. npm and pip audits found no known vulnerabilities. Headless Chrome passed nine-route accessibility/overflow checks at 390/768/1440px, map layout at 320/390/768/1440px, actual source retry, dynamic selected-panel canvas resize, keyboard/mobile/read-only journeys and backend PNG decoding. Original unrelated product-file hashes unchanged; diff whitespace check clean.
+### Recommendations / Next steps: Review REVIEW-FIXES.md and current branch before committing/publishing. No commit, push, deployment or existing-state migration performed. CI definition added but remote run unverified; live auth/providers, devices and print unverified. Back up before v3 upgrade. File storage remains single-writer; policy, retained-artifact validation, scaling and capture reservation concurrency limits are documented in REVIEW-FIXES.md.
+
+
+## [AGENT: Codex] [2026-09-07T16:05+00:00]
+### Action: Prepared the reviewed fixes for the user-requested merge to main
+### Files changed: REVIEW-FIXES.md, agents-build-log.md (release round).
+### Diff summary: Refreshed origin/main; it remains fbae491, the implementation base, so no integration conflict or new upstream change exists. Publishing the reviewed implementation through a pull request; human merge authorization is explicit.
+### Verification: Prior exact-code gates passed 879 backend and 627 web tests, lint/types/build, dependency audits and offline Chrome acceptance. Diff whitespace check is clean. Remote CI must pass before merge.
+### Recommendations / Next steps: Merge only after required checks succeed; verify remote main and deployment status. Existing operational/live-service limits remain documented in REVIEW-FIXES.md.

@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { DemoModeProvider } from "@/components/DemoModeBanner";
 
 // `viewportFit: "cover"` lets the page draw under the notch/home indicator
 // on iPhone (and in home-screen/standalone mode) instead of leaving black
@@ -42,7 +43,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="h-full antialiased">{children}</body>
+      <body className="h-full antialiased">
+        <DemoModeProvider>{children}</DemoModeProvider>
+      </body>
     </html>
   );
 }

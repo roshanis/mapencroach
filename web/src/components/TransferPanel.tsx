@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { transferCase, type TransitionResult } from "@/lib/api";
 import type { Jurisdiction } from "@/lib/types";
+import { useDemoReadOnly } from "./DemoModeBanner";
 
 export interface TransferPanelProps {
   caseId: string;
@@ -20,6 +21,7 @@ export function TransferPanel({
     () => jurisdictions.filter((j) => j.id !== currentJurisdictionId),
     [jurisdictions, currentJurisdictionId]
   );
+  const demoReadOnly = useDemoReadOnly();
   const [target, setTarget] = useState(targets[0]?.id ?? "");
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -105,7 +107,7 @@ export function TransferPanel({
         <button
           type="button"
           data-testid="transfer-submit"
-          disabled={submitting || reasonIsBlank || !target}
+          disabled={demoReadOnly || submitting || reasonIsBlank || !target}
           onClick={() => void submit()}
           className="self-start rounded-md bg-gov px-4 py-2 text-sm font-semibold text-white hover:bg-gov-dark disabled:cursor-not-allowed disabled:opacity-50"
         >

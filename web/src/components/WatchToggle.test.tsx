@@ -79,7 +79,8 @@ describe("WatchToggle", () => {
       await waitFor(() => {
         expect(screen.getByTestId("watch-toggle-load-error")).toBeInTheDocument();
       });
-      expect(screen.queryByRole("button")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+      expect(screen.getByText(/does not mean the alert is unwatched/i)).toBeInTheDocument();
     });
   });
 

@@ -6,6 +6,7 @@ import { updateBoundaryGrade } from "@/lib/api";
 import { PERSONA_META_COOKIE, readCookie } from "@/lib/cookies";
 import type { BoundaryGrade } from "@/lib/types";
 import { BoundaryGradeBadge } from "./BoundaryGradeBadge";
+import { useDemoReadOnly } from "./DemoModeBanner";
 
 const EDITOR_ROLES = new Set(["survey_officer", "data_admin"]);
 const GRADES: BoundaryGrade[] = ["A", "B", "C"];
@@ -38,6 +39,7 @@ export function BoundaryGradeEditor({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const demoReadOnly = useDemoReadOnly();
 
   useEffect(() => {
     const role = currentRole();
@@ -47,6 +49,7 @@ export function BoundaryGradeEditor({
   if (authorized !== true) return null;
 
   const canSubmit =
+    !demoReadOnly &&
     !submitting &&
     selectedGrade !== recordedGrade &&
     surveyReference.trim().length > 0;

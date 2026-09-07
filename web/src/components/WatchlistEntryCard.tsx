@@ -5,6 +5,7 @@ import Link from "next/link";
 import { runCaptures } from "@/lib/api";
 import { WeeklySnapshotTimeline } from "./WeeklySnapshotTimeline";
 import type { WatchEntry } from "@/lib/types";
+import { useDemoReadOnly } from "./DemoModeBanner";
 
 export interface WatchlistEntryCardProps {
   initialEntry: WatchEntry;
@@ -23,30 +24,38 @@ export function WatchlistEntryCard({ initialEntry }: WatchlistEntryCardProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const demoReadOnly = useDemoReadOnly();
 
   const dueCount = entry.due_weeks.length;
+  const retryableCount = entry.retryable_weeks?.length ?? 0;
 
-  async function handleRunCaptures() {
+  async function handleRunCaptures(retryErrors = false) {
     setSubmitting(true);
     setError(null);
     setNotice(null);
     try {
-      const result = await runCaptures(entry.alert_id);
+      const result = retryErrors
+        ? await runCaptures(entry.alert_id, undefined, { retryErrors: true })
+        : await runCaptures(entry.alert_id);
       if (result.ok) {
         const attempts = result.attempts ?? [];
         setEntry((current) => ({
           ...current,
-          captures: [...current.captures, ...attempts].sort((a, b) =>
-            a.week.localeCompare(b.week)
-          ),
+          captures: [...new Map(
+            [...current.captures, ...attempts].map((attempt) => [attempt.week, attempt])
+          ).values()].sort((a, b) => a.week.localeCompare(b.week)),
           due_weeks: current.due_weeks.filter(
             (week) => !attempts.some((attempt) => attempt.week === week)
           ),
+          retryable_weeks: [...new Map([...current.captures, ...attempts].map(attempt => [attempt.week, attempt])).values()]
+            .filter(attempt => attempt.status === "provider_error").map(attempt => attempt.week),
         }));
         setNotice(
           attempts.length === 0
             ? "No weeks were due — nothing to capture."
-            : `Ran ${attempts.length} due week${attempts.length === 1 ? "" : "s"}.`
+            : retryErrors
+              ? `Retried ${attempts.length} failed week${attempts.length === 1 ? "" : "s"}.`
+              : `Ran ${attempts.length} due week${attempts.length === 1 ? "" : "s"}.`
         );
       } else {
         setError(`Refused (HTTP ${result.status}): ${result.detail}`);
@@ -86,7 +95,7 @@ export function WatchlistEntryCard({ initialEntry }: WatchlistEntryCardProps) {
             data-testid="run-captures-button"
             aria-label={`Run due captures now for ${entry.parcel_id} (${dueCount} due)`}
             onClick={() => void handleRunCaptures()}
-            disabled={submitting || dueCount === 0}
+            disabled={demoReadOnly || submitting || dueCount === 0}
             className="inline-flex min-h-11 items-center justify-center rounded-md bg-gov px-3 py-2 text-sm font-semibold text-white hover:bg-gov-dark disabled:opacity-50"
           >
             {submitting ? "Running…" : `Run due captures now (${dueCount})`}
@@ -96,6 +105,24 @@ export function WatchlistEntryCard({ initialEntry }: WatchlistEntryCardProps) {
           </p>
         </div>
       </div>
+
+      {retryableCount > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            data-testid="retry-captures-button"
+            aria-label={`Retry failed captures for ${entry.parcel_id} (${retryableCount})`}
+            onClick={() => void handleRunCaptures(true)}
+            disabled={demoReadOnly || submitting}
+            className="inline-flex min-h-11 items-center justify-center rounded-md border border-red-300 px-3 py-2 text-sm font-semibold text-red-800 hover:bg-red-50 disabled:opacity-50"
+          >
+            {submitting ? "Retrying…" : `Retry failed captures (${retryableCount})`}
+          </button>
+          <p className="text-xs text-slate-500">
+            Retries provider errors only; existing outcomes stay recorded.
+          </p>
+        </div>
+      )}
 
       {notice && (
         <p data-testid="run-captures-notice" className="mt-2 text-xs text-emerald-700">

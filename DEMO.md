@@ -305,3 +305,18 @@ keyboard navigation, mobile dialog focus and resizing, survey search, sample
 controls, nine routes at three viewport widths, serious/critical axe findings,
 and decoding the actual backend demo PNG. It requires a prepared production build;
 it does not verify live imagery, external map tiles, production login, or print output.
+
+
+### Updated acceptance workflow
+
+The browser harness now has pinned Playwright and axe dependencies and runs in
+CI after a production fixture build. Locally, run `npm ci`, install Chromium
+with `npx playwright install chromium`, build without `NEXT_PUBLIC_API_URL`, and
+run `PYTHON=../backend/.venv/bin/python npm run test:browser` from `web/`.
+`CHROME_PATH` remains available for an installed Chrome executable.
+The check tests actual map-source retry requests, read-only workflow exploration,
+and non-overlapping map rows at 320/390/768/1440px as well as the earlier journeys.
+It blocks external requests; unavailable-basemap messages in this test are expected.
+Backend-backed demo changes are shared and now survive normal restarts with the
+configured v3 file store. Resetting demo data remains an explicit administrative
+operation, not a startup side effect.

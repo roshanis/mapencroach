@@ -314,3 +314,34 @@ See [DEPLOY.md](DEPLOY.md) — console on Vercel, API on Render (demo data only)
 | `web/` | Next.js console with Google Maps and a MapLibre fallback |
 | `PLAN.md` / `PLAN.html` | Implementation plan v2.0 (Builder's Edition) |
 | `agents-build-log.md` | Agent build log |
+
+
+## Review fixes: persistence and recovery
+
+State format v3 retains operational parcels, alerts, cases and their complete
+case events, alongside watch history, scene metadata and audit records. Prior
+v1/v2 files are verified on load and written as v3 on the next successful save;
+loading alone does not rewrite them. Back up the old state file before upgrading,
+since an older backend cannot read v3. No existing on-disk data was migrated as
+part of this code change.
+
+The complete snapshot, including watch history and scene metadata, has an
+integrity hash tied to the audit head. As with
+the audit chain, an external trusted checkpoint is needed to detect a privileged
+writer recomputing the whole history. A sidecar lock and revision check refuse a
+competing stale process. Save failure makes the process return unavailable,
+including `/health`; recover by restarting from its last saved state after
+resolving the write error. Run one API writer and use the API-backed imagery runner.
+This is a guarded file store, not a distributed transactional database.
+
+Manual capture retries use `POST /watchlist/{id}/captures?retry_errors=true`.
+Only weeks whose latest attempt failed at the provider are retried; every attempt
+is retained. Ordinary runs still do not automatically repeat failures. The UI
+shows the latest outcome and keeps retries available after another failure.
+Capture-attempt coverage does not imply usable imagery for every week.
+
+Lists follow the API's reported pagination; responses beyond the safety limit
+of 10,000 records fail explicitly rather than silently dropping records. The
+map remains bounded with a coverage warning and can fetch a selected alert's
+parcel independently. Large operational estates still need server-side filters
+and viewport loading.

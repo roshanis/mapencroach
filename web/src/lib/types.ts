@@ -338,6 +338,7 @@ export interface WatchEntry {
   captures: CaptureAttempt[];
   /** Weeks from started_on through today that have not yet been attempted. */
   due_weeks: string[];
+  retryable_weeks?: string[];
 }
 
 // Case imagery backfill (mapencroach/imagery — case-level view of the same
@@ -362,6 +363,7 @@ export interface CaseImagery {
   captures: CaptureAttempt[];
   /** Weeks from started_on through today that have not yet been attempted. */
   due_weeks: string[];
+  retryable_weeks?: string[];
   /** MAPENCROACH_IMAGERY_BACKFILL_FLOOR — the earliest date backfill will
    * ever reach; a request before it is 422. */
   backfill_floor: string;

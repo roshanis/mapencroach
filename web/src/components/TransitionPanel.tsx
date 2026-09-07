@@ -8,6 +8,7 @@ import {
   NON_CHAIN_STATES,
   TRANSITION_ACTION_LABELS,
 } from "@/lib/types";
+import { useDemoReadOnly } from "./DemoModeBanner";
 
 const ALL_STATES: string[] = [...CASE_STATE_CHAIN, ...NON_CHAIN_STATES];
 
@@ -58,6 +59,7 @@ export function TransitionPanel({
   requiredArtifacts,
 }: TransitionPanelProps) {
   const router = useRouter();
+  const demoReadOnly = useDemoReadOnly();
   const [selected, setSelected] = useState(allowedTransitions[0] ?? "");
   const blockedStates = useMemo(
     () => ALL_STATES.filter((state) => !allowedTransitions.includes(state)),
@@ -184,7 +186,7 @@ export function TransitionPanel({
                 );
                 void submit(selected, artifacts);
               }}
-              disabled={submitting || !evidenceComplete}
+              disabled={demoReadOnly || submitting || !evidenceComplete}
               className="mt-4 rounded-md bg-gov px-4 py-2 text-sm font-semibold text-white hover:bg-gov-dark disabled:cursor-not-allowed disabled:opacity-50"
             >
               {submitLabel(selected)}
@@ -221,7 +223,7 @@ export function TransitionPanel({
             <button
               type="button"
               data-testid="guard-transition-submit"
-              disabled={submitting || !guardSelected}
+              disabled={demoReadOnly || submitting || !guardSelected}
               onClick={() => void submit(guardSelected, {})}
               className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm font-medium text-red-800 hover:bg-red-100 disabled:opacity-50"
             >

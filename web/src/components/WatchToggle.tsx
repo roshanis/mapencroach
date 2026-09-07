@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { getWatchEntry, unwatchAlert, watchAlert } from "@/lib/api";
 import type { Alert, WatchEntry } from "@/lib/types";
+import { useDemoReadOnly } from "./DemoModeBanner";
+import Link from "next/link";
 
 export interface WatchToggleProps {
   alert: Alert;
@@ -33,6 +35,9 @@ export function WatchToggle({ alert }: WatchToggleProps) {
   const [entry, setEntry] = useState<WatchEntry | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadErrorStatus, setLoadErrorStatus] = useState<number | undefined>();
+  const [loadRetry, setLoadRetry] = useState(0);
+  const demoReadOnly = useDemoReadOnly();
   const currentAlertIdRef = useRef(alert.id);
   currentAlertIdRef.current = alert.id;
 
@@ -49,20 +54,26 @@ export function WatchToggle({ alert }: WatchToggleProps) {
     setSubmitting(false);
     setEntry(undefined);
     setError(null);
+    setLoadErrorStatus(undefined);
     getWatchEntry(alert.id)
       .then((result) => {
         if (cancelled) return;
         setEntry(result);
         setLoadState("ready");
       })
-      .catch(() => {
+      .catch((reason: unknown) => {
         if (cancelled) return;
+        setLoadErrorStatus(
+          typeof reason === "object" && reason !== null && "status" in reason
+            ? Number((reason as { status?: unknown }).status)
+            : undefined
+        );
         setLoadState("error");
       });
     return () => {
       cancelled = true;
     };
-  }, [alert.id, watchable]);
+  }, [alert.id, watchable, loadRetry]);
 
   async function handleStart() {
     const requestedAlertId = alert.id;
@@ -126,9 +137,27 @@ export function WatchToggle({ alert }: WatchToggleProps) {
 
   if (loadState === "error") {
     return (
-      <p data-testid="watch-toggle-load-error" className="text-xs text-red-600">
-        Watch status could not be loaded. Reload to try again.
-      </p>
+      <div data-testid="watch-toggle-load-error" className="flex flex-col items-start gap-2 text-xs text-red-600">
+        <p>
+          {loadErrorStatus === 401 || loadErrorStatus === 403
+            ? "Your demo session may have expired. Choose a persona, then retry."
+            : "Watch status could not be loaded. This does not mean the alert is unwatched."}
+        </p>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setLoadRetry((value) => value + 1)}
+            className="rounded border border-red-300 px-2 py-1 font-medium text-red-800 hover:bg-red-50"
+          >
+            Retry
+          </button>
+          {(loadErrorStatus === 401 || loadErrorStatus === 403) && (
+            <Link href="/personas" className="font-medium text-gov underline">
+              Choose a persona
+            </Link>
+          )}
+        </div>
+      </div>
     );
   }
 
@@ -144,7 +173,7 @@ export function WatchToggle({ alert }: WatchToggleProps) {
         }
         aria-pressed={watching}
         onClick={watching ? handleStop : handleStart}
-        disabled={submitting}
+        disabled={demoReadOnly || submitting}
         className={`inline-flex min-h-11 items-center justify-center rounded-md px-3 py-2 text-sm font-semibold disabled:opacity-50 ${
           watching
             ? "border border-gray-300 text-gray-700 hover:bg-gray-50"

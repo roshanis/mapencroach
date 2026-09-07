@@ -1,26 +1,18 @@
 """Crash-safe, on-disk persistence for the evidence-bearing parts of `Store`.
 
-What survives a restart, and what deliberately does not
---------------------------------------------------------
-This module persists exactly three things:
+What survives a restart
+-----------------------
+Version 3 saves watch history, the scene index, audit chain, parcels, alerts,
+cases with full events/paused state, jurisdiction scope, authority membership,
+and ID counters. Blob bytes remain in the content-addressed blob store.
+Complete snapshots are hashed against the saved audit head. This detects
+in-place edits; protection against a writer recomputing all hashes still needs
+an externally pinned head, just like the audit chain itself.
 
-- `store.watchlist` -- every `WatchEntryRecord`, including its full
-  `CaptureAttempt` history. This *is* the weekly evidence timeline; losing
-  it on restart is the whole gap this module closes.
-- `store.scene_registry`'s index (`scene_id` / `sha256` / capture
-  metadata). The scene *bytes* already survive a restart on their own via
-  `FileBlobStore` (content-addressed, on disk); without this, though, the
-  index that says which `scene_id` maps to which `sha256` -- and hence
-  which blob -- would be gone, orphaning the bytes on disk.
-- `store.audit_chain` -- the full hash-chained audit log.
-
-It deliberately does NOT persist `store.parcels`, `store.alerts`, or
-`store.cases`. Those regenerate deterministically from `Store.seed_demo()`
-(same ids, same content, every time) or start empty for a non-demo store,
-and a `WatchEntryRecord` only ever references a parcel/alert by id string
--- a reference that still resolves after a fresh seed. Persisting them
-would mean reconciling two different sources of truth for the same
-records; not persisting them means there is only ever one.
+Versions 1 and 2 are verified before migration. Their operational records were
+never saved, so these older files retain the boot seed until the first v3 save.
+Loading does not rewrite files. Back up an older state file before upgrading:
+a v3 file cannot be read by an older backend.
 
 Opt-in, but on by default for a real deployment
 ------------------------------------------------
@@ -76,22 +68,20 @@ module docstring. What this module *does* catch is any edit, reorder, or
 deletion of an interior entry, and any hand-edited field that no longer
 hashes to what it claims to.
 
-Cross-process concurrency
---------------------------
-`StatePersister.save` writes the *entire* current state in one shot, not
-a merge against whatever is already on disk. Two processes (e.g. the web
-app and `mapencroach.imagery.runner`'s cron-driven CLI) each holding
-their own in-memory `Store` and both calling `persist_now()` around the
-same time will have one of them clobber the other's file -- last write
-wins, whole-document. `Store.lock` and `WatchEntryRecord.in_flight` only
-ever protect a single process's own concurrent requests against
-themselves; neither is visible across a process boundary, so they provide
-no cross-process mutual exclusion whatsoever. See `mapencroach.imagery.
-runner`'s module docstring for the operational consequence of this and
-what it does (and does not) do about it.
+Writer coordination (v3)
+-----------------------
+A stable sidecar advisory file lock protects compare-and-publish. A writer
+must have loaded the exact revision it replaces; stale writers are refused,
+not merged. Any failed publication marks that process unavailable (including
+readiness) until restart from saved state. This intentionally supports a single
+active application writer, not distributed transactions. Use the API-backed
+runner rather than starting a second direct-mode writer.
+
 """
 
 import contextlib
+import fcntl
+import hashlib
 import json
 import os
 import tempfile
@@ -102,9 +92,12 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from mapencroach import operational_state
 from mapencroach.api.store import Store, WatchEntryRecord
 from mapencroach.audit.chain import (
+    GENESIS_HASH,
     AuditEntry,
+    compute_row_hash,
     rehash_chain,
     verify_chain,
     verify_legacy_chain,
@@ -118,7 +111,7 @@ from mapencroach.imagery.registry import SceneRecord
 # migrated in memory; the next save writes version 2. Migration changes
 # the chain's head hash, so any externally recorded head anchor must be
 # re-captured after upgrading.
-_STATE_VERSION = 2
+_STATE_VERSION = 3
 _LEGACY_STATE_VERSION = 1
 _DEFAULT_STATE_PATH = "data/state.json"
 
@@ -153,11 +146,18 @@ def _capture_to_json(attempt: CaptureAttempt) -> dict[str, Any]:
     }
 
 
+def _aware_timestamp(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("persisted evidence timestamp must include a timezone")
+    return parsed
+
+
 def _capture_from_json(raw: dict[str, Any]) -> CaptureAttempt:
     return CaptureAttempt(
         week=raw["week"],
         status=CaptureStatus(raw["status"]),
-        attempted_at=datetime.fromisoformat(raw["attempted_at"]),
+        attempted_at=_aware_timestamp(raw["attempted_at"]),
         scene_id=raw.get("scene_id"),
         sha256=raw.get("sha256"),
         cloud_pct=raw.get("cloud_pct"),
@@ -240,7 +240,7 @@ def _scene_record_from_json(raw: dict[str, Any]) -> SceneRecord:
     return SceneRecord(
         scene_id=raw["scene_id"],
         sha256=raw["sha256"],
-        captured_at=datetime.fromisoformat(raw["captured_at"]),
+        captured_at=_aware_timestamp(raw["captured_at"]),
         sensor=raw["sensor"],
         resolution_m=raw["resolution_m"],
         cloud_pct=raw["cloud_pct"],
@@ -272,6 +272,7 @@ class PersistedState:
     watchlist: dict[str, WatchEntryRecord]
     scene_records: list[SceneRecord]
     audit_chain: list[AuditEntry]
+    operational: dict[str, Any] | None = None
 
 
 class StatePersister:
@@ -292,24 +293,53 @@ class StatePersister:
         # insufficient because it is released before the atomic rename,
         # allowing an older snapshot to publish after a newer one.
         self._save_lock = threading.Lock()
+        self._fingerprint: str | None = None
+        self.failed = False
 
     def save(self, store: Store) -> None:
+        # Lock a stable sidecar inode, since atomic replace changes the state inode.
+        # Each writer must have loaded the revision it proposes to replace.
         with self._save_lock:
-            with store.lock:
-                watchlist_snapshot = [_watch_entry_to_json(e) for e in store.watchlist.values()]
-                scene_snapshot = [
-                    _scene_record_to_json(r)
-                    for r in store.scene_registry._by_id.values()  # noqa: SLF001 - see module docstring
-                ]
-                audit_snapshot = [_audit_entry_to_json(e) for e in store.audit_chain]
-
-            payload = {
-                "version": _STATE_VERSION,
-                "watchlist": watchlist_snapshot,
-                "scene_records": scene_snapshot,
-                "audit_chain": audit_snapshot,
-            }
-            self._atomic_write(json.dumps(payload, indent=2))
+            if self.failed:
+                raise RuntimeError("Persistence is unavailable; restart from saved state")
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                with self.path.with_suffix(self.path.suffix + ".lock").open("a+") as lock:
+                    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+                    current = self.path.read_bytes() if self.path.exists() else None
+                    fingerprint = (
+                        hashlib.sha256(current).hexdigest() if current is not None else None
+                    )
+                    if fingerprint != self._fingerprint:
+                        raise RuntimeError(
+                            "State changed in another process; stale writer must restart"
+                        )
+                    with store.lock:
+                        payload = {
+                            "version": _STATE_VERSION,
+                            "watchlist": [
+                                _watch_entry_to_json(e) for e in store.watchlist.values()
+                            ],
+                            "scene_records": [
+                                _scene_record_to_json(r)
+                                for r in store.scene_registry._by_id.values()  # noqa: SLF001
+                            ],
+                            "audit_chain": [_audit_entry_to_json(e) for e in store.audit_chain],
+                            "operational": operational_state.snapshot(store),
+                        }
+                    head = (
+                        payload["audit_chain"][-1]["row_hash"]
+                        if payload["audit_chain"] else GENESIS_HASH
+                    )
+                    payload["state_hash"] = compute_row_hash(payload, head)
+                    encoded = json.dumps(payload, indent=2)
+                    self._atomic_write(encoded)
+                    self._fingerprint = hashlib.sha256(encoded.encode()).hexdigest()
+            except Exception:
+                # In-memory mutations may have preceded the failed publication.
+                # Refuse further requests, rather than exposing unsaved state as durable.
+                self.failed = True
+                raise
 
     def _atomic_write(self, text: str) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -347,6 +377,7 @@ class StatePersister:
             scene_records = [_scene_record_from_json(raw) for raw in payload["scene_records"]]
             audit_chain = [_audit_entry_from_json(raw) for raw in payload["audit_chain"]]
             version = payload.get("version")
+            operational = operational_state.decode(payload["operational"]) if version == 3 else None
         except Exception as exc:
             raise StateCorruptionError(
                 f"state file {self.path} is corrupt or unreadable: {exc}"
@@ -367,7 +398,7 @@ class StatePersister:
                     "refusing to load"
                 )
             audit_chain = rehash_chain(audit_chain)
-        elif version == _STATE_VERSION:
+        elif version in (2, _STATE_VERSION):
             verification = verify_chain(audit_chain)
             if not verification.ok:
                 raise StateCorruptionError(
@@ -379,12 +410,19 @@ class StatePersister:
         else:
             raise StateCorruptionError(
                 f"state file {self.path} has unsupported version {version!r}; "
-                f"this build reads versions {_LEGACY_STATE_VERSION} and "
+                f"this build reads versions {_LEGACY_STATE_VERSION}, 2 and "
                 f"{_STATE_VERSION}. Refusing to guess at an unknown format."
             )
 
+        if version == 3:
+            head = audit_chain[-1].row_hash if audit_chain else GENESIS_HASH
+            snapshot = {key: value for key, value in payload.items() if key != "state_hash"}
+            if payload.get("state_hash") != compute_row_hash(snapshot, head):
+                raise StateCorruptionError("State snapshot integrity check failed")
+        self._fingerprint = hashlib.sha256(raw_text.encode()).hexdigest()
         return PersistedState(
-            watchlist=watchlist, scene_records=scene_records, audit_chain=audit_chain
+            watchlist=watchlist, scene_records=scene_records, audit_chain=audit_chain,
+            operational=operational,
         )
 
 
@@ -413,6 +451,8 @@ def hydrate_store(store: Store, persister: StatePersister) -> None:
     """
     loaded = persister.load()
     if loaded is not None:
+        if loaded.operational is not None:
+            operational_state.restore(store, loaded.operational)
         store.watchlist = loaded.watchlist
         for record in loaded.scene_records:
             # Reaching into `SceneRegistry`'s internal lookup dicts is the
