@@ -91,6 +91,7 @@ async function choosePuneOfficer() {
 
 describe("JurisdictionPersonaPicker", () => {
   afterEach(() => {
+    vi.clearAllMocks();
     clearCookies();
     navigation.push.mockReset();
     navigation.refresh.mockReset();

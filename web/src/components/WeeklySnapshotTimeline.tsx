@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { authHeaders } from "@/lib/api";
 import type { CaptureAttempt, CaptureStatus } from "@/lib/types";
+import { ImageryAvailabilityTimeline } from "./ImageryAvailabilityTimeline";
+import { ImagerySourceDetails } from "./ImagerySourceDetails";
 
 /**
  * The subset of WatchEntry (or an equivalent record, e.g. a CaseImagery
@@ -195,6 +197,7 @@ type CapturedImageState =
   | { status: "loaded"; objectUrl: string }
   | { status: "not-retained" }
   | { status: "unauthorized" }
+  | { status: "integrity-error" }
   | { status: "error" };
 
 /**
@@ -248,6 +251,8 @@ function useCapturedImage(imageUrl: string | null): {
           // failure must be told apart, never folded into that claim.
           if (res.status === 404) {
             setState({ status: "not-retained" });
+          } else if (res.status === 409) {
+            setState({ status: "integrity-error" });
           } else if (res.status === 401 || res.status === 403) {
             setState({ status: "unauthorized" });
           } else {
@@ -306,7 +311,12 @@ function CapturedWeekEvidence({
   parcelId: string;
 }) {
   const dateLabel = formatWeekStart(weekStart);
-  const { state: imageState, retry, decodingFailed } = useCapturedImage(attempt.image_url);
+  const metadata = attempt.scene_details;
+  const blocked = metadata && metadata.metadata_status !== "available";
+  const { state: fetchedState, retry, decodingFailed } = useCapturedImage(blocked || (metadata?.metadata_status === "available" && !metadata.retained)
+    ? null : attempt.image_url);
+  const imageState: CapturedImageState = metadata?.metadata_status === "hash_mismatch"
+    ? { status: "integrity-error" } : fetchedState;
 
   return (
     <div className="mt-1.5 flex min-w-0 flex-wrap items-start gap-3">
@@ -353,7 +363,7 @@ function CapturedWeekEvidence({
         </a>
       )}
 
-      {(imageState.status === "no-url" ||
+      {!blocked && (imageState.status === "no-url" ||
         imageState.status === "not-retained") && (
         // A captured week whose bytes were not retained — either known in
         // advance (image_url was null) or discovered just now by a genuine
@@ -385,7 +395,7 @@ function CapturedWeekEvidence({
         <div
           data-testid="snapshot-week-unauthorized"
           role="note"
-          aria-label={`Image not authorized for week ${weekKey} (week of ${dateLabel}), parcel ${parcelId} — the scene is retained but this session could not be authorized to view it`}
+          aria-label={`Image not authorized for week ${weekKey} (week of ${dateLabel}), parcel ${parcelId} — this session could not be authorized to view it`}
           style={thumbnailBoxStyle()}
           className="flex shrink-0 flex-col items-start justify-center gap-0.5 rounded border border-dashed border-amber-300 bg-amber-50 px-2.5 py-2"
         >
@@ -393,10 +403,17 @@ function CapturedWeekEvidence({
             Image not authorized
           </span>
           <span className="text-[11px] leading-4 text-amber-700">
-            The scene is retained — this session is not authorized to view
-            it.
+            This session is not authorized to view the image. Retention
+            cannot be established from this response.
           </span>
         </div>
+      )}
+
+      {metadata?.metadata_status === "missing" && (
+        <p role="note" className="text-xs text-amber-900">Scene metadata unavailable — image withheld until its identity can be verified.</p>
+      )}
+      {imageState.status === "integrity-error" && (
+        <p role="alert" className="text-xs font-semibold text-red-800">{metadata?.metadata_status === "hash_mismatch" ? "Image integrity mismatch" : "Image integrity could not be verified"}</p>
       )}
 
       {imageState.status === "error" && (
@@ -477,8 +494,21 @@ export function WeeklySnapshotTimeline({
   today = new Date(),
 }: WeeklySnapshotTimelineProps) {
   const rows = computeWatchWeeks(entry, today);
+  const [selection, setSelection] = useState<{ parcel: string; week: string } | null>(null);
+  const selected = selection?.parcel === entry.parcel_id
+    ? rows.find(row => row.key === selection.week) : undefined;
 
   return (
+    <div className="min-w-0">
+    <ImageryAvailabilityTimeline label="Capture week" items={rows.map(row => ({
+      id: row.key, label: row.key, status: STATUS_LABELS[row.status],
+    }))} selectedIds={selected ? [selected.key] : []}
+      onSelect={week => setSelection({parcel:entry.parcel_id,week})} />
+    {selected && <div className="mb-3 rounded border border-gray-200 p-3" aria-live="polite">
+      <p className="text-sm font-semibold text-gray-800">{selected.key} · {STATUS_LABELS[selected.status]}</p>
+      {selected.attempt ? <ImagerySourceDetails observation={{kind:"registered",attempt:selected.attempt}} title={`Source details for ${selected.key}`} />
+        : <p className="mt-1 text-xs text-gray-600">No capture attempt is recorded for this week. This does not establish absence of change.</p>}
+    </div>}
     <ol
       data-testid="weekly-snapshot-timeline"
       aria-label={`Weekly capture history for ${entry.parcel_id}, covering weeks from ${entry.started_on}`}
@@ -546,5 +576,6 @@ export function WeeklySnapshotTimeline({
         </li>
       )}
     </ol>
+    </div>
   );
 }

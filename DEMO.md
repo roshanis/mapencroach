@@ -80,15 +80,21 @@ On parcel-1 (canal land):
 > "Waterbody, Grade A boundary — DGPS-verified, enforcement can rely on it. That's
 > why this alert is red: high-value land, trustworthy boundary, big change."
 
-Use the **Imagery Timeline** to switch between the verified 1990 and 2000
-Landsat annual mosaics and the 2010 MODIS observation. Then choose
-**Compare years** and drag the reveal control across the matched 1990/2000
-extent; the parcel boundary remains fixed over both scenes. The 1985 tab
-deliberately shows a coverage gap rather than inventing a scene.
+Start with **Latest clear view**. With the backend available, it checks recent
+Sentinel-2 scene classifications over the actual parcel and shows a qualifying
+parcel crop with its acquisition date. Open **Scene and cloud-check details**
+to inspect the source and pixel count. A missing result, interrupted search, or
+provider error stays explicit; fixture-only mode does not claim a clear scene.
 
-> "These historical maps give the officer visual planning context and retain their
-> NASA source, capture date, and resolution. They are not enforcement evidence —
-> the cadastral record, survey, and field inspection still control the finding."
+For monthly context, open **Browse imagery without cloud checks**, choose
+**Compare months**, select A and B, and use the keyboard or drag the reveal
+control. Swap A/B without changing their dates. These GIBS previews have
+unverified acquisition times and parcel quality.
+
+> "No clouds detected means the parcel pixels passed the stated classification
+> rule. It does not establish perfect cloud detection, encroachment, or legal
+> evidence. The actual observation date, cadastral record, survey, and field
+> inspection still control the review."
 
 Point at the **Tags** section — parcel-1 comes seeded with `court-monitored`. Add one
 live (`repeat-offender`): tags are how officers layer their institutional knowledge
@@ -303,6 +309,7 @@ module search path, and `CHROME_PATH` if using an installed Chrome executable.
 The harness uses a fresh browser profile and blocks external requests. It checks
 keyboard navigation, mobile dialog focus and resizing, survey search, sample
 controls, nine routes at three viewport widths, serious/critical axe findings,
+the clear-view default and retry states, opt-in A/B imagery browsing,
 and decoding the actual backend demo PNG. It requires a prepared production build;
 it does not verify live imagery, external map tiles, production login, or print output.
 

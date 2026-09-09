@@ -464,3 +464,36 @@ Nits: Sentinel-1B is dead (constellation = 1A+1C); Phase 0 of 2–4 weeks unreal
 ### Diff summary: Refreshed origin/main; it remains fbae491, the implementation base, so no integration conflict or new upstream change exists. Publishing the reviewed implementation through a pull request; human merge authorization is explicit.
 ### Verification: Prior exact-code gates passed 879 backend and 627 web tests, lint/types/build, dependency audits and offline Chrome acceptance. Diff whitespace check is clean. Remote CI must pass before merge.
 ### Recommendations / Next steps: Merge only after required checks succeed; verify remote main and deployment status. Existing operational/live-service limits remain documented in REVIEW-FIXES.md.
+
+
+## [AGENT: Codex] [2026-09-09T04:17+00:00]
+### Action: Started authorized Worldview increment 1 on isolated codex/worldview-imagery from freshly fetched main 5de1e28
+### Files changed: Implementation in progress; approved plan copied into this worktree; agents-build-log.md appended.
+### Diff summary: Original checkout and all existing dirty file hashes preserved. Reusing the installed web dependency tree whose lockfile matches this baseline; backend runs use the existing Python runtime with this worktree source path.
+### Recommendations / Next steps: Establish baseline, add failing tests, implement date/availability/source-detail workflows, and complete independent Luna review and verification. No commit or deployment authorized.
+
+## [AGENT: Codex] [2026-09-09T04:48:00Z]
+### Action: Delivered approved Worldview increment 1 for review, with independent Luna review and browser verification
+### Files changed: WORLDVIEW-ADOPTION-PLAN.md, WORLDVIEW-INCREMENT-1.md, agents-build-log.md; backend imagery/view.py, api/app.py and imagery/image API tests; web imagery reducer/types/API comments/fixtures, historical/weekly/source/availability components and tests, latest-imagery comments, and scripts/demo-smoke.mjs.
+### Diff summary: Added selectable A/B browsing, bounded and deduplicated requests, explicit preview/quality/error states, source details and week navigation. Added authorized-parent metadata projection and capture-hash image checks without persistence changes. Preserved all 11 protected dirty-checkout hashes. No dependency manifests changed; local runtime links are excluded from deliverables.
+### Verification: Red-first behavior checks; 645 web tests, 894 backend tests, ESLint/TypeScript/Ruff/build, offline Chrome journeys and layout/accessibility checks passed. Mobile/desktop screenshots inspected. Python audit clean; npm audit failed with 6 existing dependency findings (2 critical, 2 high, 2 moderate). Public demo-extent GIBS request returned a fully transparent PNG; usable live imagery is not established. Full details and evidence paths are in WORLDVIEW-INCREMENT-1.md.
+### Recommendations / Next steps: Review the uncommitted increment. Address the npm audit gate in separate dependency work before release. Existing backfill-transfer mutation race and unscoped global scene route are documented follow-ups; no introduced review disagreement remains. No commit, push, merge, deployment, or later increment was performed.
+
+## [AGENT: Codex] [2026-09-09T15:10:33Z]
+### Action: Located cloud-cover wording after the user's request to avoid cloud cover
+### Files changed: agents-build-log.md only.
+### Diff summary: Read the current source-detail and historical-imagery components; no application change made because imagery selection versus removal of displayed cloud metadata remains ambiguous.
+### Recommendations / Next steps: Clarify whether the user wants cloud-free parcel imagery before selecting the implementation scope.
+
+## [AGENT: Codex] [2026-09-09T15:12:44Z]
+### Action: Checked feasibility of finding cloud-free parcel views
+### Files changed: agents-build-log.md only.
+### Diff summary: Verified the current GIBS browser only rejects blank previews, while separate STAC discovery supports scene-level cloud filtering. Reviewed official Sentinel-2 L2A documentation confirming cloud/shadow classification and the limitation of whole-tile cloud percentages. No application behavior changed.
+### Recommendations / Next steps: Recommend a latest-clear-view search using parcel-level valid-data and cloud/shadow masks, preserving actual capture dates and explicit unavailable results; no guarantee of a clear image on every requested date.
+
+## [AGENT: Codex] [2026-09-09T15:49:00Z]
+### Action: Implemented the user-authorized parcel cloud checks and prepared the requested merge
+### Files changed: New imagery/clear_view.py, imagery/cog_reader.py and raster/API tests; api/app.py; LatestClearImagery component/tests, parcel page, API/types; dependency manifests/lock and MapLibre/Vitest compatibility changes; offline browser harness; README.md, DEMO.md, CLEAR-IMAGERY-RELEASE.md, Worldview plan/handoff and this log. The prior reviewed Worldview increment remains included.
+### Diff summary: Default parcel view searches recent exact Sentinel-2 scenes and accepts only complete native SCL parcel coverage in classes4/5/6. Matching colour crops are validated before resizing. Reads have scope/geometry rechecks, bounded range transport and concurrency limits. Unverified GIBS browsing is opt-in. Dependency vulnerabilities were resolved, including isolated-environment pip and CI installer minimum; existing environments and all11 original protected file hashes remain unchanged.
+### Verification: Red-first cloud/mask/transport/API/UI tests; 650 web tests,929 backend tests and98.31%coverage; ESLint, TypeScript, Ruff, production build, offlineChrome flows/mobile accessibility, whitespace/script syntax all passed. npm and Python audits now report no known vulnerabilities. Live public demo query found S2B_43RGP_20260826_0_L2A after5scene checks in6.1seconds, with42clear classified parcel pixels. Luna frontend/backend/dependency review found no remaining introduced defect; native colour validity, MIME and PNG byte limits were independently verified.
+### Recommendations / Next steps: Publish the explicitly staged change through a PR, wait for required CI, merge under the user's explicit authorization, and verify remote main. Existing backfill-transfer race/global scene route remain documented follow-ups. No deployment, settings/credential changes, real case mutations, or later Worldview increment is included.

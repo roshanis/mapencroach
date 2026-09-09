@@ -222,8 +222,8 @@ describe("WeeklySnapshotTimeline", () => {
 
 describe("WeeklySnapshotTimeline captured-image loading", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
-  let createObjectURLMock: ReturnType<typeof vi.fn>;
-  let revokeObjectURLMock: ReturnType<typeof vi.fn>;
+  let createObjectURLMock: ReturnType<typeof vi.fn<(obj: Blob | MediaSource) => string>>;
+  let revokeObjectURLMock: ReturnType<typeof vi.fn<(url: string) => void>>;
 
   // jsdom does not implement URL.createObjectURL/revokeObjectURL — assign
   // them directly as static properties (rather than vi.stubGlobal("URL",
@@ -490,5 +490,32 @@ describe("WeeklySnapshotTimeline captured-image loading", () => {
     unmount();
 
     expect(revokeObjectURLMock).toHaveBeenCalledWith("blob:mock-object-url");
+  });
+});
+
+describe("capture source inspection", () => {
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+  it("selects a week without starting a capture or metadata request", () => {
+    const fetchMock = vi.fn(); vi.stubGlobal("fetch",fetchMock);
+    const entry = {...BASE_ENTRY, captures:BASE_ENTRY.captures.map(c=>({...c,image_url:null}))};
+    render(<WeeklySnapshotTimeline entry={entry} today={TODAY} />);
+    fireEvent.click(screen.getByRole("button",{name:"2026-W23"}));
+    expect(screen.getByText("Capture week")).toBeInTheDocument();
+    expect(screen.getByText(/observation time, source, and retention are not verified/)).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it("withholds a known hash mismatch without downloading the image", () => {
+    const fetchMock = vi.fn(); vi.stubGlobal("fetch",fetchMock);
+    const entry = {...BASE_ENTRY,captures:[{...BASE_ENTRY.captures[0],scene_details:{metadata_status:"hash_mismatch" as const}}]};
+    render(<WeeklySnapshotTimeline entry={entry} today={TODAY} />);
+    expect(screen.getByText("Image integrity mismatch")).toBeInTheDocument();
+    expect(screen.queryByText("Image not retained")).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it("recognizes a server integrity refusal even on older metadata responses", async () => {
+    vi.stubGlobal("fetch",vi.fn().mockResolvedValue({ok:false,status:409}));
+    render(<WeeklySnapshotTimeline entry={BASE_ENTRY} today={TODAY} />);
+    await screen.findByText("Image integrity could not be verified");
+    expect(screen.queryByTestId("snapshot-week-not-retained")).not.toBeInTheDocument();
   });
 });

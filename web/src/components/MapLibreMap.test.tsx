@@ -183,11 +183,9 @@ const mapMocks = vi.hoisted(() => {
 
 vi.mock("maplibre-gl/dist/maplibre-gl.css", () => ({}));
 vi.mock("maplibre-gl", () => ({
-  default: {
-    Map: mapMocks.FakeMap,
-    Marker: mapMocks.FakeMarker,
-    LngLatBounds: mapMocks.FakeLngLatBounds,
-  },
+  Map: mapMocks.FakeMap,
+  Marker: mapMocks.FakeMarker,
+  LngLatBounds: mapMocks.FakeLngLatBounds,
 }));
 
 describe("MapLibreMap", () => {

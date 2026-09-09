@@ -153,7 +153,7 @@ export default function MapLibreMap({
     async function init() {
       try {
         setInitError(false);
-        const maplibregl = (await import("maplibre-gl")).default;
+        const maplibregl = await import("maplibre-gl");
         if (cancelled || !containerRef.current) return;
 
       const map = new maplibregl.Map({

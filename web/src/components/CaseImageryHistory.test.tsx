@@ -77,7 +77,7 @@ describe("CaseImageryHistory", () => {
       expect(screen.getByTestId("case-imagery-not-watchable")).toHaveTextContent(
         /green/i
       );
-      expect(screen.queryByRole("button")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /backfill/i })).not.toBeInTheDocument();
       expect(backfillCaseImagery).not.toHaveBeenCalled();
     });
 
@@ -97,7 +97,7 @@ describe("CaseImageryHistory", () => {
       );
 
       expect(screen.getAllByTestId("snapshot-week")).toHaveLength(1);
-      expect(screen.queryByRole("button")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /backfill/i })).not.toBeInTheDocument();
     });
   });
 
@@ -234,7 +234,7 @@ describe("CaseImageryHistory", () => {
       expect(screen.getByTestId("case-imagery-complete-note")).toHaveTextContent(
         "This does not mean every week has usable imagery"
       );
-      expect(screen.queryByRole("button")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /backfill/i })).not.toBeInTheDocument();
     });
   });
 
@@ -306,7 +306,7 @@ describe("CaseImageryHistory", () => {
         true
       );
       // The control disappears once nothing remains.
-      expect(screen.queryByRole("button")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /backfill/i })).not.toBeInTheDocument();
     });
 
     it("shows progress, announced through a status region, while the loop is running", async () => {

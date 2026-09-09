@@ -299,7 +299,34 @@ export interface BBox {
 
 export type CaptureStatus = "captured" | "no_usable_scene" | "provider_error";
 
+export interface ClearImageryResult {
+  parcel_id: string;
+  status: "clear" | "no_clear" | "incomplete" | "provider_error";
+  checked_scenes: number;
+  unassessed_scenes: number;
+  search_limited: boolean;
+  from: string;
+  to: string;
+  scene_id?: string;
+  captured_at?: string;
+  source?: string;
+  sensor?: string;
+  mask_resolution_m?: number;
+  sampled_pixels?: number;
+  image_base64?: string;
+  width?: number;
+  height?: number;
+}
+
+/** Optional response-only projection, derived through the authorized parent. */
+export type CaptureSceneDetails =
+  | { metadata_status: "missing" | "hash_mismatch" }
+  | { metadata_status: "available"; scene_id: string; captured_at: string;
+      sensor: string; resolution_m: number; cloud_pct: number | null;
+      source: string; retained: boolean; synthetic?: boolean };
+
 export interface CaptureAttempt {
+  scene_details?: CaptureSceneDetails | null;
   /** WeekRef.key, e.g. "2026-W31". */
   week: string;
   status: CaptureStatus;
@@ -309,22 +336,9 @@ export interface CaptureAttempt {
   cloud_pct: number | null;
   /** Human-readable; always set unless status is "captured". */
   reason: string | null;
-  /**
-   * Server-side path for this week's scene image, or null when there is
-   * provably nothing to serve (status is not "captured"). A non-null value
-   * is a *candidate* path, not a guarantee the bytes are actually
-   * retrievable: the backend's CaptureAttempt wire format carries no
-   * "were the bytes retained" flag (that lives only on the server's
-   * internal SceneRecord — contract-blobs.md §2), so a captured week whose
-   * bytes were never retained still gets a URL here, and that URL 404s
-   * when fetched. WeeklySnapshotTimeline treats that load failure the same
-   * as a null image_url — the explicit "hash on record, image not
-   * retained" state — so either path (never had a URL, or had one that
-   * failed to load) ends up rendering the same honest evidence state. See
-   * the blob-serving interface contract §3–§4. Populated by the API layer
-   * (api.ts/server-api.ts) from the parent resource + week key — never
-   * built by string-concatenation in a component.
-   */
+  /** Scoped candidate image path. Metadata never grants access; the server
+   * checks the parent, capture hash, retention and bytes on each request.
+   * Older responses may omit scene_details, so retrieval can still fail. */
   image_url: string | null;
 }
 

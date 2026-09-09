@@ -710,6 +710,12 @@ export const FIXTURE_WATCH_ENTRIES: WatchEntry[] = [
         status: "captured",
         attempted_at: "2026-06-01T06:15:00Z",
         scene_id: "S2A_MSIL2A_20260601T051651_R000_T44RNA",
+        scene_details: {
+          metadata_status: "available", scene_id: "S2A_MSIL2A_20260601T051651_R000_T44RNA",
+          captured_at: "2026-06-01T05:16:51Z", sensor: "Sentinel-2 (synthetic example)",
+          resolution_m: 10, cloud_pct: 8.5, source: "Synthetic demonstration", retained: false,
+          synthetic: true,
+        },
         sha256: "e57738c57fbbf69c54a29e1f16142c3d44b54990cd3ec625158fd01c63a973d",
         cloud_pct: 8.5,
         reason: null,
