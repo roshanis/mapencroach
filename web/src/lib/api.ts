@@ -22,6 +22,7 @@ import type {
   CaseEvent,
   CaseImagery,
   CaptureAttempt,
+  ClearImageryResult,
   Jurisdiction,
   LandCategory,
   BoundaryGrade,
@@ -32,6 +33,37 @@ import type {
 
 export const TOKEN_COOKIE = "mapencroach_token";
 export const PERSONA_COOKIE = "mapencroach_persona";
+
+/** The same-origin proxy supports runtime backend configuration in fixture builds. */
+export async function getLatestClearImagery(
+  parcelId: string, signal?: AbortSignal,
+): Promise<ClearImageryResult> {
+  const response = await fetch(`${getApiBase() ?? "/api/backend"}/parcels/${encodeURIComponent(parcelId)}/clear-imagery`, {
+    headers: authHeaders(), cache: "no-store", signal,
+  });
+  if (!response.ok) {
+    const message = response.status === 401 || response.status === 403
+      ? "Sign in to view this parcel's imagery."
+      : response.status === 404 ? "Parcel imagery is not accessible to this session."
+      : response.status === 409 ? "The parcel changed. Search again."
+      : response.status === 429 ? "An imagery search is already running. Retry shortly."
+      : "Imagery service unavailable";
+    throw new Error(message);
+  }
+  const result = await response.json() as ClearImageryResult;
+  if (result.parcel_id !== parcelId || !["clear", "no_clear", "incomplete", "provider_error"].includes(result.status)) {
+    throw new Error("Imagery response could not be verified.");
+  }
+  if (result.status === "clear" && (!result.scene_id || !result.captured_at
+    || !Number.isFinite(Date.parse(result.captured_at))
+    || !result.width || !result.height || result.width > 768 || result.height > 768
+    || result.mask_resolution_m !== 20 || !result.sampled_pixels
+    || !result.image_base64 || result.image_base64.length > 4_000_000
+    || !/^[A-Za-z0-9+/]+={0,2}$/.test(result.image_base64))) {
+    throw new Error("Imagery response could not be verified.");
+  }
+  return result;
+}
 
 // NEXT_PUBLIC_* env vars are inlined into the client bundle at build time —
 // anything read from one is visible to every visitor. NEXT_PUBLIC_API_TOKEN
@@ -768,21 +800,9 @@ async function readErrorDetail(res: Response): Promise<string> {
 // string-concatenation itself. This is the one place that concatenation
 // happens.
 //
-// The backend's CaptureAttempt.to_dict() (mapencroach.imagery.capture) does
-// not, and per the shipped implementation will not, put a "was this week's
-// scene actually retained" flag on the wire — `retained` lives only on the
-// server's internal SceneRecord (contract-blobs.md §2), scoped to the scene
-// registry, not serialized onto watch-entry/case-imagery JSON. So this
-// layer cannot tell retained and not-retained apart in advance without an
-// extra request per week, which would defeat the point of a single list
-// fetch. Instead it emits the scoped image path (contract-blobs.md §3) for
-// every `status: "captured"` week — the only path that could ever serve it
-// — and lets the browser find out: the endpoint 404s for a week that was
-// captured but not retained, and WeeklySnapshotTimeline's <img> treats that
-// load failure as the same "hash on record, image not retained" state a
-// null `image_url` produces. `image_url` is still `null` outright for any
-// week that was never `status: "captured"` — there is provably nothing to
-// serve, so there is no reason to ever attempt that request.
+// scene_details is an optional, parent-scoped metadata projection. Preserve
+// it through normalization; the image endpoint still verifies access and
+// integrity. Older responses without it retain their existing behavior.
 
 /** Wire shape of a capture attempt exactly as the backend's CaptureAttempt
  * dataclass serializes it (contract.md) — no `image_url`, that is derived

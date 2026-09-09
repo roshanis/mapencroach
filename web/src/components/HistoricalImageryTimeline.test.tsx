@@ -67,7 +67,7 @@ describe("HistoricalImageryTimeline", () => {
       `TIME=${FIRST_MONTH.endDate}`
     );
     expect(
-      screen.getByText(`searching back from ${FIRST_MONTH.endDate}…`)
+      screen.getByText(`Requested browse date: ${FIRST_MONTH.endDate}`)
     ).toBeInTheDocument();
   });
 
@@ -90,10 +90,10 @@ describe("HistoricalImageryTimeline", () => {
 
     expect(requestedTimes.size).toBe(1);
     expect(screen.getByText(/Imagery could not be loaded/)).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Retry imagery" })).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Retry imagery" })).toBeInTheDocument();
   });
 
-  it("accepts an image whose pixels cannot be verified and shows its capture date", async () => {
+  it("displays unverifiable pixels without claiming an acquisition date", async () => {
     render(<HistoricalImageryTimeline parcel={FIXTURE_PARCELS[0]} />);
 
     fireEvent.load(latestImage());
@@ -104,7 +104,7 @@ describe("HistoricalImageryTimeline", () => {
     );
     expect(
       screen.getByText(
-        `${SCENES[SCENES.length - 1].endDate} observation`
+        `Requested browse date: ${SCENES[SCENES.length - 1].endDate}`
       )
     ).toBeInTheDocument();
     expect(
@@ -123,23 +123,25 @@ describe("HistoricalImageryTimeline", () => {
     expect(screen.getByTestId("imagery-comparison")).toBeInTheDocument();
     expect(
       screen.getByRole("img", {
-        name: new RegExp(`${FIRST_MONTH.label} ${YEAR} before image`, "i"),
+        name: new RegExp(`A.*${FIRST_MONTH.label} ${YEAR} image`, "i"),
       })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("img", { name: /Latest after image/i })
+      screen.getByRole("img", { name: /B.*Latest image/i })
     ).toBeInTheDocument();
     expect(screen.getByTestId("parcel-boundary-overlay")).toBeInTheDocument();
     expect(
-      screen.getByText(/same HLS Sentinel-2 source, 30 m resolution, and map extent/i)
+      screen.getByText(/same HLS Sentinel-2 product, 30 m nominal resolution, and requested map extent/i)
     ).toBeInTheDocument();
   });
 
-  it("lets keyboard and touch users control how much of the after image is revealed", () => {
+  it("lets keyboard and touch users control how much of the B image is revealed", async () => {
     render(<HistoricalImageryTimeline parcel={FIXTURE_PARCELS[0]} />);
     fireEvent.click(screen.getByRole("button", { name: "Compare months" }));
 
-    const slider = screen.getByRole("slider", { name: "Reveal Latest imagery" });
+    for (const image of screen.getAllByRole("img").filter(image => image.tagName === "IMG")) fireEvent.load(image);
+    const slider = screen.getByRole("slider", { name: /Compare A .* and B Latest/ });
+    await waitFor(() => expect(slider).toBeEnabled());
     expect(slider).toHaveValue("50");
 
     fireEvent.change(slider, { target: { value: "72" } });

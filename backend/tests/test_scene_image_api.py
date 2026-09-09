@@ -683,3 +683,69 @@ class TestCaseSceneImage:
         assert entry.payload["action"] == "scene.read"
         assert entry.payload["object_type"] == "scene"
         assert verify_chain(store.audit_chain).ok
+
+
+def test_capture_details_match_watch_and_case_and_exclude_assets(client, store):
+    case_id, alert_id = case_with_alert_tier(store, "RED")
+    freeze(store, datetime(2026, 8, 9, tzinfo=UTC))
+    store.imagery_provider = FakeProvider()
+    headers = auth_headers(token_for("officer", Role.CASE_OFFICER, store.primary_authority_id))
+    assert client.post(f"/alerts/{alert_id}/watch", headers=headers).status_code == 201
+    post = client.post(f"/watchlist/{alert_id}/captures", headers=headers)
+    assert post.status_code == 201
+    details = post.json()[0]["scene_details"]
+    watch = client.get(f"/watchlist/{alert_id}", headers=headers).json()
+    case = client.get(f"/cases/{case_id}/imagery", headers=headers).json()
+    assert watch["captures"][0]["scene_details"] == details
+    assert case["captures"][0]["scene_details"] == details
+    assert details["captured_at"] != post.json()[0]["attempted_at"]
+    assert details["metadata_status"] == "available"
+    assert "stac_item" not in details
+    assert "href" not in details
+
+
+@pytest.mark.parametrize("hash_value", [None, "0" * 64])
+def test_scene_image_refuses_missing_or_mismatched_capture_hash(client, store, hash_value):
+    from dataclasses import replace
+
+    case_id, alert_id = case_with_alert_tier(store, "RED")
+    freeze(store, datetime(2026, 8, 9, tzinfo=UTC))
+    store.imagery_provider = FakeProvider()
+    headers = auth_headers(token_for("officer", Role.CASE_OFFICER, store.primary_authority_id))
+    client.post(f"/alerts/{alert_id}/watch", headers=headers)
+    client.post(f"/watchlist/{alert_id}/captures", headers=headers)
+    attempt = store.watchlist[alert_id].captures[0]
+    store.watchlist[alert_id].captures[0] = replace(attempt, sha256=hash_value)
+    for url in [f"/watchlist/{alert_id}/weeks/{attempt.week}/image",
+                f"/cases/{case_id}/imagery/{attempt.week}/image"]:
+        response = client.get(url, headers=headers)
+        assert response.status_code == 409
+        assert response.json()["detail"] == "Scene integrity could not be verified"
+
+
+def test_backfill_metadata_survives_case_transfer_without_granting_watch_access(client, store):
+    case_id, alert_id = case_with_alert_tier(store, "RED")
+    freeze(store, datetime(2026, 8, 9, tzinfo=UTC))
+    store.imagery_provider = FakeProvider()
+    all_access = auth_headers(token_for("officer", Role.CASE_OFFICER, store.primary_authority_id))
+    result = client.post(f"/cases/{case_id}/imagery/backfill", headers=all_access,
+                         json={"from": "2026-08-01", "max_weeks": 2})
+    assert result.status_code == 201
+    projected = {c["week"]: c["scene_details"] for c in result.json()["attempted"]}
+    assert projected and all(d["metadata_status"] == "available" for d in projected.values())
+    listing = client.get("/watchlist", headers=all_access).json()
+    entry = next(e for e in listing if e["alert_id"] == alert_id)
+    assert {c["week"]: c["scene_details"] for c in entry["captures"]} == projected
+    origin_id = store.cases[case_id].jurisdiction_id
+    transfer = client.post(f"/cases/{case_id}/transfer", headers=all_access,
+                           json={"to_jurisdiction_id": store.district_b_id,
+                                 "reason": "Review handover"})
+    assert transfer.status_code == 200
+    outgoing = auth_headers(token_for("outgoing", Role.VIEWER, origin_id))
+    incoming = auth_headers(token_for("incoming", Role.VIEWER, store.district_b_id))
+    assert client.get(f"/cases/{case_id}/imagery", headers=outgoing).status_code == 404
+    case = client.get(f"/cases/{case_id}/imagery", headers=incoming)
+    assert case.status_code == 200
+    assert {c["week"]: c["scene_details"] for c in case.json()["captures"]} == projected
+    assert client.get(f"/watchlist/{alert_id}", headers=incoming).status_code == 404
+    assert client.get(f"/cases/{case_id}/imagery").status_code == 401

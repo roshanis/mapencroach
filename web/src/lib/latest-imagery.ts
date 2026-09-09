@@ -1,10 +1,6 @@
-// Support for the imagery timeline's "Latest" scene: NASA GIBS serves the
-// Harmonized Landsat Sentinel-2 (HLS S30) layer at 30 m within a few days of
-// capture, but a given date only has a tile over a given parcel when a
-// satellite actually passed — a missing date comes back as a valid, fully
-// transparent/blank image rather than an HTTP error. So the timeline starts a
-// few days back (publication latency) and steps one day further into the past
-// per blank or failed load until it finds a real pass or gives up.
+// GIBS browse-date windows are request candidates, not verified acquisition
+// times. Blank-pixel sampling is a rendering heuristic, not parcel coverage,
+// cloud classification, or proof that no observation exists.
 
 export const LATEST_IMAGERY_LAYER = "HLS_S30_Nadir_BRDF_Adjusted_Reflectance";
 
@@ -13,8 +9,8 @@ export const LATEST_START_OFFSET_DAYS = 4;
 
 /**
  * How far past the start offset the search may walk. Sentinel-2 revisits
- * Haridwar every ~5 days, so ~3 revisit cycles of lookback means an exhausted
- * search is a genuine coverage/cloud gap, not bad luck.
+ * Haridwar periodically; exhausting this bounded search means only that no
+ * nonblank preview was found among the requested dates.
  */
 export const LATEST_MAX_OFFSET_DAYS = 20;
 
@@ -30,8 +26,8 @@ export function isoDayBefore(isoDate: string): string {
 
 /**
  * A timeline scene backed by a date window: the component requests `endDate`
- * first and walks one day back per blank/failed load until `startDate`, at
- * which point the scene reports a coverage gap.
+ * first and walks one day back per blank preview until `startDate`.
+ * Transport errors stop with a retry; they never imply a coverage gap.
  */
 export interface SceneWindow {
   id: string;
@@ -86,7 +82,8 @@ export function monthlyScenes(now: Date = new Date()): SceneWindow[] {
 /**
  * True when a sampled RGBA buffer is effectively empty: almost no pixels that
  * are both opaque and non-black. GIBS renders "no data" as transparent (PNG)
- * or black (JPEG), so either signature means no pass on that date.
+ * or black (JPEG); this heuristic cannot identify the cause or verify the
+ * observation date, clear-sky quality, or usable coverage over a parcel.
  */
 export function isMostlyBlank(
   rgba: Uint8ClampedArray,
@@ -105,8 +102,8 @@ export function isMostlyBlank(
 /**
  * Samples a loaded image at low resolution and reports whether it is blank.
  * Returns null when the pixels cannot be read (canvas unsupported, or the
- * image is CORS-tainted) — callers should then accept the image as-is rather
- * than discard a scene they cannot verify.
+ * image is CORS-tainted). Callers may display the preview but must mark
+ * its pixel quality unverified; null is not proof of a usable observation.
  */
 export function sampleImageBlankness(image: HTMLImageElement): boolean | null {
   try {

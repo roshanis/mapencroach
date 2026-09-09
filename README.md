@@ -42,7 +42,7 @@ token cookie set at sign-in.
 Open http://localhost:3000 for the product landing page, then enter the command
 map at http://localhost:3000/console. Alert queue, parcel profiles, and case
 detail remain linked from the operational console. The parcel workflow includes
-matched historical-imagery comparison and role-gated boundary review; the case
+parcel cloud/shadow checks, optional historical-imagery comparison, and role-gated boundary review; the case
 workflow includes a clearly marked training notice draft and an unsigned,
 print-ready evidence packet.
 Omit both env vars to run the UI on built-in fixture data with no backend at all.
@@ -151,6 +151,31 @@ Each scene includes a browsable `thumbnail_href` and a `visual_href`
 only enters the hash-on-ingest registry once its bytes are downloaded
 and sha256-hashed (`mapencroach.imagery.stac_search.ingest_candidate`).
 Point at a different STAC catalog with `MAPENCROACH_STAC_URL`.
+
+### Latest clear view
+
+Parcel profiles default to **Latest clear view**. `GET /parcels/{id}/clear-imagery`
+searches up to 24 recent Sentinel-2 candidates in a 90-day window and checks
+every native 20 m scene-classification pixel touched by the parcel. Only
+vegetation, bare soil, and water classifications pass; clouds, shadows, cirrus,
+missing data, and uncertain classifications reject the scene. Tile-wide cloud
+percentages do not determine whether the parcel passes.
+
+The returned parcel-only PNG comes from that exact scene's 10 m colour asset,
+with its actual acquisition time. Native colour pixels are checked for missing
+data before display downsampling. The UI distinguishes no clear result from
+incomplete searches and provider failures. Classification can miss clouds;
+this preview is screening context and is not registered as case evidence.
+Unverified monthly GIBS browsing remains available under **Browse imagery
+without cloud checks** and does not load until opened.
+
+This feature requires the backend and access to the public Earth Search catalog
+and Sentinel COG bucket; fixture-only mode shows service unavailability instead
+of inventing a clear scene. Search results are not persisted. Requests have
+scene, time, byte, pixel, and concurrency limits; access and parcel geometry are
+checked again after imagery processing. The configured STAC URL is trusted
+server configuration; COG URLs must match the fixed approved scene layout and
+redirects are refused. See [release verification](CLEAR-IMAGERY-RELEASE.md).
 
 ## H3 spatial index (Uber H3)
 

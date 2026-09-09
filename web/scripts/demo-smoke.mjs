@@ -27,16 +27,57 @@ try {
     viewport: { width: 1440, height: 1000 },
     serviceWorkers: "block",
   });
+  const backend = path.resolve(webRoot, "../backend");
+  const png = execFileSync(process.env.PYTHON || path.join(backend, ".venv/bin/python"), ["-c", `
+import base64
+from mapencroach.imagery.providers import DemoImageryProvider
+from mapencroach.imagery.schedule import WeekRef
+geometry = {"type":"Polygon","coordinates":[[[78.0,29.8],[78.0,29.9],[78.1,29.9]]]}
+scene = DemoImageryProvider().fetch(geometry=geometry, week=WeekRef(2026,32))
+print(base64.b64encode(scene.data).decode())
+`], { cwd: backend, env: { ...process.env, PYTHONPATH: path.join(backend, "src") }, encoding: "utf8" }).trim();
+  let mockGibs = false;
+  let failNextGibs = false;
+  const gibsRequests = [];
+  let clearScenario = "unavailable";
   // Offline acceptance: do not contact map providers, analytics, or live APIs.
   let blockedRequests = 0;
   await context.route("**/*", (route) => {
+    const url = new URL(route.request().url());
+    if (url.origin === origin && url.pathname.endsWith("/clear-imagery")) {
+      if (clearScenario === "unavailable") return route.fulfill({status:503,json:{detail:"mock service unavailable"}});
+      return route.fulfill({status:200,json:{
+        parcel_id:"PCL-1001",status:clearScenario,checked_scenes:2,unassessed_scenes:0,
+        search_limited:false,from:"2026-06-11T00:00:00Z",to:"2026-09-09T00:00:00Z",
+        scene_id:"S2B_43RGP_20260905_0_L2A",captured_at:"2026-09-05T05:40:31Z",
+        source:"Synthetic browser test fixture",sensor:"sentinel-2b",mask_resolution_m:20,
+        sampled_pixels:36,image_base64:png,width:160,height:90,
+      }});
+    }
+    if (mockGibs && url.origin === "https://gibs.earthdata.nasa.gov") {
+      gibsRequests.push(url.searchParams.get("TIME"));
+      if (failNextGibs) {
+        failNextGibs = false;
+        return route.abort();
+      }
+      return route.fulfill({status:200,contentType:"image/png",
+        headers:{"Access-Control-Allow-Origin":"*"},body:Buffer.from(png,"base64")});
+    }
     if (route.request().url().startsWith(`${origin}/`)) return route.continue();
     blockedRequests++;
     return route.abort();
   });
   const page = await context.newPage();
   const results = [];
-  const go = (pathname) => page.goto(`${origin}${pathname}`, { waitUntil: "networkidle" });
+  const go = async (pathname) => {
+    // Next can retain a streaming document request after the page is usable.
+    // Wait for the loaded document and actual map canvas, then each journey's
+    // controls/results below, rather than treating network silence as readiness.
+    await page.goto(`${origin}${pathname}`, { waitUntil: "load" });
+    if (pathname.startsWith("/console")) {
+      await page.locator('[data-testid="maplibre-container"] .maplibregl-canvas').waitFor();
+    }
+  };
 
   await go("/console");
   await page.getByRole("button", {name:"Retry map tiles"}).waitFor();
@@ -149,15 +190,84 @@ try {
   }
   results.push("Map rows and selected details do not overlap at 320/390/768/1440px");
 
-  const backend = path.resolve(webRoot, "../backend");
-  const png = execFileSync(process.env.PYTHON || path.join(backend, ".venv/bin/python"), ["-c", `
-import base64
-from mapencroach.imagery.providers import DemoImageryProvider
-from mapencroach.imagery.schedule import WeekRef
-geometry = {"type":"Polygon","coordinates":[[[78.0,29.8],[78.0,29.9],[78.1,29.9]]]}
-scene = DemoImageryProvider().fetch(geometry=geometry, week=WeekRef(2026,32))
-print(base64.b64encode(scene.data).decode())
-`], { cwd: backend, env: { ...process.env, PYTHONPATH: path.join(backend, "src") }, encoding: "utf8" }).trim();
+  // Deterministic imagery responses: no request reaches NASA or another provider.
+  mockGibs = true;
+  clearScenario = "clear";
+  await page.setViewportSize({width:390,height:844});
+  await go("/parcels/PCL-1001");
+  const clearView = page.getByRole("region",{name:"Latest clear view",exact:true});
+  await clearView.getByRole("img",{name:/No clouds detected.*2026-09-05/}).waitFor();
+  assert.equal(gibsRequests.length,0,"Cloud-checked default must not load unverified imagery");
+  await clearView.getByText("Scene and cloud-check details",{exact:true}).click();
+  await clearView.getByText(/36 pixels at 20 m/).waitFor();
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  await page.addScriptTag({path:require.resolve("axe-core/axe.js")});
+  assert.deepEqual(await clearView.evaluate(async(element)=>(await window.axe.run(element)).violations
+    .filter(v=>["serious","critical"].includes(v.impact)).map(v=>v.id)),[]);
+  if (process.env.CLEAR_SCREENSHOT_PATH) await clearView.screenshot({path:process.env.CLEAR_SCREENSHOT_PATH});
+  clearScenario="no_clear";
+  await clearView.getByRole("button",{name:"Search again"}).click();
+  await clearView.getByText("No clear image found",{exact:true}).waitFor();
+  clearScenario="unavailable";
+  await clearView.getByRole("button",{name:"Search again"}).click();
+  await clearView.getByText("Imagery service unavailable",{exact:true}).waitFor();
+  clearScenario="clear";
+  await clearView.getByRole("button",{name:"Search again"}).click();
+  await clearView.getByRole("img").waitFor();
+  results.push("Cloud-checked default shows exact capture date, keeps no-clear and provider failure distinct, and retries without loading unverified imagery");
+  await page.getByText("Browse imagery without cloud checks",{exact:true}).click();
+  const imagery = page.locator("section").filter({has:page.getByRole("heading",{name:"Imagery Timeline",exact:true})});
+  await imagery.getByRole("group",{name:"Imagery month",exact:true}).getByText("Preview available",{exact:true}).waitFor();
+  assert.equal(gibsRequests.length,1,"Opening imagery loads only the active window once");
+  await imagery.getByText("Source details",{exact:true}).click();
+  await imagery.getByText(/Exact acquisition time unverified/).waitFor();
+  assert.equal(await imagery.getByText(/observation$/, {exact:false}).count(),0);
+  const compareButton=imagery.getByRole("button",{name:"Compare months"});
+  if (await compareButton.isEnabled()) {
+    await compareButton.click();
+    const slider=imagery.getByRole("slider");
+    await page.waitForFunction(()=>!document.querySelector('[data-testid="imagery-comparison"] input[type="range"]')?.disabled);
+    const a=imagery.getByRole("combobox",{name:"A imagery window"});
+    const b=imagery.getByRole("combobox",{name:"B imagery window"});
+    const oldA=await a.inputValue(),oldB=await b.inputValue();
+    await slider.focus();
+    await page.keyboard.press("ArrowRight");
+    assert.equal(await slider.inputValue(),"51");
+    await imagery.getByRole("button",{name:"Swap A and B"}).click();
+    assert.equal(await a.inputValue(),oldB);
+    assert.equal(await b.inputValue(),oldA);
+    // A never-inspected month exercises side-specific failure and recovery.
+    const candidate=await a.locator("option").evaluateAll((options,current)=>options.find(o=>!o.disabled && o.value!==current)?.value,oldB);
+    if (candidate) {
+      failNextGibs=true;
+      await a.selectOption(candidate);
+      await imagery.getByRole("button",{name:"Retry A imagery"}).waitFor();
+      assert.equal(await slider.isDisabled(),true);
+      await imagery.getByRole("button",{name:"Retry A imagery"}).click();
+      await page.waitForFunction(()=>!document.querySelector('[data-testid="imagery-comparison"] input[type="range"]')?.disabled);
+    }
+    await imagery.getByText("A Source details",{exact:true}).click();
+    await imagery.getByText("B Source details",{exact:true}).click();
+  }
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  await page.addScriptTag({path:require.resolve("axe-core/axe.js")});
+  const imageryViolations=await imagery.evaluate(async(element)=>(await window.axe.run(element)).violations.filter(v=>["serious","critical"].includes(v.impact)).map(v=>v.id));
+  assert.deepEqual(imageryViolations,[]);
+  if (process.env.IMAGERY_SCREENSHOT_PATH) await imagery.screenshot({path:process.env.IMAGERY_SCREENSHOT_PATH});
+  await page.setViewportSize({width:1440,height:1000});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  if (process.env.IMAGERY_DESKTOP_SCREENSHOT_PATH) await imagery.screenshot({path:process.env.IMAGERY_DESKTOP_SCREENSHOT_PATH});
+  results.push("Mocked GIBS loads one active preview, preserves uncertain acquisition time, and supports mobile A/B keyboard comparison and recovery");
+  await page.setViewportSize({width:390,height:844});
+  await go("/cases/CASE-9001");
+  await page.getByRole("button",{name:"2026-W23",exact:true}).click();
+  await page.getByText("Source details for 2026-W23",{exact:true}).click();
+  await page.getByText("Synthetic demonstration metadata",{exact:true}).waitFor();
+  await page.getByText("2026-06-01 05:16:51 UTC",{exact:true}).waitFor();
+  await page.getByText("2026-06-01 06:15:00 UTC",{exact:true}).waitFor();
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  results.push("Read-only case history exposes distinct synthetic observation/attempt times and retention metadata without captures");
+
   const size = await page.evaluate(async (data) => {
     const image = new Image();
     image.src = `data:image/png;base64,${data}`;

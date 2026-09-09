@@ -45,9 +45,11 @@ and is not persisted, and its cross-process concurrency caveats.
 """
 
 import base64
+import copy
 import math
 import os
 import re
+import threading
 from collections.abc import Mapping
 from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Any
@@ -86,9 +88,11 @@ from mapencroach.hexgrid.grid import (
     polygon_cells,
 )
 from mapencroach.imagery.capture import CaptureAttempt, CaptureStatus, capture_week
+from mapencroach.imagery.clear_view import ClearViewService
 from mapencroach.imagery.registry import DuplicateScene, SceneRecord
 from mapencroach.imagery.schedule import WeekRef, due_weeks, weeks_from
 from mapencroach.imagery.stac_search import StacClient, StacSearchError, geometry_bbox
+from mapencroach.imagery.view import capture_view
 from mapencroach.persistence import build_store
 
 _VALID_GRADES = {"A", "B", "C"}
@@ -475,6 +479,13 @@ def _resolve_watch_entry(
     return entry
 
 
+def _watch_view(entry: WatchEntryRecord, store: Store, today: date) -> dict[str, Any]:
+    """Project only after parent authorization, while holding store.lock."""
+    result = entry.to_dict(today)
+    result["captures"] = [capture_view(c, store.scene_registry) for c in entry.captures]
+    return result
+
+
 # Scene image serving: content-addressed bytes can never go stale, so a
 # successful response is cacheable forever. `private` because these are
 # jurisdiction-scoped evidence images, not something a shared/public cache
@@ -526,6 +537,11 @@ def _require_captured_scene(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"scene {attempt.scene_id!r} is not on record",
         ) from exc
+    if not attempt.sha256 or attempt.sha256 != record.sha256:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Scene integrity could not be verified",
+        )
     if not record.retained:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -634,7 +650,8 @@ def _scene_to_dict(record: SceneRecord) -> dict[str, Any]:
 
 
 def create_app(
-    store: Store | None = None, stac_client: StacClient | None = None
+    store: Store | None = None, stac_client: StacClient | None = None,
+    clear_view_service: ClearViewService | None = None,
 ) -> FastAPI:
     """Build the FastAPI app.
 
@@ -669,6 +686,11 @@ def create_app(
     app.state.store = store
     app.state.jwt_secret = jwt_secret
     app.state.stac = stac_client
+    app.state.clear_view = clear_view_service or ClearViewService(stac_client)
+    # Bound costly raster work globally and to one request per authenticated user.
+    clear_view_slots = threading.BoundedSemaphore(2)
+    clear_view_lock = threading.Lock()
+    clear_view_users: set[str] = set()
 
     cors_origins = [
         origin.strip()
@@ -792,6 +814,35 @@ def create_app(
             "max_cloud_pct": max_cloud_pct,
             "scenes": [c.to_api_dict() for c in scenes],
         }
+
+    @app.get("/parcels/{parcel_id}/clear-imagery")
+    def get_clear_parcel_imagery(
+        parcel_id: str, store: StoreDep, user: CurrentUser, response: Response,
+    ) -> dict[str, Any]:
+        response.headers["Cache-Control"] = "private, no-store"
+        with store.lock:
+            parcel = store.parcels.get(parcel_id)
+            if parcel is None or parcel["jurisdiction_id"] not in _user_scope(store, user):
+                raise HTTPException(status_code=404, detail="parcel not found")
+            geometry = copy.deepcopy(parcel["geometry"])
+            end = store.clock()
+        with clear_view_lock:
+            if user.sub in clear_view_users or not clear_view_slots.acquire(blocking=False):
+                raise HTTPException(status_code=429, detail="Imagery search busy; retry shortly")
+            clear_view_users.add(user.sub)
+        try:
+            result = app.state.clear_view.search(geometry, end=end)
+            with store.lock:
+                current = store.parcels.get(parcel_id)
+                if current is None or current["jurisdiction_id"] not in _user_scope(store, user):
+                    raise HTTPException(status_code=404, detail="parcel not found")
+                if current["geometry"] != geometry:
+                    raise HTTPException(status_code=409, detail="Parcel changed; search again")
+                return {"parcel_id": parcel_id, **result}
+        finally:
+            with clear_view_lock:
+                clear_view_users.discard(user.sub)
+                clear_view_slots.release()
 
     @app.patch("/parcels/{parcel_id}/boundary-grade")
     def patch_boundary_grade(
@@ -1316,7 +1367,7 @@ def create_app(
                 store.record_audit(
                     actor=user.sub, action="watch.resume", object_type="watch", object_id=alert_id
                 )
-                result = existing.to_dict(store.clock().date())
+                result = _watch_view(existing, store, store.clock().date())
                 # Rewatch resumes the same timeline, including its original
                 # started_on date and every prior capture attempt.
 
@@ -1332,7 +1383,7 @@ def create_app(
                 store.record_audit(
                     actor=user.sub, action="watch.create", object_type="watch", object_id=alert_id
                 )
-                result = entry.to_dict(started_on)
+                result = _watch_view(entry, store, started_on)
         store.persist_now()
         return result
 
@@ -1359,24 +1410,26 @@ def create_app(
         limit: LimitQuery = _DEFAULT_PAGE_SIZE,
         offset: OffsetQuery = 0,
     ) -> list[dict[str, Any]]:
-        scope = _user_scope(store, user)
-        today = store.clock().date()
-        matched = []
-        for entry in store.watchlist.values():
-            if not entry.active:
-                continue
-            parcel = store.parcels.get(entry.parcel_id)
-            if parcel is None or parcel["jurisdiction_id"] not in scope:
-                continue
-            matched.append(entry)
-        response.headers["X-Total-Count"] = str(len(matched))
-        page = matched[offset : offset + limit]
-        return [entry.to_dict(today) for entry in page]
+        with store.lock:
+            scope = _user_scope(store, user)
+            today = store.clock().date()
+            matched = []
+            for entry in store.watchlist.values():
+                if not entry.active:
+                    continue
+                parcel = store.parcels.get(entry.parcel_id)
+                if parcel is None or parcel["jurisdiction_id"] not in scope:
+                    continue
+                matched.append(entry)
+            response.headers["X-Total-Count"] = str(len(matched))
+            page = matched[offset : offset + limit]
+            return [_watch_view(entry, store, today) for entry in page]
 
     @app.get("/watchlist/{alert_id}")
     def get_watchlist_entry(alert_id: str, store: StoreDep, user: CurrentUser) -> dict[str, Any]:
-        entry = _resolve_watch_entry(store, user, alert_id)
-        return entry.to_dict(store.clock().date())
+        with store.lock:
+            entry = _resolve_watch_entry(store, user, alert_id)
+            return _watch_view(entry, store, store.clock().date())
 
     @app.post("/watchlist/{alert_id}/captures", status_code=status.HTTP_201_CREATED)
     def run_watchlist_captures(
@@ -1446,7 +1499,9 @@ def create_app(
             )
 
         store.persist_now()
-        return [result.to_dict() for result in results]
+        with store.lock:
+            _resolve_watch_entry(store, user, alert_id, require_active=False)
+            return [capture_view(result, store.scene_registry) for result in results]
 
     @app.get("/watchlist/{alert_id}/weeks/{week}/image")
     def get_watchlist_scene_image(
@@ -1457,8 +1512,10 @@ def create_app(
         user: CurrentUser,
     ) -> Response:
         week_ref = _parse_week_or_422(week)
-        entry = _resolve_watch_entry(store, user, alert_id, require_active=False)
-        record = _require_captured_scene(store, entry.captures, week_ref.key)
+        with store.lock:
+            entry = _resolve_watch_entry(store, user, alert_id, require_active=False)
+            record = _require_captured_scene(store, entry.captures, week_ref.key)
+
         return _scene_image_response(store, user, request, record)
 
     # ------------------------------------------------------------------
@@ -1476,46 +1533,47 @@ def create_app(
 
     @app.get("/cases/{case_id}/imagery")
     def get_case_imagery(case_id: str, store: StoreDep, user: CurrentUser) -> dict[str, Any]:
-        record = store.cases.get(case_id)
-        scope = _user_scope(store, user)
-        if record is None or record.jurisdiction_id not in scope:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case not found")
+        with store.lock:
+            record = store.cases.get(case_id)
+            scope = _user_scope(store, user)
+            if record is None or record.jurisdiction_id not in scope:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case not found")
 
-        alert = store.alerts.get(record.alert_id)
-        alert_tier = alert["tier"] if alert is not None else None
-        watchable = alert_tier == AlertTier.RED.value
+            alert = store.alerts.get(record.alert_id)
+            alert_tier = alert["tier"] if alert is not None else None
+            watchable = alert_tier == AlertTier.RED.value
 
-        floor = _imagery_backfill_floor()
-        today = store.clock().date()
-        entry = store.watchlist.get(record.alert_id)
+            floor = _imagery_backfill_floor()
+            today = store.clock().date()
+            entry = store.watchlist.get(record.alert_id)
 
-        if entry is not None:
-            captures = sorted(entry.captures, key=lambda c: c.week)
-            attempted = {c.week for c in captures}
-            started_on: date | None = entry.started_on
-            due = due_weeks(entry.started_on, today, attempted) if entry.active else []
-            remaining = _weeks_needing_backfill(floor, entry.started_on, attempted)
-        else:
-            captures = []
-            started_on = None
-            due = []
-            remaining = _weeks_needing_backfill(floor, today, set())
+            if entry is not None:
+                captures = sorted(entry.captures, key=lambda c: c.week)
+                attempted = {c.week for c in captures}
+                started_on: date | None = entry.started_on
+                due = due_weeks(entry.started_on, today, attempted) if entry.active else []
+                remaining = _weeks_needing_backfill(floor, entry.started_on, attempted)
+            else:
+                captures = []
+                started_on = None
+                due = []
+                remaining = _weeks_needing_backfill(floor, today, set())
 
-        return {
-            "case_id": record.case.case_id,
-            "alert_id": record.alert_id,
-            "parcel_id": record.parcel_id,
-            "alert_tier": alert_tier,
-            "watchable": watchable,
-            "monitoring_active": entry.active if entry is not None else False,
-            "retryable_weeks": entry.to_dict(today).get("retryable_weeks", []) if entry else [],
-            "started_on": started_on.isoformat() if started_on is not None else None,
-            "cadence": "weekly",
-            "captures": [c.to_dict() for c in captures],
-            "due_weeks": [week.key for week in due],
-            "backfill_floor": floor.isoformat(),
-            "remaining_backfill_weeks": len(remaining),
-        }
+            return {
+                "case_id": record.case.case_id,
+                "alert_id": record.alert_id,
+                "parcel_id": record.parcel_id,
+                "alert_tier": alert_tier,
+                "watchable": watchable,
+                "monitoring_active": entry.active if entry is not None else False,
+                "retryable_weeks": entry.to_dict(today).get("retryable_weeks", []) if entry else [],
+                "started_on": started_on.isoformat() if started_on is not None else None,
+                "cadence": "weekly",
+                "captures": [capture_view(c, store.scene_registry) for c in captures],
+                "due_weeks": [week.key for week in due],
+                "backfill_floor": floor.isoformat(),
+                "remaining_backfill_weeks": len(remaining),
+            }
 
     @app.post("/cases/{case_id}/imagery/backfill", status_code=status.HTTP_201_CREATED)
     def backfill_case_imagery(
@@ -1647,7 +1705,7 @@ def create_app(
                     )
 
                 response_body = {
-                    "attempted": [result.to_dict() for result in results],
+                    "attempted": [capture_view(result, store.scene_registry) for result in results],
                     "started_on": entry.started_on.isoformat(),
                     "remaining_backfill_weeks": remaining_after,
                     "monitoring_active": entry.active,
@@ -1658,6 +1716,10 @@ def create_app(
 
         if mutated:
             store.persist_now()
+        with store.lock:
+            current_case = store.cases.get(case_id)
+            if current_case is None or current_case.jurisdiction_id not in _user_scope(store, user):
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case not found")
         return response_body
 
     @app.get("/cases/{case_id}/imagery/{week}/image")
@@ -1673,19 +1735,21 @@ def create_app(
         # this reuses that same check and that same 404 detail rather than
         # anything week-specific.
         week_ref = _parse_week_or_422(week)
-        record_case = store.cases.get(case_id)
-        scope = _user_scope(store, user)
-        if record_case is None or record_case.jurisdiction_id not in scope:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case not found")
+        with store.lock:
+            record_case = store.cases.get(case_id)
+            scope = _user_scope(store, user)
+            if record_case is None or record_case.jurisdiction_id not in scope:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case not found")
 
-        entry = store.watchlist.get(record_case.alert_id)
-        if entry is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"no capture attempt recorded for week {week_ref.key!r}",
-            )
+            entry = store.watchlist.get(record_case.alert_id)
+            if entry is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"no capture attempt recorded for week {week_ref.key!r}",
+                )
 
-        record = _require_captured_scene(store, entry.captures, week_ref.key)
+            record = _require_captured_scene(store, entry.captures, week_ref.key)
+
         return _scene_image_response(store, user, request, record)
 
     # ------------------------------------------------------------------

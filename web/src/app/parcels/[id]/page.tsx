@@ -15,7 +15,7 @@ import { TierChip } from "@/components/TierChip";
 import { TopBar } from "@/components/TopBar";
 import { DemoActionBoundary } from "@/components/DemoModeBanner";
 import ParcelMiniMap from "@/components/ParcelMiniMap";
-import { HistoricalImageryTimeline } from "@/components/HistoricalImageryTimeline";
+import { LatestClearImagery } from "@/components/LatestClearImagery";
 import { BoundaryGradeEditor } from "@/components/BoundaryGradeEditor";
 import { jurisdictionLabel } from "@/lib/format";
 
@@ -93,7 +93,7 @@ export default async function ParcelProfilePage({
                 initialGrade={parcel.boundary_grade}
               /></DemoActionBoundary>
 
-              <HistoricalImageryTimeline parcel={parcel} />
+              <LatestClearImagery parcel={parcel} />
 
               <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
                 <h2 className="mb-4 text-base font-semibold text-gray-900">
