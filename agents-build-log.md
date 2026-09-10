@@ -497,3 +497,54 @@ Nits: Sentinel-1B is dead (constellation = 1A+1C); Phase 0 of 2–4 weeks unreal
 ### Diff summary: Default parcel view searches recent exact Sentinel-2 scenes and accepts only complete native SCL parcel coverage in classes4/5/6. Matching colour crops are validated before resizing. Reads have scope/geometry rechecks, bounded range transport and concurrency limits. Unverified GIBS browsing is opt-in. Dependency vulnerabilities were resolved, including isolated-environment pip and CI installer minimum; existing environments and all11 original protected file hashes remain unchanged.
 ### Verification: Red-first cloud/mask/transport/API/UI tests; 650 web tests,929 backend tests and98.31%coverage; ESLint, TypeScript, Ruff, production build, offlineChrome flows/mobile accessibility, whitespace/script syntax all passed. npm and Python audits now report no known vulnerabilities. Live public demo query found S2B_43RGP_20260826_0_L2A after5scene checks in6.1seconds, with42clear classified parcel pixels. Luna frontend/backend/dependency review found no remaining introduced defect; native colour validity, MIME and PNG byte limits were independently verified.
 ### Recommendations / Next steps: Publish the explicitly staged change through a PR, wait for required CI, merge under the user's explicit authorization, and verify remote main. Existing backfill-transfer race/global scene route remain documented follow-ups. No deployment, settings/credential changes, real case mutations, or later Worldview increment is included.
+
+## [AGENT: Codex-location-search] [2026-09-09T19:32:00Z]
+### Action: Implemented approved Google Places location search with red-first tests
+### Files changed: web/src/components/GoogleLocationSearch.tsx; web/src/components/GoogleLocationSearch.test.tsx; web/src/components/googleMapsLoader.ts; web/src/components/googleMapsLoader.test.ts; agents-build-log.md
+### Diff summary: Added lazy Places library loading using the existing key configuration, imperative PlaceAutocompleteElement mounting, gmp-select Place fetch with location-only fields, finite/range validation, stale request and unmount protection, explicit event cleanup on collapse, and local retryable failure states. Search only returns coordinates and does not mutate parcel state.
+### Verification: Initial focused test command was red because vitest was unavailable before the shared dependency install. After dependencies became available, focused loader/search tests passed 6/6, TypeScript passed, and ESLint passed. The combined run also exposed two unrelated in-progress GoogleMap test failures in the shared worktree; no GoogleMap files were changed here.
+### Recommendations / Next steps: Parent should review the loader overlap and integrate the component above the map canvas, then run the full web suite and browser checks.
+
+## [AGENT: Codex-location-search] [2026-09-09T19:34:00Z]
+### Action: Closed the location-search stale-selection and accessibility gaps identified in review
+### Files changed: web/src/components/GoogleLocationSearch.tsx; web/src/components/GoogleLocationSearch.test.tsx; agents-build-log.md
+### Diff summary: Added a monotonic selection generation so older Place fetches and errors cannot win, invalidated it on close/provider error/retry/unmount, added loading/status states, successful-selection error clearing, styled 44px controls, context copy, focus-on-mount, aria-expanded, and focus recovery to the reopened trigger. Added out-of-order selection and provider-error/focus tests.
+### Verification: New red test failed before the generation/focus changes; focused GoogleLocationSearch tests pass 6/6 afterward. Full TypeScript remains blocked by unrelated in-progress googleAlertClusters source/test errors; no files in that area were changed.
+### Recommendations / Next steps: Parent should integrate and run the complete web suite after resolving or isolating the unrelated GoogleAlertClusters work.
+
+## [AGENT: Codex-location-search] [2026-09-09T19:36:00Z]
+### Action: Fixed initial-mount focus theft and simplified stale cancellation checks
+### Files changed: web/src/components/GoogleLocationSearch.tsx; web/src/components/GoogleLocationSearch.test.tsx; agents-build-log.md
+### Diff summary: Focus now returns to the trigger only after an actual close, preserving existing deep-linked/control focus on initial mount. Tests dispatch the official event.placePrediction shape. Removed redundant retry closure comparisons and cleanup state writes; cancellation plus selection generation govern late work.
+### Verification: Initial-focus test was red before the fix; focused loader/search tests pass 9/9 afterward. Own lint warning was removed. Full lint still reports unrelated googleAlertClusters errors/warnings.
+### Recommendations / Next steps: Parent should use the worktree versions and archive any accidental original-checkout copies, then run integration/full browser checks.
+
+## [AGENT: Codex] [2026-09-09T23:35:00Z]
+### Action: Added focused offline browser coverage for the approved Google Maps search/clustering increment
+### Files changed: web/scripts/maps-smoke.mjs; web/scripts/google-maps-stub.mjs; agents-build-log.md
+### Diff summary: Added a Playwright/Next production harness with an initScript Google Maps, Advanced Marker, Places, OverlayView, and event stub. It exercises lazy location search, fake gmp-select camera pan with URL preservation, Places failure/retry, gm_authFailure fallback to MapLibre, external request blocking, and 320/390/768/1440px overflow/overlap checks. Stubbed APIs are explicitly labeled and no live Google claim is made.
+### Verification: Node syntax checks for both new scripts and git diff --check passed. Full browser run waits for the parent Maps component integration; no live provider request or credential was used.
+### Recommendations / Next steps: Run `maps-smoke.mjs` after the parent GoogleMap clustering/search integration lands; adjust only the cluster DOM assertion if the final accessible cluster marker uses a different test id.
+
+## [AGENT: Codex] [2026-09-09T23:55:00Z]
+### Action: Hardened and executed the offline Maps browser harness against the integrated production build
+### Files changed: web/scripts/maps-smoke.mjs; web/scripts/google-maps-stub.mjs; agents-build-log.md
+### Diff summary: Fixed native Map shadowing, OverlayView lifecycle/projection and LatLng behavior required by real markerclusterer, marker detach semantics, viewport API use, sibling-only layout comparisons, external request accounting, page error capture, real cluster keyboard fitBounds exactly-once assertion, open-search and selected-alert viewport journeys, and open-search axe/screenshot hooks.
+### Verification: Placeholder-key production build passed. Harness passed real cluster rendering, Places selection and retry, Google auth fallback, page error-free behavior and 320/390/768/1440px layouts before adding the open-search axe gate. The final strict axe rerun reached the integrated UI but failed on `aria-prohibited-attr` and `color-contrast`; no harness defect was identified. Node syntax and git diff --check pass. No live Google request continued; the run reported zero blocked external requests.
+### Recommendations / Next steps: Fix the integrated search row's axe findings, then rerun with `MAPS_SCREENSHOT_PATH=/private/tmp/mapencroach-google-search-mobile.png`; the harness will capture the requested artifact after the strict gate passes.
+
+
+## [AGENT: Codex] [2026-09-10T00:54:56Z]
+### Action: Completed the approved Google location search and alert clustering increment with four Luna agents and independent root verification
+### Files changed: DEPLOY.md; agents-build-log.md; web/package.json and package-lock.json; GoogleMap.tsx and tests; googleMapsLoader.ts and new tests; new GoogleLocationSearch.tsx and tests; new googleAlertClusters.ts and tests; map-markers.ts and tests; web/scripts/maps-smoke.mjs and google-maps-stub.mjs.
+### Diff summary: Implemented in isolated branch codex/google-search-clustering from refreshed origin/main c517d99. Added lazy Places search with location-only requests, local retry and stale-result protection, camera-only selection, and accessible controls. Added keyed alert clustering with keyboard/mouse activation, selected-alert visibility, cleanup and live map-data reconciliation. Corrected amber/green marker numeral contrast after browser accessibility findings. Documented optional Places setup and offline/live verification boundaries. Root reviewed and corrected agent work; final independent Luna review found no remaining introduced blocker. Original dirty application files were preserved; four accidental new agent files were archived under /private/tmp/mapencroach-agent-recovery-20260910 before final status verification.
+### Verification: Red-first behavior regressions observed and fixed. All 673 web tests across 72 files passed; lint, TypeScript, production build with nonsecret placeholder Maps configuration, script syntax and git diff --check passed. Focused offline Maps browser suite passed search/retry/fallback, native cluster mouse and Enter exactly-once activation, accessibility and 320/390/768/1440px layout checks with no page errors. Existing browser suite passed all 11 journeys including imagery recovery and mobile accessibility. npm audit reported zero vulnerabilities. Maps/Places/AdvancedMarker APIs were stubbed with the real markerclusterer library; external browser requests were blocked. No live Google service behavior was verified and no backend code changed.
+### Recommendations / Next steps: Review the uncommitted worktree at /private/tmp/mapencroach-google-search-clustering. Live Google SDK/Places acceptance requires configured restricted credentials and the relevant enabled APIs. No commit, merge, deployment, credential change or case mutation was performed.
+
+
+## [AGENT: Codex] [2026-09-10T00:57:55+00:00]
+### Action: Prepared the explicitly requested merge to main
+### Files changed: agents-build-log.md appended; the approved implementation files are staged explicitly for the PR.
+### Diff summary: Refreshed origin/main remains c517d99, matching the isolated implementation base. Existing dirty application files in the original checkout were fingerprinted for preservation checks.
+### Verification: Previous final implementation checks remain applicable with no application edits since: 673 tests, lint/types/build, two offline browser suites and zero npm audit vulnerabilities. Whitespace checks pass.
+### Recommendations / Next steps: Commit and publish the scoped branch, obtain final review against main, wait for PR CI and merge only when checks are green under the user authorization. Live Google behavior remains unverified.

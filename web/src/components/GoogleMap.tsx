@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { LAND_CATEGORY_COLORS } from "@/lib/types";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { LAND_CATEGORY_COLORS, type Parcel } from "@/lib/types";
 import { BasemapToggle, type BasemapMode } from "./BasemapToggle";
 import { loadGoogleMapLibraries, onGoogleMapsAuthFailure } from "./googleMapsLoader";
-import { collectParcelVertices, createAlertMarkerElement } from "./map-markers";
+import { collectParcelVertices } from "./map-markers";
+import GoogleLocationSearch from "./GoogleLocationSearch";
+import { createGoogleAlertClusters } from "./googleAlertClusters";
 import type { OperationalMapProps } from "./map-types";
 
 export interface GoogleMapProps extends OperationalMapProps {
@@ -22,6 +24,24 @@ const H3_STYLE: google.maps.Data.StyleOptions = {
   strokeWeight: 1.5,
   zIndex: 1,
 };
+
+function replaceParcelData(map: google.maps.Map, parcels: Parcel[]) {
+  const previous: google.maps.Data.Feature[] = [];
+  map.data.forEach((feature) => previous.push(feature));
+  previous.forEach((feature) => map.data.remove(feature));
+  map.data.addGeoJson({
+    type: "FeatureCollection",
+    features: parcels.map((parcel) => ({
+      type: "Feature",
+      geometry: parcel.geometry,
+      properties: {
+        id: parcel.id,
+        boundary_grade: parcel.boundary_grade,
+        land_category: parcel.land_category,
+      },
+    })),
+  });
+}
 
 export default function GoogleMap({
   apiKey,
@@ -42,11 +62,10 @@ export default function GoogleMap({
   const h3LayerRef = useRef<google.maps.Data | null>(null);
   const h3CellsRef = useRef(h3Cells);
   const h3VisibleRef = useRef(h3Visible);
-  const markerElementsRef = useRef<
-    Map<string, { setSelected: (selected: boolean) => void }>
-  >(new Map());
+  const clustersRef = useRef<ReturnType<typeof createGoogleAlertClusters> | null>(null);
+  const dataRef = useRef({ parcels, alerts, selectedAlertId });
   const onAlertClickRef = useRef(onAlertClick);
-  const selectedAlertIdRef = useRef(selectedAlertId);
+  const onReadyRef = useRef(onReady);
   const onProviderErrorRef = useRef(onProviderError);
   const [mode, setMode] = useState<BasemapMode>("satellite");
   const [loading, setLoading] = useState(true);
@@ -71,30 +90,25 @@ export default function GoogleMap({
   }, [onProviderError]);
 
   useEffect(() => {
-    selectedAlertIdRef.current = selectedAlertId;
-    markerElementsRef.current.forEach((marker, alertId) => {
-      marker.setSelected(alertId === selectedAlertId);
-    });
-  }, [selectedAlertId]);
+    onReadyRef.current = onReady;
+  }, [onReady]);
 
-  // CONSTRAINT: `parcels`, `alerts`, `center`, and `zoom` are read once, at
-  // mount, by the effect below (empty dep array) — they are a snapshot, not
-  // a live binding. A parent that re-renders this component with new
-  // parcels/alerts/center/zoom after the initial mount will NOT see the map
-  // update; the Google Data layer and AdvancedMarkerElements created here
-  // are never rebuilt. This is currently safe only because MapView mounts
-  // this component once data is already loaded and fully remounts it (fresh
-  // key) on retry — so in practice the values never change under a mounted
-  // instance today. `selectedAlertId`, `onAlertClick`, and `onProviderError`
-  // are the only props that ARE live, via the ref pattern below.
-  //
-  // Before adding any feature that streams updated parcels/alerts/center/
-  // zoom into an already-mounted map, this effect needs real sync, not a
-  // fresh mount: parcels via clearing + re-adding map.data (or diffing
-  // features), alerts via reconciling AdvancedMarkerElements (add new,
-  // remove stale, matching MapLibreMap's marker Map<id, element> pattern),
-  // and center/zoom via explicit map.panTo/map.setZoom calls in their own
-  // effect. Do not silently assume props are live without doing this.
+  // Both the loader's eventual initialization and later updates use the
+  // latest committed props. Updating data must not reset the user's camera.
+  useEffect(() => {
+    dataRef.current = { parcels, alerts, selectedAlertId };
+    clustersRef.current?.update(parcels, alerts, selectedAlertId);
+  }, [parcels, alerts, selectedAlertId]);
+
+  useEffect(() => {
+    if (mapRef.current) replaceParcelData(mapRef.current, parcels);
+  }, [parcels]);
+
+  const handleLocationSelect = useCallback((location: { lat: number; lng: number }) => {
+    mapRef.current?.panTo(location);
+    mapRef.current?.setZoom(15);
+  }, []);
+
   useEffect(() => {
     h3CellsRef.current = h3Cells;
     const layer = h3LayerRef.current;
@@ -114,8 +128,7 @@ export default function GoogleMap({
 
   useEffect(() => {
     let cancelled = false;
-    const markers: google.maps.marker.AdvancedMarkerElement[] = [];
-    const markerElements = markerElementsRef.current;
+
 
     // An invalid key, referrer restriction, or disabled billing all resolve
     // importLibrary() successfully — the catch block below never fires.
@@ -150,18 +163,7 @@ export default function GoogleMap({
         });
         mapRef.current = map;
 
-        map.data.addGeoJson({
-          type: "FeatureCollection",
-          features: parcels.map((parcel) => ({
-            type: "Feature",
-            geometry: parcel.geometry,
-            properties: {
-              id: parcel.id,
-              boundary_grade: parcel.boundary_grade,
-              land_category: parcel.land_category,
-            },
-          })),
-        });
+        replaceParcelData(map, dataRef.current.parcels);
         map.data.setStyle((feature) => {
           const category = feature.getProperty("land_category");
           const color =
@@ -187,33 +189,16 @@ export default function GoogleMap({
         if (h3CellsRef.current) h3Layer.addGeoJson(h3CellsRef.current);
         h3Layer.setMap(h3VisibleRef.current ? map : null);
 
-        for (const alert of alerts) {
-          const parcel = parcels.find((candidate) => candidate.id === alert.parcel_id);
-          if (!parcel) continue;
+        const clusters = createGoogleAlertClusters({
+          map,
+          AdvancedMarkerElement,
+          onAlertClick: (alertId) => onAlertClickRef.current?.(alertId),
+        });
+        clustersRef.current = clusters;
+        const latest = dataRef.current;
+        clusters.update(latest.parcels, latest.alerts, latest.selectedAlertId);
 
-          const { wrapper, setSelected } = createAlertMarkerElement({
-            alert,
-            parcelLabel: parcel.survey_no,
-            selected: alert.id === selectedAlertIdRef.current,
-            onClick: (alertId) => onAlertClickRef.current?.(alertId),
-          });
-          markerElements.set(alert.id, { setSelected });
-
-          // AdvancedMarkerElement wraps whatever `content` we give it in its
-          // own positioning container, so it never overwrites styles on our
-          // wrapper directly -- but we still hand it the wrapper (not the
-          // button) to stay consistent with MapLibreMap and keep the
-          // button's own aria-label/selection styling fully self-contained.
-          const marker = new AdvancedMarkerElement({
-            map,
-            position: { lat: parcel.centroid[1], lng: parcel.centroid[0] },
-            content: wrapper,
-            title: `Alert ${alert.id}`,
-          });
-          markers.push(marker);
-        }
-
-        const vertices = collectParcelVertices(parcels);
+        const vertices = collectParcelVertices(latest.parcels);
         if (vertices.length > 0) {
           const bounds = new google.maps.LatLngBounds();
           for (const [lng, lat] of vertices) {
@@ -229,7 +214,7 @@ export default function GoogleMap({
         // When there are no parcels, the initial `center`/`zoom` props above
         // remain in effect as the fallback camera.
 
-        onReady?.({
+        onReadyRef.current?.({
           panTo: (lngLat) => {
             map.panTo({ lat: lngLat[1], lng: lngLat[0] });
             map.setZoom(15);
@@ -246,44 +231,42 @@ export default function GoogleMap({
     return () => {
       cancelled = true;
       unsubscribeAuthFailure();
-      markers.forEach((marker) => {
-        marker.map = null;
-      });
-      markerElements.clear();
+      clustersRef.current?.destroy();
+      clustersRef.current = null;
       h3LayerRef.current?.setMap(null);
       h3LayerRef.current = null;
       mapRef.current = null;
     };
-    // Intentionally mount-only — see the CONSTRAINT comment above this
-    // effect. The provider owns one immutable map instance; selection and
-    // callbacks are kept current through refs above. `parcels`, `alerts`,
-    // `center`, and `zoom` are intentionally captured only at mount time
-    // (this effect runs once, deliberately omitting them from its dependency
-    // array) -- callers that need to change any of them must remount this
-    // component (e.g. by changing its `key`) rather than expect a live
-    // update. H3 data and visibility are the exception and stay live through
-    // the refs/effects above.
+    // The SDK instance and initial camera belong to this mount. Live parcel,
+    // alert, selection and callback changes are synchronized above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
-    <div className="relative h-full w-full">
-      <div
-        ref={containerRef}
-        data-testid="google-map-container"
-        aria-label="Google map with monitored parcel boundaries"
-        className="h-full w-full"
-      />
-      {loading ? (
-        <div
-          role="status"
-          className="pointer-events-none absolute inset-0 flex items-center justify-center bg-gray-100 text-sm text-gray-600"
-        >
-          Loading Google map...
+    <div className="flex h-full min-h-0 w-full flex-col">
+      {!loading ? (
+        <div data-testid="google-search-row" className="shrink-0 border-b bg-white px-2 py-1">
+          <GoogleLocationSearch apiKey={apiKey} onLocationSelect={handleLocationSelect} />
         </div>
       ) : null}
-      <div className="absolute left-[max(0.75rem,env(safe-area-inset-left,0px))] top-[max(0.75rem,env(safe-area-inset-top,0px))] z-10">
-        <BasemapToggle mode={mode} onChange={handleBasemapChange} />
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={containerRef}
+          data-testid="google-map-container"
+          aria-label="Google map with monitored parcel boundaries"
+          className="h-full w-full"
+        />
+        {loading ? (
+          <div
+            role="status"
+            className="pointer-events-none absolute inset-0 flex items-center justify-center bg-gray-100 text-sm text-gray-600"
+          >
+            Loading Google map...
+          </div>
+        ) : null}
+        <div className="absolute left-[max(0.75rem,env(safe-area-inset-left,0px))] top-[max(0.75rem,env(safe-area-inset-top,0px))] z-10">
+          <BasemapToggle mode={mode} onChange={handleBasemapChange} />
+        </div>
       </div>
     </div>
   );

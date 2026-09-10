@@ -38,6 +38,28 @@ export function onGoogleMapsAuthFailure(listener: () => void): () => void {
 }
 
 export async function loadGoogleMapLibraries(apiKey: string) {
+  configureGoogleMaps(apiKey);
+
+  const [mapsLibrary, markerLibrary] = await Promise.all([
+    importLibrary("maps"),
+    importLibrary("marker"),
+  ]);
+
+  return {
+    Map: mapsLibrary.Map,
+    AdvancedMarkerElement: markerLibrary.AdvancedMarkerElement,
+  };
+}
+
+export async function loadGooglePlacesLibrary(apiKey: string) {
+  configureGoogleMaps(apiKey);
+  const placesLibrary = await importLibrary("places");
+  return {
+    PlaceAutocompleteElement: placesLibrary.PlaceAutocompleteElement,
+  };
+}
+
+function configureGoogleMaps(apiKey: string) {
   installAuthFailureHook();
 
   if (!configuredKey) {
@@ -50,14 +72,4 @@ export async function loadGoogleMapLibraries(apiKey: string) {
   } else if (configuredKey !== apiKey) {
     throw new Error("Google Maps was initialized with a different API key.");
   }
-
-  const [mapsLibrary, markerLibrary] = await Promise.all([
-    importLibrary("maps"),
-    importLibrary("marker"),
-  ]);
-
-  return {
-    Map: mapsLibrary.Map,
-    AdvancedMarkerElement: markerLibrary.AdvancedMarkerElement,
-  };
 }

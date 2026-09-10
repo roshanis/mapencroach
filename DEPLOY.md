@@ -80,7 +80,7 @@ In the Vercel project → **Settings → Environment Variables**:
 | `NEXT_PUBLIC_API_URL` | `/api/backend` — a relative path, not a secret. The browser calls this same-origin proxy route instead of the Render URL directly. |
 | `MAPENCROACH_BACKEND_URL` | `https://<your-api>.onrender.com` — server-only; used by the `/api/backend` proxy and by server components to reach the backend directly. |
 | `MAPENCROACH_API_TOKEN` | the token from step 3 — server-only; the proxy injects it as `Authorization: Bearer <token>` when the browser has no persona cookie. Never prefixed with `NEXT_PUBLIC_`, so it is never bundled into client JS. |
-| `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | restricted Maps JavaScript API browser key |
+| `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | restricted browser key for Maps JavaScript API and, for location search, Places API (New) |
 | `NEXT_PUBLIC_GOOGLE_MAP_ID` | JavaScript vector map ID |
 
 Then **Deployments → Redeploy** (env vars are baked in at build time).
@@ -96,8 +96,41 @@ signed in it authenticates with the sign-in cookie, which the proxy forwards
 upstream on its behalf.
 
 Restrict the Google browser key to the production Vercel hostname (and only
-the preview/local hostnames that need it) plus the Maps JavaScript API. The map
-ID is public configuration; the API key must never be committed to this repo.
+the preview/local hostnames that need it) plus the Maps JavaScript API. To use
+**Search location**, also enable Places API (New) in the same Cloud project and
+allow it in the key's API restrictions. The map ID is public configuration;
+the API key must never be committed to this repo.
+
+### Location search and alert clusters
+
+Location search loads the Places library only when the officer opens **Search
+location**. It uses Google's current autocomplete widget and requests only the
+selected place's location. Search text goes to Google and usage can incur
+Places charges; review the project's billing and quotas before enabling it.
+The widget retains Google's attribution. Place results are used in memory to
+move the Google map, without persisting them, selecting a parcel, or changing
+case records. Search does not establish cadastral identity or expand the set
+of authorized parcels loaded by the console.
+
+A search failure shows a local retry action while the map remains usable.
+Missing Maps configuration or a Maps authentication failure still switches to
+MapLibre; Google location search is not exposed on that fallback provider.
+No application settings or credentials are provisioned automatically.
+
+Nearby Google alert markers are grouped with total and tier counts. Click or
+keyboard-activate a cluster to zoom in. The selected alert remains separately
+visible; the work queue also remains available to select overlapping alerts.
+Clustering covers only loaded, mappable alerts and does not imply complete
+jurisdiction coverage. MapLibre retains its existing individual markers.
+
+References: [Place Autocomplete](https://developers.google.com/maps/documentation/javascript/place-autocomplete-new),
+[marker clustering](https://developers.google.com/maps/documentation/javascript/marker-clustering).
+
+Offline verification of these controls uses a browser SDK stub with all remote
+requests blocked. That establishes application behavior, not live Google
+billing, credentials, predictions, tile rendering, or SDK behavior. Before a
+live rollout, verify search/selection, clustering, keyboard operation and
+provider recovery with the project's restricted browser key.
 
 ## 5. Verify
 
