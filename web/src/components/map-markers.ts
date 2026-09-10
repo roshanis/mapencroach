@@ -79,7 +79,8 @@ export function createAlertMarkerElement({
   button.style.borderRadius = "50%";
   button.style.border = "2px solid white";
   button.style.backgroundColor = TIER_COLORS[alert.tier];
-  button.style.color = "#ffffff";
+  // The lighter amber/green fills need dark numerals for small-text contrast.
+  button.style.color = alert.tier === "amber" || alert.tier === "green" ? "#000000" : "#ffffff";
   button.style.fontSize = "11px";
   button.style.fontWeight = "700";
   button.style.lineHeight = "1";

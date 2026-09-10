@@ -11,6 +11,24 @@ const loaderMocks = vi.hoisted(() => ({
 
 vi.mock("@googlemaps/js-api-loader", () => loaderMocks);
 
+// Google SDK rendering is covered by the offline browser harness; controller
+// behavior has its own tests. This mock only provides the clusterer lifecycle.
+vi.mock("@googlemaps/markerclusterer", () => ({
+  MarkerClusterer: class {
+    addMarkers = vi.fn();
+    removeMarkers = vi.fn();
+    clearMarkers = vi.fn();
+    render = vi.fn();
+    setMap = vi.fn();
+  },
+}));
+
+vi.mock("./GoogleLocationSearch", () => ({
+  default: ({ onLocationSelect }: { onLocationSelect: (location: {lat:number;lng:number}) => void }) => (
+    <button onClick={() => onLocationSelect({ lat: 28.61, lng: 77.21 })}>Select test location</button>
+  ),
+}));
+
 class FakeLatLngBounds {
   extend = vi.fn().mockReturnThis();
 }
@@ -28,6 +46,72 @@ afterEach(() => {
 });
 
 describe("GoogleMap", () => {
+  it("refreshes parcel geometry and alerts received during and after loading without resetting the camera", async () => {
+    const mapConstructor = vi.fn();
+    const fitBounds = vi.fn();
+    const addGeoJson = vi.fn();
+    const remove = vi.fn();
+    const markerConstructor = vi.fn();
+    const priorFeature = {};
+    class FakeMap {
+      data = { addGeoJson, setStyle: vi.fn(), forEach: (cb: (feature: unknown) => void) => cb(priorFeature), remove };
+      fitBounds = fitBounds;
+      setMapTypeId = vi.fn();
+      constructor() { mapConstructor(); }
+    }
+    class FakeMarker {
+      map: unknown;
+      constructor(options: google.maps.marker.AdvancedMarkerElementOptions) {
+        this.map = options.map;
+        markerConstructor(options);
+      }
+    }
+    let resolveMaps!: (value: {Map: typeof FakeMap}) => void;
+    const pending = new Promise<{Map: typeof FakeMap}>(resolve => { resolveMaps = resolve; });
+    loaderMocks.importLibrary.mockImplementation((library: string) => library === "maps"
+      ? pending : Promise.resolve({ AdvancedMarkerElement: FakeMarker }));
+    vi.stubGlobal("google", { maps: { Data: FakeData, LatLngBounds: FakeLatLngBounds } });
+    const props = {apiKey:"restricted-browser-key",mapId:"map-id",onProviderError:vi.fn()};
+    const {rerender} = render(<GoogleMap {...props} parcels={[]} alerts={[]} />);
+    rerender(<GoogleMap {...props} parcels={FIXTURE_PARCELS.slice(0,1)} alerts={FIXTURE_ALERTS.slice(0,1)} />);
+    await act(async () => { resolveMaps({Map: FakeMap}); });
+    expect(addGeoJson).toHaveBeenLastCalledWith(expect.objectContaining({
+      features: [expect.objectContaining({properties: expect.objectContaining({id: FIXTURE_PARCELS[0].id})})],
+    }));
+    expect(markerConstructor).toHaveBeenCalled();
+    rerender(<GoogleMap {...props} parcels={[]} alerts={[]} />);
+    expect(addGeoJson).toHaveBeenLastCalledWith({type:"FeatureCollection",features:[]});
+    expect(remove).toHaveBeenCalledWith(priorFeature);
+    expect(mapConstructor).toHaveBeenCalledOnce();
+    expect(fitBounds).toHaveBeenCalledOnce();
+    expect(props.onProviderError).not.toHaveBeenCalled();
+  });
+
+  it("location selection only moves the camera and leaves the selected alert intact", async () => {
+    const panTo = vi.fn();
+    const setZoom = vi.fn();
+    class FakeMap {
+      data = {addGeoJson:vi.fn(),setStyle:vi.fn(),forEach:vi.fn(),remove:vi.fn()};
+      fitBounds = vi.fn();
+      panTo = panTo;
+      setZoom = setZoom;
+    }
+    class FakeMarker { constructor(public options: google.maps.marker.AdvancedMarkerElementOptions) {} }
+    loaderMocks.importLibrary.mockImplementation(async (library: string) => library === "maps"
+      ? {Map: FakeMap} : {AdvancedMarkerElement: FakeMarker});
+    vi.stubGlobal("google", {maps:{Data:FakeData,LatLngBounds:FakeLatLngBounds}});
+    const onAlertClick = vi.fn();
+    const onReady = vi.fn();
+    render(<GoogleMap apiKey="restricted-browser-key" mapId="map-id" parcels={FIXTURE_PARCELS}
+      alerts={FIXTURE_ALERTS} selectedAlertId={FIXTURE_ALERTS[0].id}
+      onReady={onReady} onAlertClick={onAlertClick} onProviderError={vi.fn()} />);
+    await waitFor(() => expect(onReady).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole("button", {name:"Select test location"}));
+    expect(panTo).toHaveBeenCalledWith({lat:28.61,lng:77.21});
+    expect(setZoom).toHaveBeenCalledWith(15);
+    expect(onAlertClick).not.toHaveBeenCalled();
+  });
+
   it("renders the operational GeoJSON and preserves map interactions", async () => {
     const addGeoJson = vi.fn();
     const setStyle = vi.fn();
@@ -53,7 +137,7 @@ describe("GoogleMap", () => {
     });
 
     class FakeMap {
-      data = { addGeoJson, setStyle };
+      data = { addGeoJson, setStyle, forEach: vi.fn(), remove: vi.fn() };
       setMapTypeId = mapType;
       panTo = panTo;
       setZoom = setZoom;
@@ -201,7 +285,7 @@ describe("GoogleMap", () => {
     });
 
     class FakeMap {
-      data = { addGeoJson: vi.fn(), setStyle: vi.fn() };
+      data = { addGeoJson: vi.fn(), setStyle: vi.fn(), forEach: vi.fn(), remove: vi.fn() };
       setMapTypeId = vi.fn();
       panTo = vi.fn();
       setZoom = vi.fn();
@@ -364,7 +448,7 @@ describe("GoogleMap", () => {
     });
 
     class FakeMap {
-      data = { addGeoJson: parcelAddGeoJson, setStyle: parcelSetStyle };
+      data = { addGeoJson: parcelAddGeoJson, setStyle: parcelSetStyle, forEach: vi.fn(), remove: vi.fn() };
       setMapTypeId = vi.fn();
       panTo = vi.fn();
       setZoom = vi.fn();
@@ -465,7 +549,7 @@ describe("GoogleMap", () => {
     // promise. Without wiring that signal up, onProviderError never fires
     // and the map stays gray forever.
     class FakeMap {
-      data = { addGeoJson: vi.fn(), setStyle: vi.fn() };
+      data = { addGeoJson: vi.fn(), setStyle: vi.fn(), forEach: vi.fn(), remove: vi.fn() };
       setMapTypeId = vi.fn();
     }
     loaderMocks.importLibrary.mockImplementation(async (library: string) => {
@@ -506,7 +590,7 @@ describe("GoogleMap", () => {
 
   it("stops calling onProviderError for gm_authFailure after unmount", async () => {
     class FakeMap {
-      data = { addGeoJson: vi.fn(), setStyle: vi.fn() };
+      data = { addGeoJson: vi.fn(), setStyle: vi.fn(), forEach: vi.fn(), remove: vi.fn() };
       setMapTypeId = vi.fn();
     }
     loaderMocks.importLibrary.mockImplementation(async (library: string) => {

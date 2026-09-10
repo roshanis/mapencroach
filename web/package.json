@@ -9,10 +9,12 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:browser": "node scripts/demo-smoke.mjs",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:maps-browser": "node scripts/maps-smoke.mjs"
   },
   "dependencies": {
     "@googlemaps/js-api-loader": "^2.1.1",
+    "@googlemaps/markerclusterer": "2.6.2",
     "h3-js": "^4.5.0",
     "maplibre-gl": "^6.4.1",
     "next": "^15.5.24",

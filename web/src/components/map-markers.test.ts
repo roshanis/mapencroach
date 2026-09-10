@@ -4,6 +4,21 @@ import { createAlertMarkerElement } from "./map-markers";
 describe("createAlertMarkerElement", () => {
   const baseAlert = { id: "ALT-5001", tier: "red" as const, severity_score: 91.6 };
 
+  it.each(["red", "amber", "green", "legacy"] as const)("keeps %s marker numbers at readable contrast", (tier) => {
+    const {button} = createAlertMarkerElement({alert: {...baseAlert, tier}, parcelLabel: "SN-101"});
+    function luminance(rgb: string) {
+      const channels = rgb.match(/\d+/g)!.map(Number).map(value => {
+        const channel = value / 255;
+        return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+    }
+    const foreground = luminance(button.style.color);
+    const background = luminance(button.style.backgroundColor);
+    const ratio = (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+    expect(ratio).toBeGreaterThanOrEqual(4.5);
+  });
+
   it("returns a plain wrapper div containing the marker button", () => {
     const { wrapper, button } = createAlertMarkerElement({
       alert: baseAlert,
