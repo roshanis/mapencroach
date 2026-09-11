@@ -1,8 +1,12 @@
-"""The seeded tree holds three unrelated authorities.
+"""The seeded tree holds four unrelated authorities.
 
-HRDA (Uttarakhand), Ambalapuzha taluk in Alappuzha (Kerala) and Pune district
-(Maharashtra) span three states and share no chain of command. They are
-siblings under a deployment root rather than nested inside one another.
+HRDA (Uttarakhand), Ambalapuzha taluk in Alappuzha (Kerala), Pune district
+(Maharashtra) and Rasuwa district (Bagmati, Nepal) span three Indian states
+and a second country, and share no chain of command. They are siblings under
+a deployment root rather than nested inside one another.
+
+Rasuwa is the one that carries land but no alerts or cases; see
+TestRasuwaSeed for why that absence is deliberate and enforced.
 
 Scoping is authorization here, so the interesting cases are all about the
 boundary *between* authorities -- which is a boundary that did not exist
