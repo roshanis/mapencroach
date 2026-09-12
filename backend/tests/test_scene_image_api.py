@@ -18,7 +18,6 @@ bytes never touch disk either.
 """
 
 import threading
-import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -117,19 +116,36 @@ class FakeProvider:
         )
 
 
-class SlowBlobStore:
-    """Wraps a `BlobStore`, sleeping inside `get` -- used to widen the
-    window for the "lock not held while streaming" concurrency test."""
+class GatedBlobStore:
+    """Wraps a `BlobStore`, parking inside `get` until released.
 
-    def __init__(self, inner: BlobStore, delay: float) -> None:
+    Replaces an earlier sleep-based version. That one widened the window
+    with `time.sleep(0.4)` and the test asserted an unrelated request
+    finished in under 0.4s -- a wall-clock race the machine could lose
+    under load, which made a *concurrency* test fail intermittently for
+    reasons unrelated to concurrency. An intermittently red test on the
+    lock discipline is worse than no test: it trains everyone to re-run
+    instead of investigate.
+
+    Gating on events makes the ordering explicit instead of probable. The
+    read blocks until the test releases it, so "did the unrelated request
+    get through while the blob read was still in flight?" is answered by
+    whether it completed at all, not by how fast it was.
+    """
+
+    def __init__(self, inner: BlobStore) -> None:
         self._inner = inner
-        self._delay = delay
+        self.entered = threading.Event()
+        self.release = threading.Event()
 
     def put(self, data: bytes) -> str:
         return self._inner.put(data)
 
     def get(self, sha256: str) -> bytes:
-        time.sleep(self._delay)
+        self.entered.set()
+        # Bounded so a regression fails the assertions below rather than
+        # hanging the suite forever.
+        self.release.wait(timeout=30)
         return self._inner.get(sha256)
 
     def has(self, sha256: str) -> bool:
@@ -483,9 +499,16 @@ class TestWatchlistSceneImage:
     def test_lock_not_held_while_streaming_bytes(
         self, store: Store, app, state_officer_token: str
     ):
-        """A slow blob read must not stall an unrelated store.lock-using
-        request -- the whole point of releasing the lock before touching
-        the blob store."""
+        """A blob read in flight must not stall an unrelated request that
+        needs `store.lock` -- the whole point of releasing the lock before
+        touching the blob store.
+
+        Proved by ordering, not by a stopwatch: the read is parked inside
+        the blob store and is NOT released until the unrelated request has
+        already completed. If the handler held the lock across the read,
+        the unrelated request could not finish, and its bounded join below
+        fails. No wall-clock threshold, so load cannot turn this red.
+        """
         alert_id, _ = first_red_alert(store)
         other_alert_id = next(aid for aid in all_red_alerts(store) if aid != alert_id)
 
@@ -497,37 +520,48 @@ class TestWatchlistSceneImage:
             f"/watchlist/{alert_id}/captures", headers=auth_headers(state_officer_token)
         )
 
-        # Now make every subsequent blob read slow.
-        store.scene_registry.blob_store = SlowBlobStore(
-            store.scene_registry.blob_store, delay=0.4
-        )
+        gate = GatedBlobStore(store.scene_registry.blob_store)
+        store.scene_registry.blob_store = gate
 
         image_status: dict[str, int] = {}
+        other_status: dict[str, int] = {}
 
-        def slow_image_request() -> None:
-            local_client = TestClient(app)
-            resp = local_client.get(
+        def parked_image_request() -> None:
+            resp = TestClient(app).get(
                 f"/watchlist/{alert_id}/weeks/2026-W32/image",
                 headers=auth_headers(state_officer_token),
             )
             image_status["code"] = resp.status_code
 
-        thread = threading.Thread(target=slow_image_request)
-        start = time.monotonic()
-        thread.start()
-        time.sleep(0.1)  # let the slow request get past its audit write
+        def unrelated_request() -> None:
+            resp = TestClient(app).post(
+                f"/alerts/{other_alert_id}/watch",
+                headers=auth_headers(state_officer_token),
+            )
+            other_status["code"] = resp.status_code
 
-        other_client = TestClient(app)
-        other_resp = other_client.post(
-            f"/alerts/{other_alert_id}/watch", headers=auth_headers(state_officer_token)
-        )
-        unblocked_elapsed = time.monotonic() - start
+        image_thread = threading.Thread(target=parked_image_request)
+        image_thread.start()
+        try:
+            # The read is now inside the blob store and stays there.
+            assert gate.entered.wait(timeout=10), "blob read never started"
 
-        thread.join(timeout=5)
-        assert image_status["code"] == 200
-        assert other_resp.status_code == 201
-        # The unrelated request must not have waited out the slow read.
-        assert unblocked_elapsed < 0.4
+            other_thread = threading.Thread(target=unrelated_request)
+            other_thread.start()
+            # Runs to completion while the blob read is still parked. In a
+            # thread with a bounded join so a regression fails here instead
+            # of hanging the suite.
+            other_thread.join(timeout=10)
+            assert not other_thread.is_alive(), (
+                "an unrelated store.lock request blocked behind an in-flight "
+                "blob read: the lock is being held across blob I/O"
+            )
+            assert other_status.get("code") == 201
+        finally:
+            gate.release.set()
+            image_thread.join(timeout=10)
+
+        assert image_status.get("code") == 200
 
 
 # ---------------------------------------------------------------------
