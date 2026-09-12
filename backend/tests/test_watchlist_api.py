@@ -754,3 +754,128 @@ class TestRunCaptures:
         entry = store.watchlist[alert_id]
         assert len(entry.captures) == 1
         assert entry.in_flight == set()
+
+
+class TestParcelOriginatedWatch:
+    """Land can be watched without first being accused of encroachment.
+
+    `POST /alerts/{id}/watch` requires a RED alert, so the only way onto
+    the watchlist used to be asserting a probable unauthorized change.
+    That is the wrong instrument for watching land for any other reason,
+    and inventing an alert to unlock imagery would put a false claim in
+    the record to obtain a feature.
+    """
+
+    def test_a_parcel_can_be_watched_with_no_alert_at_all(
+        self, client: TestClient, store: Store, state_officer_token: str
+    ):
+        parcel_id = "parcel-2"  # HRDA land with no alert on it
+        assert not any(a["parcel_id"] == parcel_id for a in store.alerts.values())
+
+        resp = client.post(
+            f"/parcels/{parcel_id}/watch", headers=auth_headers(state_officer_token)
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["parcel_id"] == parcel_id
+        assert body["origin"] == "parcel"
+        assert body["alert_id"] is None
+        assert body["cadence"] == "weekly"
+
+    def test_watching_creates_no_alert_and_no_case(
+        self, client: TestClient, store: Store, state_officer_token: str
+    ):
+        """Watching is an observation. It must not manufacture a finding."""
+        before_alerts = dict(store.alerts)
+        before_cases = dict(store.cases)
+        client.post("/parcels/parcel-4/watch", headers=auth_headers(state_officer_token))
+        assert store.alerts == before_alerts
+        assert store.cases == before_cases
+
+    def test_it_appears_on_the_watchlist_beside_alert_watches(
+        self, client: TestClient, store: Store, state_officer_token: str
+    ):
+        client.post("/parcels/parcel-6/watch", headers=auth_headers(state_officer_token))
+        rows = client.get("/watchlist", headers=auth_headers(state_officer_token)).json()
+        mine = [r for r in rows if r["parcel_id"] == "parcel-6"]
+        assert len(mine) == 1
+        assert mine[0]["origin"] == "parcel"
+
+    def test_captures_run_for_it_like_any_other_watch(
+        self, client: TestClient, store: Store, state_officer_token: str
+    ):
+        store.imagery_provider = FakeProvider()
+        client.post("/parcels/parcel-8/watch", headers=auth_headers(state_officer_token))
+        resp = client.post(
+            "/watchlist/parcel:parcel-8/captures",
+            headers=auth_headers(state_officer_token),
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json(), "a due week should have been attempted"
+
+    def test_out_of_scope_is_404_not_403(self, client: TestClient):
+        """Same rule as everywhere else: never confirm existence."""
+        kerala = token_for("kl", Role.CASE_OFFICER, "taluk-ambalapuzha")
+        resp = client.post("/parcels/parcel-1/watch", headers=auth_headers(kerala))
+        assert resp.status_code == 404
+
+    def test_double_watch_is_409(self, client: TestClient, state_officer_token: str):
+        h = auth_headers(state_officer_token)
+        assert client.post("/parcels/parcel-10/watch", headers=h).status_code == 201
+        assert client.post("/parcels/parcel-10/watch", headers=h).status_code == 409
+
+    def test_unwatch_then_rewatch_resumes_the_same_timeline(
+        self, client: TestClient, store: Store, state_officer_token: str
+    ):
+        h = auth_headers(state_officer_token)
+        first = client.post("/parcels/parcel-11/watch", headers=h).json()
+        assert client.delete("/parcels/parcel-11/watch", headers=h).status_code == 204
+        again = client.post("/parcels/parcel-11/watch", headers=h).json()
+        assert again["started_on"] == first["started_on"], (
+            "rewatching must resume the original timeline, not restart it"
+        )
+
+    def test_an_unknown_parcel_is_404(self, client: TestClient, state_officer_token: str):
+        resp = client.post(
+            "/parcels/parcel-does-not-exist/watch",
+            headers=auth_headers(state_officer_token),
+        )
+        assert resp.status_code == 404
+
+    def test_alert_watches_still_report_their_alert(
+        self, client: TestClient, store: Store, state_officer_token: str
+    ):
+        """The new fields must not change what an alert-originated watch says."""
+        alert_id, _ = first_red_alert(store)
+        body = client.post(
+            f"/alerts/{alert_id}/watch", headers=auth_headers(state_officer_token)
+        ).json()
+        assert body["origin"] == "alert"
+        assert body["alert_id"] == alert_id
+        assert body["watch_id"] == alert_id
+
+
+class TestRasuwaCanBeWatchedWithoutAnAccusation:
+    """The case that motivated decoupling watch from alerts.
+
+    Rasuwa carries land but no alerts, deliberately: it is a disaster zone,
+    and every alert tier asserts probable unauthorized change. Before this,
+    monitoring that valley required inventing an encroachment alert over
+    it. Now it does not.
+    """
+
+    def test_a_rasuwa_officer_can_watch_rasuwa_land(
+        self, client: TestClient, store: Store
+    ):
+        officer = token_for("rasuwa-officer", Role.CASE_OFFICER, "dist-rasuwa")
+        assert not any(
+            store.parcels[a["parcel_id"]]["jurisdiction_id"].startswith("gaun-")
+            for a in store.alerts.values()
+        ), "Rasuwa must still carry no alerts"
+
+        resp = client.post("/parcels/parcel-43/watch", headers=auth_headers(officer))
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["origin"] == "parcel" and body["alert_id"] is None
+        # Still no alert invented to make it possible.
+        assert not any(a["parcel_id"] == "parcel-43" for a in store.alerts.values())

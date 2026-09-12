@@ -126,10 +126,20 @@ alert over that ground would assert an encroachment that did not happen — and
 would be wrong on the facts besides, since change detection there fires on flood
 damage. Do not add alerts to make the demo symmetric.
 
-A related limitation, worth knowing before pointing this at any monitoring use
-case: the watchlist is reachable only through a RED encroachment alert
-(`POST /alerts/{id}/watch`). The platform currently cannot put land under weekly
-imagery watch without first accusing it of encroachment.
+Rasuwa is also why land can now be watched directly:
+
+```
+POST /parcels/{id}/watch     start a weekly imagery watch on the land itself
+DELETE /parcels/{id}/watch   stop it (history is retained)
+```
+
+The watchlist used to be reachable only through a RED encroachment alert, so
+monitoring any land meant first asserting a probable unauthorized change on it
+— the wrong instrument for a disaster zone, a parcel under survey, or a
+court-monitored boundary, and a false claim entered purely to unlock a feature.
+A parcel-originated watch reports `origin: "parcel"` with a null `alert_id`,
+creates no alert and no case, and is otherwise identical: same weekly cadence,
+same capture history, same 404-not-403 scoping.
 
 The console's built-in fixture mode (no backend) is a separate illustrative
 dataset with `PCL-…` parcel ids and mirrors none of this seed, the Kerala,
@@ -245,6 +255,11 @@ uncaptured weeks show as paused. Scheduling still requires the runner below.
 The demo imagery provider produces valid PNG illustrations visibly marked DEMO,
 not satellite observations. Previously stored invalid demo images are not rewritten;
 the UI shows a recoverable load error for them.
+
+A watch is addressed by its own `watch_id`: the alert id for an
+alert-originated watch (unchanged), `parcel:<parcel_id>` for one started on the
+parcel. `POST /alerts/{id}/watch` still requires RED — detections and
+observations stay distinguishable.
 
 Each week is an explicit row: captured (sha256-anchored on ingest, via the same
 registry that backs court exhibits) or empty *with the reason it is empty* —

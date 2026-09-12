@@ -1005,3 +1005,55 @@ def test_legacy_naive_evidence_timestamp_is_rejected(tmp_path, section, field):
     path.write_text(json.dumps(payload))
     with pytest.raises(StateCorruptionError):
         StatePersister(path).load()
+
+
+class TestParcelOriginatedWatchSurvivesRestart:
+    """A parcel watch has no alert id.
+
+    The loader used to key the rebuilt watchlist by `alert_id`, so every
+    parcel-originated entry landed under the single key `None` and was
+    gone after a restart -- while the API had reported 201 and the whole
+    test suite stayed green. Durability of the imagery timeline is the
+    entire point of this module, so it is asserted here directly.
+    """
+
+    def test_it_round_trips_under_its_own_id(self, tmp_path):
+        store = Store.seed_demo()
+        persister = StatePersister(tmp_path / "state.json")
+        hydrate_store(store, persister)
+        store.watchlist["parcel:parcel-43"] = WatchEntryRecord(
+            alert_id=None,
+            parcel_id="parcel-43",
+            started_on=date(2026, 3, 2),
+            watched_by="rasuwa-officer",
+            watch_id="parcel:parcel-43",
+        )
+        store.persist_now()
+
+        reloaded = Store.seed_demo()
+        hydrate_store(reloaded, StatePersister(tmp_path / "state.json"))
+        entry = reloaded.watchlist.get("parcel:parcel-43")
+        assert entry is not None, "parcel watch vanished across restart"
+        assert entry.alert_id is None
+        assert entry.origin == "parcel"
+        assert entry.parcel_id == "parcel-43"
+        assert entry.started_on == date(2026, 3, 2)
+        assert None not in reloaded.watchlist
+
+    def test_alert_watches_keep_their_original_key(self, tmp_path):
+        store = Store.seed_demo()
+        persister = StatePersister(tmp_path / "state.json")
+        hydrate_store(store, persister)
+        store.watchlist["alert-1"] = WatchEntryRecord(
+            alert_id="alert-1",
+            parcel_id="parcel-1",
+            started_on=date(2026, 3, 2),
+            watched_by="officer",
+        )
+        store.persist_now()
+
+        reloaded = Store.seed_demo()
+        hydrate_store(reloaded, StatePersister(tmp_path / "state.json"))
+        entry = reloaded.watchlist.get("alert-1")
+        assert entry is not None and entry.watch_id == "alert-1"
+        assert entry.origin == "alert"

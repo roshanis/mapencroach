@@ -281,7 +281,7 @@ class TestRunAttemptsOnlyDueWeeks:
 
         summary = run(store, now=now, max_weeks=None, dry_run=False)
 
-        assert [e.alert_id for e in summary.entries] == ["alert-1", "alert-2"]
+        assert [e.watch_id for e in summary.entries] == ["alert-1", "alert-2"]
 
 
 # ---------------------------------------------------------------------
@@ -524,14 +524,14 @@ class TestRenderSummary:
     def test_skipped_entry_is_visible_in_output(self):
         summary = RunSummary(
             dry_run=False,
-            entries=[EntrySummary(alert_id="alert-1", skipped_reason="parcel not found")],
+            entries=[EntrySummary(watch_id="alert-1", skipped_reason="parcel not found")],
         )
         text = render_summary(summary)
         assert "SKIPPED" in text
         assert "parcel not found" in text
 
     def test_real_run_output_mentions_run_complete(self):
-        entry = EntrySummary(alert_id="alert-1", weeks_attempted=1, captured=1)
+        entry = EntrySummary(watch_id="alert-1", weeks_attempted=1, captured=1)
         summary = RunSummary(dry_run=False, entries=[entry])
         text = render_summary(summary)
         assert "run complete" in text
@@ -721,7 +721,7 @@ class TestRunHttpAggregatesAcrossEntries:
             summary = run_http(client, dry_run=False)
 
         # Sorted by alert_id, same determinism as direct mode's _iter_watchlist.
-        assert [e.alert_id for e in summary.entries] == ["alert-1", "alert-2"]
+        assert [e.watch_id for e in summary.entries] == ["alert-1", "alert-2"]
         assert summary.total_weeks_attempted == 3
         assert summary.total_captured == 2
         assert summary.total_gaps == 1
@@ -896,7 +896,7 @@ class TestRunHttpPerEntryFailureIsolation:
 
         # All three were attempted -- alert-2 failing didn't stop the loop.
         assert api.capture_calls == ["alert-1", "alert-2", "alert-3"]
-        by_id = {e.alert_id: e for e in summary.entries}
+        by_id = {e.watch_id: e for e in summary.entries}
         assert by_id["alert-1"].captured == 1
         assert by_id["alert-1"].skipped_reason is None
         assert by_id["alert-2"].skipped_reason is not None
@@ -924,7 +924,7 @@ class TestRunHttpPerEntryFailureIsolation:
         with api.client() as client:
             summary = run_http(client, dry_run=False)
 
-        by_id = {e.alert_id: e for e in summary.entries}
+        by_id = {e.watch_id: e for e in summary.entries}
         assert by_id["alert-1"].captured == 1
         assert by_id["alert-2"].skipped_reason is not None
         assert "connection refused" in by_id["alert-2"].skipped_reason

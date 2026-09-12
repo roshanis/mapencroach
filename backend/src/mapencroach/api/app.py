@@ -66,7 +66,13 @@ from mapencroach.api.auth import (
     require_roles,
     validate_secret_config,
 )
-from mapencroach.api.store import JURISDICTION_NAMES, CaseRecord, Store, WatchEntryRecord
+from mapencroach.api.store import (
+    JURISDICTION_NAMES,
+    CaseRecord,
+    Store,
+    WatchEntryRecord,
+    parcel_watch_id,
+)
 from mapencroach.domain.alerts import AlertTier, severity_score
 from mapencroach.domain.case_engine import (
     Case,
@@ -1386,6 +1392,94 @@ def create_app(
                 result = _watch_view(entry, store, started_on)
         store.persist_now()
         return result
+
+    @app.post("/parcels/{parcel_id}/watch", status_code=status.HTTP_201_CREATED)
+    def create_parcel_watch(
+        parcel_id: str,
+        store: StoreDep,
+        user: Annotated[User, Depends(require_roles(*_WATCH_ROLES))],
+    ) -> dict[str, Any]:
+        """Put a parcel under weekly imagery watch directly.
+
+        Until this existed, the only route onto the watchlist was
+        `POST /alerts/{id}/watch`, which requires a RED alert -- so land
+        could not be monitored without first asserting a probable
+        unauthorized change on it. That is the wrong instrument for
+        watching land for any other reason (a disaster-struck valley, a
+        parcel under survey, a court-monitored boundary), and asserting an
+        encroachment to obtain imagery would put a false claim in the
+        record purely to unlock a feature.
+
+        Watching is an observation, not an accusation: it creates no alert,
+        no case, and no finding. The resulting entry behaves exactly like an
+        alert-originated one -- same weekly cadence, same capture history,
+        same jurisdiction scoping (out of scope is 404, never 403) -- and
+        reports `origin: "parcel"` with a null `alert_id` so nothing
+        downstream can mistake it for a detection.
+        """
+        watch_id = parcel_watch_id(parcel_id)
+        scope = _user_scope(store, user)
+        with store.lock:
+            parcel = store.parcels.get(parcel_id)
+            if parcel is None or parcel["jurisdiction_id"] not in scope:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="parcel not found"
+                )
+
+            existing = store.watchlist.get(watch_id)
+            if existing is not None:
+                if existing.active:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="parcel is already watched",
+                    )
+                # Rewatch resumes the same timeline, including its original
+                # started_on and every prior capture -- same as an alert.
+                existing.active = True
+                existing.watched_by = user.sub
+                store.record_audit(
+                    actor=user.sub,
+                    action="watch.resume",
+                    object_type="watch",
+                    object_id=watch_id,
+                )
+                result = _watch_view(existing, store, store.clock().date())
+            else:
+                started_on = store.clock().date()
+                entry = WatchEntryRecord(
+                    alert_id=None,
+                    parcel_id=parcel_id,
+                    started_on=started_on,
+                    watched_by=user.sub,
+                    watch_id=watch_id,
+                )
+                store.watchlist[watch_id] = entry
+                store.record_audit(
+                    actor=user.sub,
+                    action="watch.create",
+                    object_type="watch",
+                    object_id=watch_id,
+                    extra={"origin": "parcel", "parcel_id": parcel_id},
+                )
+                result = _watch_view(entry, store, started_on)
+        store.persist_now()
+        return result
+
+    @app.delete("/parcels/{parcel_id}/watch", status_code=status.HTTP_204_NO_CONTENT)
+    def delete_parcel_watch(
+        parcel_id: str,
+        store: StoreDep,
+        user: Annotated[User, Depends(require_roles(*_WATCH_ROLES))],
+    ) -> Response:
+        watch_id = parcel_watch_id(parcel_id)
+        with store.lock:
+            entry = _resolve_watch_entry(store, user, watch_id)
+            entry.active = False
+            store.record_audit(
+                actor=user.sub, action="watch.delete", object_type="watch", object_id=watch_id
+            )
+        store.persist_now()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.delete("/alerts/{alert_id}/watch", status_code=status.HTTP_204_NO_CONTENT)
     def delete_watch(

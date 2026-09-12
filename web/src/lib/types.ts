@@ -344,7 +344,21 @@ export interface CaptureAttempt {
 
 export interface WatchEntry {
   active?: boolean;
-  alert_id: string;
+  /**
+   * The watch's own id, and what /watchlist/{id}/... routes take. Equals
+   * `alert_id` for an alert-originated watch; `parcel:<parcel_id>` for one
+   * started on the parcel itself. Optional so an older backend that sends
+   * only `alert_id` still type-checks.
+   */
+  watch_id?: string;
+  /** Where the watch came from. Absent on older backends (always "alert"). */
+  origin?: "alert" | "parcel";
+  /**
+   * Null when the watch was started on the parcel directly — there is no
+   * alert behind it, and the console must not link to one that never
+   * existed.
+   */
+  alert_id: string | null;
   parcel_id: string;
   started_on: string;
   cadence: "weekly";

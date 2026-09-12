@@ -140,7 +140,10 @@ class EntrySummary:
     """The outcome of one watch entry's due-week capture attempts (or, in
     `--dry-run` mode, what *would* have been attempted)."""
 
-    alert_id: str
+    # The watch's identity -- an alert id for an alert-originated watch,
+    # "parcel:<id>" for one started on the parcel itself. Named for what it
+    # is rather than assuming every watch has an alert behind it.
+    watch_id: str
     weeks_attempted: int = 0
     captured: int = 0
     # Keyed by the exact `CaptureAttempt.reason` string -- stable for the
@@ -219,7 +222,7 @@ def run(store: Store, *, now: datetime, max_weeks: int | None, dry_run: bool) ->
     summary = RunSummary(dry_run=dry_run)
 
     for entry in _iter_watchlist(store):
-        entry_summary = EntrySummary(alert_id=entry.alert_id)
+        entry_summary = EntrySummary(watch_id=entry.watch_id)
         summary.entries.append(entry_summary)
 
         try:
@@ -261,7 +264,7 @@ def run(store: Store, *, now: datetime, max_weeks: int | None, dry_run: bool) ->
                 entry.in_flight.difference_update(week.key for week in due)
 
         with store.lock:
-            if store.watchlist.get(entry.alert_id) is entry:
+            if store.watchlist.get(entry.watch_id) is entry:
                 entry.captures.extend(results)
 
         for result in results:
@@ -333,8 +336,11 @@ def run_http(client: httpx.Client, *, dry_run: bool) -> RunSummary:
     summary = RunSummary(dry_run=dry_run)
 
     for entry in _iter_watchlist_http(client):
-        alert_id = entry["alert_id"]
-        entry_summary = EntrySummary(alert_id=alert_id)
+        # Address the watch by its own id. `alert_id` is null for a
+        # parcel-originated watch, and older backends send only alert_id --
+        # falling back keeps this CLI working against both.
+        watch_id = entry.get("watch_id") or entry["alert_id"]
+        entry_summary = EntrySummary(watch_id=watch_id)
         summary.entries.append(entry_summary)
 
         if dry_run:
@@ -342,12 +348,12 @@ def run_http(client: httpx.Client, *, dry_run: bool) -> RunSummary:
             continue
 
         try:
-            response = client.post(f"/watchlist/{alert_id}/captures")
+            response = client.post(f"/watchlist/{watch_id}/captures")
             response.raise_for_status()
             results = response.json()
         except httpx.HTTPError as exc:
             entry_summary.skipped_reason = (
-                f"POST /watchlist/{alert_id}/captures failed: {exc}"
+                f"POST /watchlist/{watch_id}/captures failed: {exc}"
             )
             continue
 
@@ -384,9 +390,9 @@ def render_summary(summary: RunSummary) -> str:
     )
     for entry in summary.entries:
         if entry.skipped_reason is not None:
-            lines.append(f"  - {entry.alert_id}: SKIPPED ({entry.skipped_reason})")
+            lines.append(f"  - {entry.watch_id}: SKIPPED ({entry.skipped_reason})")
             continue
-        detail = f"  - {entry.alert_id}: {entry.weeks_attempted} week(s)"
+        detail = f"  - {entry.watch_id}: {entry.weeks_attempted} week(s)"
         if not summary.dry_run:
             detail += f", {entry.captured} captured"
             for reason, count in sorted(entry.gaps_by_reason.items()):

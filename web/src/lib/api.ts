@@ -848,7 +848,14 @@ type RawWatchEntry = Omit<WatchEntry, "captures"> & {
 function normalizeWatchEntry(base: string, raw: RawWatchEntry): WatchEntry {
   return {
     ...raw,
-    captures: withImageUrls(base, raw.captures, watchImagePath(raw.alert_id)),
+    // Address the watch by its own id: a parcel-originated watch has no
+    // alert, so building the image path from alert_id would produce
+    // "/watchlist/null/weeks/..." and 404 every retained scene.
+    captures: withImageUrls(
+      base,
+      raw.captures,
+      watchImagePath(raw.watch_id ?? raw.alert_id ?? "")
+    ),
   };
 }
 

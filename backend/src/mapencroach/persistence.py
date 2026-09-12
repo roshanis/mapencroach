@@ -167,6 +167,8 @@ def _capture_from_json(raw: dict[str, Any]) -> CaptureAttempt:
 
 def _watch_entry_to_json(entry: WatchEntryRecord) -> dict[str, Any]:
     return {
+        "watch_id": entry.watch_id,
+        # None for a parcel-originated watch -- there is no alert to name.
         "alert_id": entry.alert_id,
         "parcel_id": entry.parcel_id,
         "started_on": entry.started_on.isoformat(),
@@ -179,6 +181,10 @@ def _watch_entry_to_json(entry: WatchEntryRecord) -> dict[str, Any]:
 def _watch_entry_from_json(raw: dict[str, Any]) -> WatchEntryRecord:
     return WatchEntryRecord(
         alert_id=raw["alert_id"],
+        # Files written before parcel-originated watches existed carry no
+        # watch_id; every entry in them came from an alert, so the alert id
+        # is its identity and the default in __post_init__ is correct.
+        watch_id=raw.get("watch_id") or raw["alert_id"],
         parcel_id=raw["parcel_id"],
         started_on=date.fromisoformat(raw["started_on"]),
         watched_by=raw["watched_by"],
@@ -371,9 +377,14 @@ class StatePersister:
         try:
             raw_text = self.path.read_text(encoding="utf-8")
             payload = json.loads(raw_text)
-            watchlist = {
-                raw["alert_id"]: _watch_entry_from_json(raw) for raw in payload["watchlist"]
-            }
+            # Key by the entry's own id, not by alert_id: a
+            # parcel-originated watch has no alert, and keying on it put
+            # every such entry under the single key None -- so they
+            # silently vanished on restart while the API reported success.
+            watchlist = {}
+            for raw in payload["watchlist"]:
+                entry = _watch_entry_from_json(raw)
+                watchlist[entry.watch_id] = entry
             scene_records = [_scene_record_from_json(raw) for raw in payload["scene_records"]]
             audit_chain = [_audit_entry_from_json(raw) for raw in payload["audit_chain"]]
             version = payload.get("version")

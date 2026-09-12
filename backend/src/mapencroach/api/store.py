@@ -169,6 +169,17 @@ PARCEL_ID_SCHEME_BY_JURISDICTION: dict[str, str] = {
 }
 
 
+# Namespace for watch ids that came from a parcel rather than an alert.
+# Chosen so the two id spaces cannot collide: alert ids are "alert-<n>",
+# and no alert id can start with this prefix.
+PARCEL_WATCH_PREFIX = "parcel:"
+
+
+def parcel_watch_id(parcel_id: str) -> str:
+    """The `Store.watchlist` key for a watch started on a parcel itself."""
+    return f"{PARCEL_WATCH_PREFIX}{parcel_id}"
+
+
 @dataclass
 class CaseRecord:
     """A case plus the alert/parcel it traces back to (for jurisdiction scoping)."""
@@ -181,7 +192,17 @@ class CaseRecord:
 
 @dataclass
 class WatchEntryRecord:
-    """A RED alert under weekly-snapshot watch, plus its capture history.
+    """Land under weekly-snapshot watch, plus its capture history.
+
+    A watch is addressed by `watch_id`, which is what `Store.watchlist` is
+    keyed by. Two things can originate one:
+
+    - a RED alert, where `watch_id` IS the alert id (unchanged, so every
+      existing url, state file and caller keeps working); and
+    - a parcel, where `watch_id` is ``parcel:<parcel_id>`` and `alert_id`
+      is None -- monitoring land without first asserting an encroachment
+      on it. Authorization is unaffected either way: it has always been
+      derived from `parcel_id`, never from the alert.
 
     `in_flight` records weeks a capture run has claimed but not yet
     written a `CaptureAttempt` for. It exists so `POST
@@ -193,16 +214,32 @@ class WatchEntryRecord:
     internal-only fields it is excluded from repr/compare.
     """
 
-    alert_id: str
+    # None for a parcel-originated watch. Kept first, and still positional,
+    # so every existing construction site is untouched.
+    alert_id: str | None
     parcel_id: str
     started_on: date
     watched_by: str
     captures: list[CaptureAttempt] = field(default_factory=list)
+    # The `Store.watchlist` key. Defaults to `alert_id` in __post_init__ so
+    # alert-originated watches keep exactly the identity they always had.
+    watch_id: str = ""
     # Monitoring lifecycle is separate from the retained imagery timeline.
     # Deactivating a watch must hide it from active scheduling while keeping
     # its historical captures available to the linked case.
     active: bool = True
     in_flight: set[str] = field(default_factory=set, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if not self.watch_id:
+            if self.alert_id is None:
+                raise ValueError("a watch needs either an alert_id or an explicit watch_id")
+            self.watch_id = self.alert_id
+
+    @property
+    def origin(self) -> str:
+        """Where the watch came from -- an alert, or the parcel itself."""
+        return "alert" if self.alert_id is not None else "parcel"
 
     def to_dict(self, today: date) -> dict[str, Any]:
         """Render the WatchEntry JSON shape (see the HTTP API contract).
@@ -218,6 +255,10 @@ class WatchEntryRecord:
             "retryable_weeks": [week for week, capture in latest.items()
                                 if self.active and capture.status.value == "provider_error"],
             "active": self.active,
+            "watch_id": self.watch_id,
+            "origin": self.origin,
+            # None when the watch was started on the parcel directly. The
+            # console must not render a link to an alert that never existed.
             "alert_id": self.alert_id,
             "parcel_id": self.parcel_id,
             "started_on": self.started_on.isoformat(),

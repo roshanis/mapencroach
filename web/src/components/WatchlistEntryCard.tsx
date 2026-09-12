@@ -34,9 +34,12 @@ export function WatchlistEntryCard({ initialEntry }: WatchlistEntryCardProps) {
     setError(null);
     setNotice(null);
     try {
+      // The watch's own id, not its alert: parcel-originated watches have
+      // no alert behind them.
+      const watchId = entry.watch_id ?? entry.alert_id ?? "";
       const result = retryErrors
-        ? await runCaptures(entry.alert_id, undefined, { retryErrors: true })
-        : await runCaptures(entry.alert_id);
+        ? await runCaptures(watchId, undefined, { retryErrors: true })
+        : await runCaptures(watchId);
       if (result.ok) {
         const attempts = result.attempts ?? [];
         setEntry((current) => ({
