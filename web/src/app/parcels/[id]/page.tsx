@@ -18,6 +18,28 @@ import ParcelMiniMap from "@/components/ParcelMiniMap";
 import { LatestClearImagery } from "@/components/LatestClearImagery";
 import { BoundaryGradeEditor } from "@/components/BoundaryGradeEditor";
 import { jurisdictionLabel } from "@/lib/format";
+import type { Metadata } from "next";
+
+/**
+ * The id is the only detail put in the title: it is already in the URL
+ * the officer is looking at. Titles are noindex'd anyway (see the
+ * robots directive), so this is for tab legibility with several
+ * records open, not for search.
+ */
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  return {
+    title: `Parcel ${id}`,
+    description:
+      "Parcel record: land category, boundary grade, owning department and imagery review.",
+    robots: { index: false, follow: false },
+  };
+}
+
 
 export const dynamic = "force-dynamic";
 

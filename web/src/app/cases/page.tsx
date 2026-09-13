@@ -1,6 +1,15 @@
 import { getCasesForRequest } from "@/lib/server-api";
 import { CasesTable } from "@/components/CasesTable";
 import { TopBar } from "@/components/TopBar";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Case queue",
+  description:
+    "Every encroachment case grouped by where it stands in the eleven-stage due-process chain, including paused states such as a court stay.",
+  alternates: { canonical: "/cases" },
+};
+
 
 export const dynamic = "force-dynamic";
 

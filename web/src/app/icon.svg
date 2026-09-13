@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="mapencroach">
+  <rect width="64" height="64" rx="12" fill="#1B3A6B"/>
+  <path d="M12 44V20l12-6 16 8 12-6v24l-12 6-16-8-12 6Z" fill="none" stroke="#FFFFFF" stroke-width="3.5" stroke-linejoin="round"/>
+  <path d="M24 14v24M40 22v24" stroke="#FFFFFF" stroke-width="3.5" stroke-linejoin="round"/>
+  <circle cx="40" cy="30" r="5.5" fill="#E8552F"/>
+</svg>

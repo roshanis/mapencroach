@@ -132,6 +132,30 @@ billing, credentials, predictions, tile rendering, or SDK behavior. Before a
 live rollout, verify search/selection, clustering, keyboard operation and
 provider recovery with the project's restricted browser key.
 
+## 4b. Public-site configuration
+
+The marketing and legal pages state facts about a real organisation. They
+default to **empty** and render the gap visibly rather than printing an
+invented address — a fabricated controller address on a privacy policy is a
+misrepresentation, not a placeholder. Set these in Vercel before the site is
+public:
+
+| Key | Value |
+|-----|-------|
+| `NEXT_PUBLIC_SITE_URL` | `https://<your-app>.vercel.app` — canonical URLs, sitemap and the Open Graph image resolve against it |
+| `NEXT_PUBLIC_SITE_ORG` | the legal entity operating the deployment |
+| `NEXT_PUBLIC_SITE_ADDRESS` | its registered postal address |
+| `NEXT_PUBLIC_CONTACT_EMAIL` | a monitored mailbox |
+| `NEXT_PUBLIC_PRIVACY_EMAIL` | data-protection mailbox (falls back to the contact mailbox) |
+| `NEXT_PUBLIC_CONTACT_ENDPOINT` | optional. Unset means the contact page shows the mailbox instead of a form — a form with nowhere to post would discard what people write |
+| `NEXT_PUBLIC_ANALYTICS_ID` | optional. Unset means **no analytics script, no analytics cookie, and no cookie banner**, because there is then nothing to consent to |
+
+`siteReadiness()` in `web/src/lib/site-config.ts` reports which of these are
+still missing and what each one blocks.
+
+Governing law in the terms is also unset and must be decided by the operating
+entity — it is not something this repository can choose.
+
 ## 5. Verify
 
 - Open the Vercel URL: the product landing page loads, and its primary CTA opens

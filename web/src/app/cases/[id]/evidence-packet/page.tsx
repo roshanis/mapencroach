@@ -7,6 +7,15 @@ import {
 } from "@/lib/server-api";
 import { EvidencePacketDocument } from "@/components/EvidencePacketDocument";
 import { PrintPacketButton } from "@/components/PrintPacketButton";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Evidence packet",
+  description:
+    "Print-ready packet bringing the case, parcel, event history and artifact manifest together for review.",
+  robots: { index: false, follow: false },
+};
+
 
 export const dynamic = "force-dynamic";
 

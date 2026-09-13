@@ -2,6 +2,15 @@ import { getWatchlistForRequest } from "@/lib/server-api";
 import { TopBar } from "@/components/TopBar";
 import { WatchlistEntryCard } from "@/components/WatchlistEntryCard";
 import { DemoActionBoundary } from "@/components/DemoModeBanner";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Imagery watchlist",
+  description:
+    "Land under weekly satellite watch, with each week recorded as captured or explicitly empty and the reason it is empty.",
+  alternates: { canonical: "/watchlist" },
+};
+
 
 export const dynamic = "force-dynamic";
 

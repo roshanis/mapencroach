@@ -7,6 +7,15 @@ import {
 import { AlertsTable } from "@/components/AlertsTable";
 import { TopBar } from "@/components/TopBar";
 import type { Case } from "@/lib/types";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Alert queue",
+  description:
+    "Triage detected land-change alerts by severity tier, status and jurisdiction, with each severity score shown as computed rather than asserted.",
+  alternates: { canonical: "/alerts" },
+};
+
 
 export const dynamic = "force-dynamic";
 

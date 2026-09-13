@@ -22,6 +22,28 @@ import { TopBar } from "@/components/TopBar";
 import { TransferPanel } from "@/components/TransferPanel";
 import { TransitionPanel } from "@/components/TransitionPanel";
 import { DemoActionBoundary } from "@/components/DemoModeBanner";
+import type { Metadata } from "next";
+
+/**
+ * The id is the only detail put in the title: it is already in the URL
+ * the officer is looking at. Titles are noindex'd anyway (see the
+ * robots directive), so this is for tab legibility with several
+ * records open, not for search.
+ */
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  return {
+    title: `Case ${id}`,
+    description:
+      "Due-process rail, event history and the evidence each completed step required.",
+    robots: { index: false, follow: false },
+  };
+}
+
 
 export const dynamic = "force-dynamic";
 

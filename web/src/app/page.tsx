@@ -1,5 +1,16 @@
 import Link from "next/link";
 import { JurisdictionPersonaPicker } from "@/components/JurisdictionPersonaPicker";
+import type { Metadata } from "next";
+import { SiteFooter } from "@/components/SiteFooter";
+import { StickyMobileCta } from "@/components/StickyMobileCta";
+
+export const metadata: Metadata = {
+  title: { absolute: "mapencroach | Public Land Intelligence" },
+  description:
+    "Satellite change signals, cadastral truth, field verification and due process in one evidence-backed record for Indian state governments.",
+  alternates: { canonical: "/" },
+};
+
 
 const DEMO_METRICS = [
   { value: "30", label: "Monitored parcels" },
@@ -497,15 +508,13 @@ export default function LandingPage() {
         </section>
       </main>
 
-      <footer className="border-t border-gray-200 bg-gray-100 px-5 py-8 sm:px-8">
-        <div className="mx-auto flex max-w-7xl flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
-          <BrandMark />
-          <p className="max-w-xl text-xs leading-5 text-gray-500 sm:text-right">
-            Encroachment intelligence and case management for Indian state governments.
-            Demo data only.
-          </p>
-        </div>
-      </footer>
+      {/* Replaces the previous brand-only footer: the legal routes and the
+          operator's address have to be reachable from the public page, and
+          two stacked footers would just compete. */}
+      <SiteFooter />
+
+      {/* Appears once the hero CTA has scrolled away, small screens only. */}
+      <StickyMobileCta />
     </div>
   );
 }
