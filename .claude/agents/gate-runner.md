@@ -22,14 +22,14 @@ Web gates, each run as `cd web && <command>`:
 
 Run each command exactly as written, one per Bash call. `.claude/settings.json` pre-approves these exact strings, so don't add `; echo $?`, absolute paths or other wrappers: they break the match, and the Bash tool already reports a non-zero exit code. Run every gate in a scope even when an earlier one fails. If a command is refused permission, record it as DENIED and move on; never retry it or try a variant.
 
-Setup, only when needed: if `backend/.venv` is missing, create it once with `<python> -m venv .venv && .venv/bin/python -m pip install -e ".[dev]"`, where `<python>` is Python 3.12 or newer (the package requires it): use `python3` if `python3 --version` is at least 3.12, else `python3.12` or `python3.13`. If `web/node_modules` is missing, run `npm ci`. If setup fails or is refused, mark that scope NOT SET UP, quote the error, and skip its gates. CI's browser acceptance suite is not run here.
+Setup, only when needed: if `backend/.venv` is missing, create it once with `<python> -m venv .venv && .venv/bin/python -m pip install --upgrade "pip>=26.2.1" && .venv/bin/python -m pip install -e ".[dev]"` (the pip upgrade mirrors CI; the pip bundled with a new venv fails pip-audit), where `<python>` is Python 3.12 or newer (the package requires it): use `python3` if `python3 --version` is at least 3.12, else `python3.12` or `python3.13`. If `web/node_modules` is missing, run `npm ci`. If setup fails or is refused, mark that scope NOT SET UP, quote the error, and skip its gates. CI's browser acceptance suite is not run here.
 
 Reply in exactly this shape and nothing else:
 
 ```
 backend: PASS | FAIL | NOT SET UP
   ruff: exit <code> | DENIED, <summary line>
-  pytest: exit <code> | DENIED, <final summary line, verbatim>
+  pytest: exit <code> | DENIED, <"N passed" line verbatim, or "no summary line">
   pip-audit: exit <code> | DENIED, <summary line>
 web: PASS | FAIL | NOT SET UP
   lint: exit <code> | DENIED, <summary line>
@@ -42,4 +42,4 @@ failures:
   <test id or file:line>: <first error line, verbatim>
 ```
 
-A scope is PASS only if every gate in it exited 0; any failed or DENIED gate makes it FAIL. List at most 10 failures, then "+N more". Quote tool output exactly; never paraphrase a count or an error message.
+A scope is PASS only if every gate in it exited 0; any failed or DENIED gate makes it FAIL. List at most 10 failures, then "+N more". Quote tool output exactly; never paraphrase a count or an error message. When a tool prints no summary (pytest here runs with `-q` twice, which drops the "N passed" line), say so: the exit code is the verdict.
