@@ -18,6 +18,22 @@ CI (`.github/workflows/ci.yml`) runs both suites, lint/type checks, and dependen
 - **Branches**: agents work on their own branches (`codex-*`, `claude-*`), never directly on `main`. Reviewer diffs `main...HEAD` before any merge. Commit only when asked; stage files explicitly.
 - **Disagreements between agents** are surfaced to the human with both positions, not resolved unilaterally.
 
+## Effort budget (Claude Code)
+
+Effort doesn't make Claude smarter. It sets how much Claude verifies and how far it goes before checking in, so spend it where checking changes the answer. Don't pin a level in project settings: the model default suits most work, and the skill and subagent levels below apply only while they run.
+
+| Work | Effort | How |
+|------|--------|-----|
+| Steering step by step, quick questions, copy/docs/config edits | `low` | `/effort low` |
+| Features and routine fixes | model default | leave it unset |
+| Edits to the case engine, audit chain, auth, persistence, store locking or notice gate | `high` | `/effort high` for that stretch of work |
+| A bug that survived a first fix: flaky tests, state corruption, lock races, hash mismatches | `xhigh` | `/hard-bug <symptom>` |
+| Review of `main...HEAD` before merge; security questions | `max` | `guardrail-reviewer` subagent (read-only) |
+| Full lint/type/test/audit gate before a commit or PR | `low`, Sonnet | `gate-runner` subagent; run single test files directly |
+| Build-log entry | `low` | `/log-session` |
+
+`/effort <level>` is saved as your default for the current model (`max` is session-only); press `s` in the `/effort` picker to change this session only, and `/effort auto` to return to the default. If Claude skipped files, left edits untested or stopped early, raise effort. If it read the right code, ran the tests and was still wrong, switch to a bigger model with `/model` instead.
+
 ## Local dev gotchas
 
 - Backend must be reached at `127.0.0.1:8000`, **not** `localhost:8000` — a `kuzu-explorer` Docker container on this machine owns `::1:8000`. Do not stop that container.
